@@ -15,6 +15,10 @@ Licensed under the [Apache License 2.0](LICENSE).
   <img src="docs/screenshots/demo-snow.png" width="32%" alt="Zwerk Weather synthetic snow scene">
 </p>
 
+## WeatherNext 3
+
+Zwerk Weather uses Google's Weather API for its weather data. As of September 2026, Google states that **WeatherNext 3 powers weather experiences in the Google Maps Platform Weather API**.
+
 ## Highlights
 
 - Current conditions, a horizontally scrollable hourly forecast, and a 10-day line/list forecast.
@@ -23,6 +27,12 @@ Licensed under the [Apache License 2.0](LICENSE).
 - Smooth day, night, rain, snow, fog, and thunder scenes.
 - Scene-aware glass surfaces and a progressive top gradient blur. Supported OnePlus devices use the OEM gradient-blur path; other devices use the portable fallback.
 - Android widget with a compact layout at small sizes and a five-hour strip at normal 4×2 sizes.
+
+## Privacy and monetization
+* **No ads.**
+* No paid subscription is required.
+* No account is required.
+* Weather requests are made using the Google Cloud API key configured by the user.
 
 ## Requirements
 
