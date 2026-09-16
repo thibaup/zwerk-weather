@@ -1,6 +1,8 @@
 # Zwerk Weather
 
-Zwerk Weather is a clean, native Android weather app inspired by OnePlus Weather. It is powered by Google Maps Platform weather services and adds minute precipitation, responsive widgets, optional air quality and pollen and animated forecast previews.
+Zwerk Weather is an open-source, ad-free Android weather app using the Google Maps Platform Weather API, powered by WeatherNext 3.
+
+Inspired by OnePlus Weather, it includes minute precipitation forecasts, responsive widgets, optional air quality and pollen data, and animated forecast scenes.
 
 Licensed under the [Apache License 2.0](LICENSE).
 
