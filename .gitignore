@@ -1,0 +1,15 @@
+.gradle/
+**/build/
+local.properties
+.idea/
+*.iml
+*.apk
+*.aab
+*.jks
+*.keystore
+*.log
+captures/
+permission.xml
+/*.png
+weather_api_key
+weather_api_key.tmp

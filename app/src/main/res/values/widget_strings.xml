@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="weather_widget_name">Zwerk Weather forecast</string>
+    <string name="weather_widget_description">Current conditions, daily high and low, and a five-hour forecast from the last successful in-app refresh.</string>
+</resources>

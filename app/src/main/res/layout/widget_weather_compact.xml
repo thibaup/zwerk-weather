@@ -1,0 +1,133 @@
+<?xml version="1.0" encoding="utf-8"?>
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/widget_root"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:padding="8dp">
+
+    <ImageView
+        android:id="@+id/widget_scene"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:contentDescription="@null"
+        android:importantForAccessibility="no"
+        android:scaleType="fitXY"
+        android:src="@drawable/widget_scene_day" />
+
+    <FrameLayout
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:background="@drawable/widget_card_scrim_v5" />
+
+    <FrameLayout
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:layout_marginStart="14dp"
+        android:layout_marginTop="8dp"
+        android:layout_marginEnd="14dp"
+        android:layout_marginBottom="8dp">
+
+        <LinearLayout
+            android:layout_width="100dp"
+            android:layout_height="match_parent"
+            android:gravity="start|center_vertical"
+            android:orientation="vertical">
+
+            <LinearLayout
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:gravity="bottom"
+                android:orientation="horizontal">
+
+                <TextView
+                    android:id="@+id/widget_temperature"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:fontFamily="sans-serif-light"
+                    android:includeFontPadding="false"
+                    android:maxLines="1"
+                    android:text="24"
+                    android:textColor="#FFFFFFFF"
+                    android:textSize="38sp" />
+
+                <TextView
+                    android:id="@+id/widget_unit"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginStart="2dp"
+                    android:layout_marginBottom="4dp"
+                    android:fontFamily="sans-serif-medium"
+                    android:includeFontPadding="false"
+                    android:maxLines="1"
+                    android:text="°C"
+                    android:textColor="#E8FFFFFF"
+                    android:textSize="14sp" />
+            </LinearLayout>
+
+            <TextView
+                android:id="@+id/widget_city"
+                android:layout_width="100dp"
+                android:layout_height="wrap_content"
+                android:ellipsize="end"
+                android:fontFamily="sans-serif-medium"
+                android:includeFontPadding="false"
+                android:maxLines="1"
+                android:text="Demo City"
+                android:textColor="#DBFFFFFF"
+                android:textSize="12sp" />
+        </LinearLayout>
+
+        <LinearLayout
+            android:layout_width="92dp"
+            android:layout_height="wrap_content"
+            android:layout_gravity="end|center_vertical"
+            android:gravity="end"
+            android:orientation="vertical">
+
+            <TextView
+                android:id="@+id/widget_condition"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:ellipsize="end"
+                android:fontFamily="sans-serif-medium"
+                android:gravity="end"
+                android:includeFontPadding="false"
+                android:maxLines="1"
+                android:text="Partly cloudy"
+                android:textColor="#E8FFFFFF"
+                android:textSize="11sp" />
+
+            <TextView
+                android:id="@+id/widget_high_low"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="4dp"
+                android:ellipsize="end"
+                android:gravity="end"
+                android:includeFontPadding="false"
+                android:maxLines="1"
+                android:text="↑ 24°   ↓ 14°"
+                android:textColor="#CEFFFFFF"
+                android:textSize="10sp" />
+        </LinearLayout>
+    </FrameLayout>
+
+    <!-- IDs are intentionally present in both modes so one binding contract works for both. -->
+    <ImageView
+        android:id="@+id/widget_glyph"
+        android:layout_width="1dp"
+        android:layout_height="1dp"
+        android:visibility="gone" />
+
+    <LinearLayout
+        android:id="@+id/widget_hour_strip"
+        android:layout_width="1dp"
+        android:layout_height="1dp"
+        android:visibility="gone">
+        <TextView android:id="@+id/widget_hour_time_0" android:layout_width="1dp" android:layout_height="1dp" /><ImageView android:id="@+id/widget_hour_glyph_0" android:layout_width="1dp" android:layout_height="1dp" /><TextView android:id="@+id/widget_hour_temp_0" android:layout_width="1dp" android:layout_height="1dp" />
+        <TextView android:id="@+id/widget_hour_time_1" android:layout_width="1dp" android:layout_height="1dp" /><ImageView android:id="@+id/widget_hour_glyph_1" android:layout_width="1dp" android:layout_height="1dp" /><TextView android:id="@+id/widget_hour_temp_1" android:layout_width="1dp" android:layout_height="1dp" />
+        <TextView android:id="@+id/widget_hour_time_2" android:layout_width="1dp" android:layout_height="1dp" /><ImageView android:id="@+id/widget_hour_glyph_2" android:layout_width="1dp" android:layout_height="1dp" /><TextView android:id="@+id/widget_hour_temp_2" android:layout_width="1dp" android:layout_height="1dp" />
+        <TextView android:id="@+id/widget_hour_time_3" android:layout_width="1dp" android:layout_height="1dp" /><ImageView android:id="@+id/widget_hour_glyph_3" android:layout_width="1dp" android:layout_height="1dp" /><TextView android:id="@+id/widget_hour_temp_3" android:layout_width="1dp" android:layout_height="1dp" />
+        <TextView android:id="@+id/widget_hour_time_4" android:layout_width="1dp" android:layout_height="1dp" /><ImageView android:id="@+id/widget_hour_glyph_4" android:layout_width="1dp" android:layout_height="1dp" /><TextView android:id="@+id/widget_hour_temp_4" android:layout_width="1dp" android:layout_height="1dp" />
+    </LinearLayout>
+</FrameLayout>
