@@ -68,8 +68,13 @@ If an Air Quality or Pollen tile reports that the key is blocked, tap the tile f
 Download the APK from this repository's Releases page and allow installation from your browser or file manager, or use ADB:
 
 ```powershell
-adb install -r .\Zwerk-Weather-1.0.apk
+adb install -r .\Zwerk-Weather-1.0.1.apk
 ```
+
+## App updates
+
+Zwerk Weather checks the repository's latest stable GitHub Release at most once per day and also
+offers a manual **Check for updates** action in Settings.
 
 ## Build
 

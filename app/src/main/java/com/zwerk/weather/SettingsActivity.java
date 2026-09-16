@@ -350,6 +350,10 @@ public class SettingsActivity extends Activity {
                 "",
                 () -> returnAction(ACTION_REFRESH));
         addActionRow(
+                "Check for updates",
+                "Checks GitHub Releases for a newer APK.",
+                () -> UpdateChecker.checkForUpdates(this, true));
+        addActionRow(
                 "Advanced coordinates",
                 "Choose a forecast point by latitude and longitude.",
                 () -> returnAction(ACTION_ADVANCED_COORDINATES));
@@ -412,7 +416,7 @@ public class SettingsActivity extends Activity {
                 "",
                 this::showScenePreview);
 
-        TextView footer = text("Zwerk Weather 1.0", 12f, Color.argb(170, 210, 222, 236), false);
+        TextView footer = text("Zwerk Weather 1.0.1", 12f, Color.argb(170, 210, 222, 236), false);
         footer.setGravity(Gravity.CENTER);
         footer.setPadding(dp(4), dp(28), dp(4), dp(8));
         page.addView(footer);
