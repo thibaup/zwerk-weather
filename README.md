@@ -29,7 +29,7 @@ Zwerk Weather uses Google's Weather API for its weather data. As of September 20
 - Smooth day, night, rain, snow, fog, and thunder scenes.
 - Scene-aware glass surfaces and a progressive top gradient blur. Supported OnePlus devices use the OEM gradient-blur path; other devices use the portable fallback.
 - Android widget with a compact layout at small sizes and a five-hour strip at normal 4×2 sizes.
-- Per-API daily and monthly request caps help keep Google Weather, Air Quality, and Pollen usage within a chosen billing budget.
+- Per-API daily and monthly request caps default to Google's free tier to help avoid unexpected Weather, Air Quality, and Pollen billing.
 
 ## Privacy and monetization
 * **No ads.**

@@ -76,7 +76,7 @@ public final class ApiRequestBudgetManager {
     private ApiRequestBudgetManager() { }
 
     public static String profile(Context context) {
-        return prefs(context).getString(KEY_PROFILE, PROFILE_OFF);
+        return prefs(context).getString(KEY_PROFILE, PROFILE_GOOGLE_FREE);
     }
 
     public static String profileLabel(Context context) {
@@ -163,7 +163,7 @@ public final class ApiRequestBudgetManager {
     }
 
     private static Limits limits(SharedPreferences shared, Category category) {
-        String profile = shared.getString(KEY_PROFILE, PROFILE_OFF);
+        String profile = shared.getString(KEY_PROFILE, PROFILE_GOOGLE_FREE);
         Limits defaults = presetLimits(profile, category);
         return new Limits(
                 shared.getInt(dailyLimitKey(category), defaults.daily),
