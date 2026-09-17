@@ -182,10 +182,13 @@ abstract class OptionalWeatherDataActivity extends WeatherApiActivity {
                 }
                 boolean keyBlocked = error.statusCode == 403
                         && "API_KEY_SERVICE_BLOCKED".equals(error.reason);
+                boolean requestLimited = "APP_REQUEST_LIMIT".equals(error.reason);
                 result = optionalUnavailable(
                         generation, lat, lon, language,
-                        keyBlocked ? "Key blocked" : "Unavailable",
-                        keyBlocked
+                        requestLimited ? "Limit reached" : (keyBlocked ? "Key blocked" : "Unavailable"),
+                        requestLimited
+                                ? error.detail
+                                : keyBlocked
                                 ? (airQuality
                                         ? "Air Quality API is not allowed by this API key's restrictions"
                                         : "Pollen API is not allowed by this API key's restrictions")
@@ -505,6 +508,15 @@ abstract class OptionalWeatherDataActivity extends WeatherApiActivity {
             String address,
             String method,
             JSONObject requestBody) throws Exception {
+        ApiRequestBudgetManager.Category category = "pollen-forecast".equals(endpointName)
+                ? ApiRequestBudgetManager.Category.POLLEN
+                : ApiRequestBudgetManager.Category.AIR_QUALITY;
+        ApiRequestBudgetManager.Decision budget =
+                ApiRequestBudgetManager.tryAcquire(this, category);
+        if (!budget.allowed) {
+            throw new OptionalRequestException(
+                    -2, endpointName, "APP_REQUEST_LIMIT", budget.message);
+        }
         HttpURLConnection connection = (HttpURLConnection) new URL(address).openConnection();
         connection.setConnectTimeout(12000);
         connection.setReadTimeout(18000);

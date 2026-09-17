@@ -881,6 +881,17 @@ abstract class WeatherApiActivity extends MinuteForecastViewsActivity {
 
 
     JSONObject request(String address) throws Exception {
+        ApiRequestBudgetManager.Decision budget = ApiRequestBudgetManager.tryAcquire(
+                this, ApiRequestBudgetManager.Category.WEATHER);
+        if (!budget.allowed) {
+            throw new WeatherRequestException(
+                    -2,
+                    false,
+                    "Weather request limit reached",
+                    "APP_REQUEST_LIMIT",
+                    budget.message,
+                    "");
+        }
         HttpURLConnection connection = (HttpURLConnection) new URL(address).openConnection();
         connection.setConnectTimeout(12000);
         connection.setReadTimeout(18000);
@@ -981,12 +992,20 @@ abstract class WeatherApiActivity extends MinuteForecastViewsActivity {
         final int statusCode;
         final String endpointName;
         final String reason;
+        final String detail;
 
         OptionalRequestException(int statusCode, String endpointName, String reason) {
-            super("Optional Google data request failed");
+            this(statusCode, endpointName, reason, "");
+        }
+
+        OptionalRequestException(
+                int statusCode, String endpointName, String reason, String detail) {
+            super(detail == null || detail.trim().isEmpty()
+                    ? "Optional Google data request failed" : detail);
             this.statusCode = statusCode;
             this.endpointName = endpointName == null ? "optional" : endpointName;
             this.reason = reason == null || reason.trim().isEmpty() ? "UNKNOWN" : reason;
+            this.detail = detail == null ? "" : detail;
         }
     }
 

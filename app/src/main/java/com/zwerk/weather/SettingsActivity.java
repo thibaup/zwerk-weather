@@ -125,6 +125,7 @@ public class SettingsActivity extends Activity {
     private boolean displayUnitChanged;
     private boolean initialAirQualityEnabled;
     private boolean initialPollenEnabled;
+    private String displayedBudgetProfile;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -281,6 +282,7 @@ public class SettingsActivity extends Activity {
     }
 
     private void buildUi() {
+        displayedBudgetProfile = ApiRequestBudgetManager.profile(this);
         FrameLayout root = new FrameLayout(this);
         root.setBackgroundColor(scrimBase);
 
@@ -345,6 +347,10 @@ public class SettingsActivity extends Activity {
                         ? "Configured · tap to replace"
                         : "Not configured · tap to add",
                 this::showApiKeyDialog);
+        addActionRow(
+                "API request limits",
+                ApiRequestBudgetManager.profileLabel(this) + " profile",
+                () -> startActivity(new Intent(this, ApiUsageLimitsActivity.class)));
         addActionRow(
                 "Refresh forecast",
                 "",
@@ -416,7 +422,7 @@ public class SettingsActivity extends Activity {
                 "",
                 this::showScenePreview);
 
-        TextView footer = text("Zwerk Weather 1.0.1", 12f, Color.argb(170, 210, 222, 236), false);
+        TextView footer = text("Zwerk Weather 1.0.2", 12f, Color.argb(170, 210, 222, 236), false);
         footer.setGravity(Gravity.CENTER);
         footer.setPadding(dp(4), dp(28), dp(4), dp(8));
         page.addView(footer);
@@ -1971,6 +1977,11 @@ public class SettingsActivity extends Activity {
     @Override
     protected void onResume() {
         super.onResume();
+        String currentProfile = ApiRequestBudgetManager.profile(this);
+        if (page != null && displayedBudgetProfile != null
+                && !displayedBudgetProfile.equals(currentProfile)) {
+            buildUi();
+        }
         if (backdrop != null) {
             backdrop.setAnimationRunning(getSharedPreferences(UI_PREFS, MODE_PRIVATE)
                     .getBoolean(PREF_ANIMATIONS, true));

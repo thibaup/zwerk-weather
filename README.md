@@ -29,6 +29,7 @@ Zwerk Weather uses Google's Weather API for its weather data. As of September 20
 - Smooth day, night, rain, snow, fog, and thunder scenes.
 - Scene-aware glass surfaces and a progressive top gradient blur. Supported OnePlus devices use the OEM gradient-blur path; other devices use the portable fallback.
 - Android widget with a compact layout at small sizes and a five-hour strip at normal 4×2 sizes.
+- Per-API daily and monthly request caps help keep Google Weather, Air Quality, and Pollen usage within a chosen billing budget.
 
 ## Privacy and monetization
 * **No ads.**
@@ -68,7 +69,7 @@ If an Air Quality or Pollen tile reports that the key is blocked, tap the tile f
 Download the APK from this repository's Releases page and allow installation from your browser or file manager, or use ADB:
 
 ```powershell
-adb install -r .\Zwerk-Weather-1.0.1.apk
+adb install -r .\Zwerk-Weather-1.0.2.apk
 ```
 
 ## App updates
