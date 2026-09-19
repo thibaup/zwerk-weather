@@ -24,9 +24,9 @@ public final class ApiRequestBudgetManager {
     private static final Object LOCK = new Object();
 
     public enum Category {
-        WEATHER("weather", "Weather", "Current, hourly, daily and minute forecasts", 10_000),
-        AIR_QUALITY("air_quality", "Air Quality", "Current air-quality data", 10_000),
-        POLLEN("pollen", "Pollen", "Pollen forecast", 5_000);
+        WEATHER("weather", "Weather", "Forecasts, minute data and official public alerts", 10_000),
+        AIR_QUALITY("air_quality", "Air Quality", "Current AQI and 24-hour forecast", 10_000),
+        POLLEN("pollen", "Pollen", "Five-day pollen forecast", 5_000);
 
         public final String key;
         public final String label;
@@ -93,8 +93,9 @@ public final class ApiRequestBudgetManager {
     public static void applyProfile(Context context, String profile) {
         synchronized (LOCK) {
             SharedPreferences.Editor editor = prefs(context).edit().putString(KEY_PROFILE, profile);
+            ZonedDateTime googleNow = ZonedDateTime.now(GOOGLE_BILLING_ZONE);
             for (Category category : Category.values()) {
-                Limits limits = presetLimits(profile, category);
+                Limits limits = presetLimits(profile, category, googleNow);
                 editor.putInt(dailyLimitKey(category), limits.daily);
                 editor.putInt(monthlyLimitKey(category), limits.monthly);
             }
@@ -105,8 +106,18 @@ public final class ApiRequestBudgetManager {
     public static void saveCustomLimits(Context context, Category category, int daily, int monthly) {
         if (daily < 1 || monthly < 1) throw new IllegalArgumentException("Limits must be positive");
         synchronized (LOCK) {
-            prefs(context).edit()
-                    .putString(KEY_PROFILE, PROFILE_CUSTOM)
+            SharedPreferences shared = prefs(context);
+            String currentProfile = shared.getString(KEY_PROFILE, PROFILE_GOOGLE_FREE);
+            ZonedDateTime googleNow = ZonedDateTime.now(GOOGLE_BILLING_ZONE);
+            SharedPreferences.Editor editor = shared.edit();
+            // Materialize every currently effective category before switching to Custom. This
+            // prevents an edited category from silently turning untouched categories Unlimited.
+            for (Category existing : Category.values()) {
+                Limits effective = limits(shared, existing, currentProfile, googleNow);
+                editor.putInt(dailyLimitKey(existing), effective.daily);
+                editor.putInt(monthlyLimitKey(existing), effective.monthly);
+            }
+            editor.putString(KEY_PROFILE, PROFILE_CUSTOM)
                     .putInt(dailyLimitKey(category), daily)
                     .putInt(monthlyLimitKey(category), monthly)
                     .apply();
@@ -116,22 +127,31 @@ public final class ApiRequestBudgetManager {
     public static Usage usage(Context context, Category category) {
         synchronized (LOCK) {
             SharedPreferences shared = prefs(context);
-            rollCountersIfNeeded(shared);
+            String profile = shared.getString(KEY_PROFILE, PROFILE_GOOGLE_FREE);
+            ZonedDateTime googleNow = ZonedDateTime.now(GOOGLE_BILLING_ZONE);
+            rollCountersIfNeeded(shared, profile, googleNow);
             return new Usage(
                     shared.getInt(dayCountKey(category), 0),
                     shared.getInt(monthCountKey(category), 0),
-                    limits(shared, category));
+                    limits(shared, category, profile, googleNow));
         }
     }
 
     public static Decision tryAcquire(Context context, Category category) {
         synchronized (LOCK) {
             SharedPreferences shared = prefs(context);
-            rollCountersIfNeeded(shared);
-            Limits limits = limits(shared, category);
+            String profile = shared.getString(KEY_PROFILE, PROFILE_GOOGLE_FREE);
+            ZonedDateTime googleNow = ZonedDateTime.now(GOOGLE_BILLING_ZONE);
+            rollCountersIfNeeded(shared, profile, googleNow);
+            Limits limits = limits(shared, category, profile, googleNow);
             int today = shared.getInt(dayCountKey(category), 0);
             int month = shared.getInt(monthCountKey(category), 0);
             if (limits.daily > 0 && today >= limits.daily) {
+                if (PROFILE_GOOGLE_FREE.equals(profile)) {
+                    return new Decision(false, category.label
+                            + " app-side daily pacing limit reached. It resets at midnight Pacific time; "
+                            + "Google's monthly free cap still applies.");
+                }
                 return new Decision(false, category.label + " daily request limit reached. It resets tomorrow.");
             }
             if (limits.monthly > 0 && month >= limits.monthly) {
@@ -151,9 +171,12 @@ public final class ApiRequestBudgetManager {
 
     public static void resetUsage(Context context) {
         synchronized (LOCK) {
-            SharedPreferences.Editor editor = prefs(context).edit()
-                    .putString(KEY_DAY, LocalDate.now().toString())
-                    .putString(KEY_MONTH, googleBillingMonth());
+            SharedPreferences shared = prefs(context);
+            String profile = shared.getString(KEY_PROFILE, PROFILE_GOOGLE_FREE);
+            ZonedDateTime googleNow = ZonedDateTime.now(GOOGLE_BILLING_ZONE);
+            SharedPreferences.Editor editor = shared.edit()
+                    .putString(KEY_DAY, counterDay(profile, googleNow))
+                    .putString(KEY_MONTH, googleBillingMonth(googleNow));
             for (Category category : Category.values()) {
                 editor.putInt(dayCountKey(category), 0);
                 editor.putInt(monthCountKey(category), 0);
@@ -162,17 +185,25 @@ public final class ApiRequestBudgetManager {
         }
     }
 
-    private static Limits limits(SharedPreferences shared, Category category) {
-        String profile = shared.getString(KEY_PROFILE, PROFILE_GOOGLE_FREE);
-        Limits defaults = presetLimits(profile, category);
+    private static Limits limits(SharedPreferences shared, Category category, String profile,
+                                 ZonedDateTime googleNow) {
+        Limits defaults = presetLimits(profile, category, googleNow);
+        // The Google profile derives today's app-side pacing cap from the published monthly cap.
+        // Recalculate it on every read and ignore any legacy -1 or /31 value persisted by older versions.
+        if (PROFILE_GOOGLE_FREE.equals(profile)) return defaults;
         return new Limits(
                 shared.getInt(dailyLimitKey(category), defaults.daily),
                 shared.getInt(monthlyLimitKey(category), defaults.monthly));
     }
 
-    private static Limits presetLimits(String profile, Category category) {
+    private static Limits presetLimits(String profile, Category category, ZonedDateTime googleNow) {
         if (PROFILE_GOOGLE_FREE.equals(profile)) {
-            return new Limits(category.googleFreeMonthly / 31, category.googleFreeMonthly);
+            int day = googleNow.getDayOfMonth();
+            int daysInMonth = YearMonth.from(googleNow).lengthOfMonth();
+            int monthly = category.googleFreeMonthly;
+            int daily = (monthly * day / daysInMonth)
+                    - (monthly * (day - 1) / daysInMonth);
+            return new Limits(daily, monthly);
         }
         if (PROFILE_CONSERVATIVE.equals(profile)) {
             return category == Category.POLLEN
@@ -182,9 +213,10 @@ public final class ApiRequestBudgetManager {
         return new Limits(-1, -1);
     }
 
-    private static void rollCountersIfNeeded(SharedPreferences shared) {
-        String today = LocalDate.now().toString();
-        String month = googleBillingMonth();
+    private static void rollCountersIfNeeded(SharedPreferences shared, String profile,
+                                             ZonedDateTime googleNow) {
+        String today = counterDay(profile, googleNow);
+        String month = googleBillingMonth(googleNow);
         String savedDay = shared.getString(KEY_DAY, "");
         String savedMonth = shared.getString(KEY_MONTH, "");
         if (today.equals(savedDay) && month.equals(savedMonth)) return;
@@ -200,8 +232,15 @@ public final class ApiRequestBudgetManager {
         editor.commit();
     }
 
-    private static String googleBillingMonth() {
-        return YearMonth.from(ZonedDateTime.now(GOOGLE_BILLING_ZONE)).toString();
+    private static String counterDay(String profile, ZonedDateTime googleNow) {
+        if (PROFILE_GOOGLE_FREE.equals(profile)) {
+            return googleNow.toLocalDate().toString();
+        }
+        return LocalDate.now().toString();
+    }
+
+    private static String googleBillingMonth(ZonedDateTime googleNow) {
+        return YearMonth.from(googleNow).toString();
     }
 
     private static SharedPreferences prefs(Context context) {

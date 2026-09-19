@@ -78,6 +78,7 @@ import java.time.LocalDate;
 import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
@@ -89,6 +90,10 @@ import java.util.concurrent.Executors;
 abstract class WeatherApiActivity extends MinuteForecastViewsActivity {
     ForecastDiskCache forecastDiskCache;
     HourlyPageState hourlyPageState;
+    private static final long IN_MEMORY_FORECAST_MAX_AGE_MILLIS = 60L * 60L * 1000L;
+    private static final int MAX_IN_MEMORY_FORECASTS = 8;
+    private final Object inMemoryForecastLock = new Object();
+    private final HashMap<String, InMemoryForecast> inMemoryForecasts = new HashMap<>();
 
     void cleanupForecastCaches() { forecastDiskCache.cleanup(); }
 
@@ -100,6 +105,69 @@ abstract class WeatherApiActivity extends MinuteForecastViewsActivity {
     void persistForecastCacheQuietly(double lat, double lon, String language, String requestLocationId,
                                      JSONObject current, JSONObject hourly, JSONObject daily) {
         forecastDiskCache.persist(lat, lon, language, requestLocationId, current, hourly, daily);
+    }
+
+    private ForecastCacheSnapshot readInMemoryForecast(
+            double lat, double lon, String language, String requestLocationId) {
+        String key = forecastCacheScopeKey(lat, lon, language, requestLocationId);
+        synchronized (inMemoryForecastLock) {
+            InMemoryForecast cached = inMemoryForecasts.get(key);
+            if (cached == null) return null;
+            if (System.currentTimeMillis() - cached.updatedAtMillis >= IN_MEMORY_FORECAST_MAX_AGE_MILLIS) {
+                inMemoryForecasts.remove(key);
+                return null;
+            }
+            return copyForecastSnapshot(cached.snapshot);
+        }
+    }
+
+    private void rememberInMemoryForecast(
+            double lat, double lon, String language, String requestLocationId,
+            JSONObject current, JSONObject hourly, JSONObject daily) {
+        ForecastCacheSnapshot snapshot = copyForecastSnapshot(
+                new ForecastCacheSnapshot(current, hourly, daily));
+        if (snapshot == null) return;
+        synchronized (inMemoryForecastLock) {
+            if (inMemoryForecasts.size() >= MAX_IN_MEMORY_FORECASTS) {
+                String oldestKey = null;
+                long oldestTime = Long.MAX_VALUE;
+                for (java.util.Map.Entry<String, InMemoryForecast> entry : inMemoryForecasts.entrySet()) {
+                    if (entry.getValue().updatedAtMillis < oldestTime) {
+                        oldestTime = entry.getValue().updatedAtMillis;
+                        oldestKey = entry.getKey();
+                    }
+                }
+                if (oldestKey != null) inMemoryForecasts.remove(oldestKey);
+            }
+            inMemoryForecasts.put(
+                    forecastCacheScopeKey(lat, lon, language, requestLocationId),
+                    new InMemoryForecast(snapshot, System.currentTimeMillis()));
+        }
+    }
+
+    private static ForecastCacheSnapshot copyForecastSnapshot(ForecastCacheSnapshot source) {
+        if (source == null || source.current == null || source.hourly == null || source.daily == null) {
+            return null;
+        }
+        try {
+            return new ForecastCacheSnapshot(
+                    new JSONObject(source.current.toString()),
+                    new JSONObject(source.hourly.toString()),
+                    new JSONObject(source.daily.toString()));
+        } catch (Exception ignored) {
+            return null;
+        }
+    }
+
+    private static String forecastCacheScopeKey(
+            double lat, double lon, String language, String requestLocationId) {
+        return String.format(
+                Locale.US,
+                "%.5f|%.5f|%s|%s",
+                lat,
+                lon,
+                language == null ? "" : language,
+                requestLocationId == null ? "" : requestLocationId);
     }
 
     void startWeatherLoad(boolean forceNetwork) {
@@ -122,10 +190,14 @@ abstract class WeatherApiActivity extends MinuteForecastViewsActivity {
                 }
                 return;
             }
-            // A location/language change is not a duplicate. Coalesce it to one follow-up load.
-            weatherReloadPending = true;
-            weatherReloadForcePending |= forceNetwork;
-            return;
+            // A location change must supersede the old request immediately. Waiting for the
+            // previous network call can leave its data on screen and delays the new location's
+            // disk/in-memory cache lookup. The old worker observes the generation change and
+            // exits without publishing a result.
+            weatherRequestGeneration++;
+            weatherLoadActive = false;
+            weatherReloadPending = false;
+            weatherReloadForcePending = false;
         }
 
         weatherLoadActive = true;
@@ -143,22 +215,21 @@ abstract class WeatherApiActivity extends MinuteForecastViewsActivity {
         }
         rebindFreshMinuteStateToGeneration(generation, lat, lon, language);
 
-        executor.execute(() -> {
-            try {
-                if (!forceNetwork) {
-                    ForecastCacheSnapshot cached = readFreshForecastCache(
-                            lat, lon, language, requestLocationId);
-                    if (cached != null) {
-                        HourlyPageState cachedState = new HourlyPageState(
-                                generation, lat, lon, language, requestLocationId,
-                                cached.hourly, "", false, true);
-                        runOnUiThread(() -> finishWeatherLoadSuccess(
-                                cached.current, cached.hourly, cached.daily,
-                                cachedState, generation));
-                        return;
-                    }
-                }
+        if (!forceNetwork) {
+            ForecastCacheSnapshot cached = readInMemoryForecast(
+                    lat, lon, language, requestLocationId);
+            if (cached != null) {
+                HourlyPageState cachedState = new HourlyPageState(
+                        generation, lat, lon, language, requestLocationId,
+                        cached.hourly, "", false, true);
+                finishWeatherLoadSuccess(
+                        cached.current, cached.hourly, cached.daily, cachedState, generation);
+                return;
+            }
+        }
 
+        Runnable networkLoad = () -> {
+            try {
                 if (!baseRequestScopeCurrent(generation, lat, lon, language, requestLocationId)) {
                     throw new SupersededWeatherRequestException();
                 }
@@ -204,7 +275,29 @@ abstract class WeatherApiActivity extends MinuteForecastViewsActivity {
             } catch (Exception e) {
                 runOnUiThread(() -> finishWeatherLoadFailure(e, generation));
             }
-        });
+        };
+
+        if (!forceNetwork) {
+            // Keep disk I/O independent from the serialized network executor. A previous
+            // location request may still be blocked in HTTP, but a saved location's cache can
+            // be restored immediately while that request is being superseded.
+            cacheExecutor.execute(() -> {
+                ForecastCacheSnapshot cached = readFreshForecastCache(
+                        lat, lon, language, requestLocationId);
+                if (cached != null) {
+                    HourlyPageState cachedState = new HourlyPageState(
+                            generation, lat, lon, language, requestLocationId,
+                            cached.hourly, "", false, true);
+                    runOnUiThread(() -> finishWeatherLoadSuccess(
+                            cached.current, cached.hourly, cached.daily,
+                            cachedState, generation));
+                    return;
+                }
+                executor.execute(networkLoad);
+            });
+        } else {
+            executor.execute(networkLoad);
+        }
     }
 
     boolean baseRequestScopeCurrent(
@@ -292,6 +385,20 @@ abstract class WeatherApiActivity extends MinuteForecastViewsActivity {
         if (generation != weatherRequestGeneration) return;
         weatherLoadActive = false;
         finishRefreshIndicator();
+        double cachedLatitude = pageState == null ? latitude : pageState.latitude;
+        double cachedLongitude = pageState == null ? longitude : pageState.longitude;
+        String cachedLanguage = pageState == null
+                ? Locale.getDefault().getLanguage() : pageState.language;
+        String cachedLocationId = pageState == null
+                ? (selectedLocationId == null ? "" : selectedLocationId) : pageState.locationId;
+        rememberInMemoryForecast(
+                cachedLatitude,
+                cachedLongitude,
+                cachedLanguage,
+                cachedLocationId,
+                current,
+                hourly,
+                daily);
         if (startPendingWeatherReloadIfNeeded()) return;
         hourlyPageState = pageState;
         render(current, hourly, daily, temperatureUnitPreference());
@@ -325,6 +432,16 @@ abstract class WeatherApiActivity extends MinuteForecastViewsActivity {
             this.current = current;
             this.hourly = hourly;
             this.daily = daily;
+        }
+    }
+
+    static final class InMemoryForecast {
+        final ForecastCacheSnapshot snapshot;
+        final long updatedAtMillis;
+
+        InMemoryForecast(ForecastCacheSnapshot snapshot, long updatedAtMillis) {
+            this.snapshot = snapshot;
+            this.updatedAtMillis = updatedAtMillis;
         }
     }
 

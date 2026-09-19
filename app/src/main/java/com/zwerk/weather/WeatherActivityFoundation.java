@@ -88,6 +88,7 @@ import java.util.concurrent.Executors;
 
 abstract class WeatherActivityFoundation extends Activity {
     abstract void addHero(JSONObject current, JSONObject today);
+    abstract void addWeatherAlertsCard();
     abstract void addHourlyCard(JSONObject hourly, ZoneId zone);
     abstract void addMultiDayCard(JSONArray days, JSONObject hourly, ZoneId zone);
     abstract void addDetailTiles(JSONObject current);
@@ -114,6 +115,7 @@ abstract class WeatherActivityFoundation extends Activity {
     static final String PREF_VISIBILITY_UNIT = "visibility_unit";
     static final String PREF_AIR_QUALITY = "google_air_quality_enabled";
     static final String PREF_POLLEN = "google_pollen_enabled";
+    static final String PREF_SEVERE_ALERTS = "severe_weather_alerts";
     static final String PREF_EXPLICIT_NON_DEVICE_LOCATION = "explicit_non_device_location";
     static final String PREF_SETTINGS_SCENE = "settings_scene";
     static final String PREF_SETTINGS_DAYTIME = "settings_daytime";
@@ -135,8 +137,10 @@ abstract class WeatherActivityFoundation extends Activity {
     static final String VISIBILITY_MI = "mi";
 
     static final String API_ROOT = "https://weather.googleapis.com/v1/";
-    static final String AIR_QUALITY_ENDPOINT = "https://airquality.googleapis.com/v1/currentConditions:lookup";
+    static final String AIR_QUALITY_CURRENT_ENDPOINT = "https://airquality.googleapis.com/v1/currentConditions:lookup";
+    static final String AIR_QUALITY_FORECAST_ENDPOINT = "https://airquality.googleapis.com/v1/forecast:lookup";
     static final String POLLEN_ENDPOINT = "https://pollen.googleapis.com/v1/forecast:lookup";
+    static final String WEATHER_ALERTS_ENDPOINT = "https://weather.googleapis.com/v1/publicAlerts:lookup";
     static final String API_KEY_GUIDE_URL =
             "https://developers.google.com/maps/documentation/weather/get-api-key";
     static final String GOOGLE_CLOUD_CREDENTIALS_URL =
@@ -154,8 +158,8 @@ abstract class WeatherActivityFoundation extends Activity {
     static final String OPTIONAL_CACHE_FILE_SUFFIX = ".json";
     static final String AIR_QUALITY_CACHE_ROOT_PREFIX = "google_air_quality_cache_";
     static final String POLLEN_CACHE_ROOT_PREFIX = "google_pollen_cache_";
-    static final String AIR_QUALITY_CACHE_FILE_PREFIX = "google_air_quality_cache_v1_";
-    static final String POLLEN_CACHE_FILE_PREFIX = "google_pollen_cache_v1_";
+    static final String AIR_QUALITY_CACHE_FILE_PREFIX = "google_air_quality_cache_v2_";
+    static final String POLLEN_CACHE_FILE_PREFIX = "google_pollen_cache_v2_";
     static final long AIR_QUALITY_CACHE_MAX_AGE_MILLIS = 60L * 60L * 1000L;
     static final long POLLEN_CACHE_MAX_AGE_MILLIS = 6L * 60L * 60L * 1000L;
     static final String MINUTE_CACHE_FILE_PREFIX = "weather_minute_cache_v1_";
@@ -190,11 +194,18 @@ abstract class WeatherActivityFoundation extends Activity {
     static final int ACCENT_BLUE = Color.rgb(176, 226, 255);
 
     final ExecutorService executor = Executors.newSingleThreadExecutor();
+    final ExecutorService cacheExecutor = Executors.newSingleThreadExecutor();
     WeatherPreferences weatherPreferences;
     DeviceLocationRefreshCoordinator locationRefreshCoordinator;
     final ExecutorService optionalExecutor = Executors.newFixedThreadPool(2);
 
     LinearLayout content;
+    FrameLayout forecastPageHost;
+    LinearLayout overviewPageContent;
+    LinearLayout precipitationPageContent;
+    LinearLayout activePageContent;
+    boolean renderingAllForecastPages;
+    View globalErrorView;
     ProgressBar progress;
     TextView status;
     TextView locationTitle;
@@ -212,6 +223,7 @@ abstract class WeatherActivityFoundation extends Activity {
     int glassTileBottom = Color.argb(48, 66, 119, 178);
     int glassEdge = Color.TRANSPARENT;
     int dynamicStartIndex;
+    int expandedDayIndex = -1;
     TextView overviewModeButton;
     TextView precipitationModeButton;
     GlassDrawable modeSwitchGlass;
@@ -249,8 +261,10 @@ abstract class WeatherActivityFoundation extends Activity {
     final Object optionalDataLock = new Object();
     OptionalDataState airQualityState;
     OptionalDataState pollenState;
+    OptionalDataState severeAlertsState;
     long airQualityRequestSerial;
     long pollenRequestSerial;
+    long severeAlertsRequestSerial;
     Dialog apiKeySetupDialog;
 
     double latitude = 50.8503;

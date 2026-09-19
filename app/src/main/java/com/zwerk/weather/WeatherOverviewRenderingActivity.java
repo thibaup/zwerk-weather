@@ -4,6 +4,7 @@ import android.animation.ValueAnimator;
 import android.app.Activity;
 import android.app.Dialog;
 import android.content.Context;
+import android.content.ClipData;
 import android.content.Intent;
 import android.content.pm.ApplicationInfo;
 import android.content.pm.PackageManager;
@@ -32,12 +33,14 @@ import android.os.SystemClock;
 import android.util.Log;
 import android.text.InputType;
 import android.text.method.PasswordTransformationMethod;
+import android.view.DragEvent;
 import android.view.Gravity;
 import android.view.KeyEvent;
 import android.view.MotionEvent;
 import android.view.ViewConfiguration;
 import android.view.View;
 import android.view.ViewGroup;
+import android.view.ViewParent;
 import android.view.Window;
 import android.view.WindowInsets;
 import android.view.WindowInsetsController;
@@ -76,6 +79,7 @@ import java.time.Duration;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.time.ZoneId;
+import java.time.temporal.ChronoUnit;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.HashSet;
@@ -87,6 +91,947 @@ import java.util.concurrent.Executors;
 
 
 abstract class WeatherOverviewRenderingActivity extends MinuteForecastRenderingActivity {
+    static final String PREF_OVERVIEW_TILE_ORDER = "overview_information_tile_order_v1";
+    static final String PREF_OVERVIEW_BLOCK_ORDER = "overview_top_level_order_v1";
+    static final String OVERVIEW_TILE_STREAM_PREFIX = "tile:";
+    static final int ACCESSIBILITY_MOVE_TILE_EARLIER =
+            AccessibilityNodeInfo.ACTION_SCROLL_BACKWARD;
+    static final int ACCESSIBILITY_MOVE_TILE_LATER =
+            AccessibilityNodeInfo.ACTION_SCROLL_FORWARD;
+    static final String[] DEFAULT_OVERVIEW_TILE_ORDER = new String[] {
+            "uv",
+            "feels_like",
+            "humidity",
+            "wind",
+            "air_pressure",
+            "visibility",
+            "cloud_cover",
+            "wind_gust",
+            "thunder_chance",
+            "dew_point",
+            "heat_index",
+            "wind_chill",
+            "temperature_change_24h",
+            "precipitation_24h",
+            "air_quality",
+            "pollen"
+    };
+    static final String[] DEFAULT_OVERVIEW_BLOCK_ORDER = new String[] {
+            "hero",
+            "alerts",
+            "hourly",
+            "daily",
+            "details",
+            "solar",
+            "moon",
+            "attribution"
+    };
+
+    static final int OVERVIEW_ID_HERO = 0x6f710001;
+    static final int OVERVIEW_ID_ALERTS = 0x6f710002;
+    static final int OVERVIEW_ID_HOURLY = 0x6f710003;
+    static final int OVERVIEW_ID_DAILY = 0x6f710004;
+    static final int OVERVIEW_ID_DETAILS = 0x6f710005;
+    static final int OVERVIEW_ID_SOLAR = 0x6f710006;
+    static final int OVERVIEW_ID_MOON = 0x6f710007;
+    static final int OVERVIEW_ID_ATTRIBUTION = 0x6f710008;
+
+    static final class OverviewTileSpec {
+        final String id;
+        final View view;
+
+        OverviewTileSpec(String id, View view) {
+            this.id = id;
+            this.view = view;
+        }
+    }
+
+    static final class OverviewStreamSpec {
+        final String id;
+        final View view;
+        final boolean tile;
+
+        OverviewStreamSpec(String id, View view, boolean tile) {
+            this.id = id;
+            this.view = view;
+            this.tile = tile;
+        }
+    }
+
+    static final class OverviewDragState {
+        final String id;
+        final View source;
+        final boolean tile;
+        View placeholder;
+        ValueAnimator placeholderAnimator;
+        int insertionIndex;
+        boolean dragActive;
+        boolean dropHandled;
+        float latestPointerScreenX = Float.NaN;
+        float latestPointerScreenY = Float.NaN;
+        ScrollView autoScrollViewport;
+        Runnable autoScrollRunnable;
+        boolean autoScrollFrameScheduled;
+
+        OverviewDragState(String id, View source, boolean tile, int insertionIndex) {
+            this.id = id;
+            this.source = source;
+            this.tile = tile;
+            this.insertionIndex = insertionIndex;
+        }
+    }
+
+    @Override
+    void installOverviewTopLevelBoard(LinearLayout staging) {
+        if (staging == null || overviewPageContent == null) return;
+        removePageGlassDrawables(overviewPageContent);
+        overviewPageContent.removeAllViews();
+
+        ArrayList<OverviewStreamSpec> available = new ArrayList<>();
+        while (staging.getChildCount() > 0) {
+            View child = staging.getChildAt(0);
+            staging.removeViewAt(0);
+            Object tag = child.getTag();
+            String id = tag instanceof String ? ((String) tag).trim() : "";
+            if (id.isEmpty()) id = "overview_block_" + available.size();
+            boolean tile = isOverviewTileStreamId(id);
+            available.add(new OverviewStreamSpec(id, child, tile));
+        }
+        if (available.isEmpty()) return;
+
+        ArrayList<OverviewStreamSpec> stream = orderedOverviewStream(available);
+        LinearLayout board = new LinearLayout(this);
+        board.setOrientation(LinearLayout.VERTICAL);
+        board.setClipChildren(false);
+        board.setClipToPadding(false);
+
+        for (OverviewStreamSpec spec : stream) {
+            configureOverviewStreamReordering(board, stream, spec);
+        }
+        rebuildOverviewStreamBoard(board, stream, null);
+        board.setOnDragListener((target, event) -> handleOverviewStreamDrag(board, stream, event));
+        overviewPageContent.addView(board, new LinearLayout.LayoutParams(-1, -2));
+    }
+
+    String overviewTileStreamId(String tileId) {
+        return OVERVIEW_TILE_STREAM_PREFIX + (tileId == null ? "" : tileId.trim());
+    }
+
+    boolean isOverviewTileStreamId(String id) {
+        return id != null && id.startsWith(OVERVIEW_TILE_STREAM_PREFIX)
+                && id.length() > OVERVIEW_TILE_STREAM_PREFIX.length();
+    }
+
+    String overviewTileIdFromStreamId(String id) {
+        return isOverviewTileStreamId(id)
+                ? id.substring(OVERVIEW_TILE_STREAM_PREFIX.length()) : "";
+    }
+
+    ArrayList<OverviewStreamSpec> orderedOverviewStream(ArrayList<OverviewStreamSpec> available) {
+        ArrayList<OverviewStreamSpec> ordered = new ArrayList<>();
+        ArrayList<String> saved = overviewStreamFullOrder();
+        for (String id : saved) {
+            OverviewStreamSpec spec = findOverviewStreamSpec(available, id);
+            if (spec != null && findOverviewStreamSpec(ordered, id) == null) ordered.add(spec);
+        }
+        for (OverviewStreamSpec spec : available) {
+            if (findOverviewStreamSpec(ordered, spec.id) == null) ordered.add(spec);
+        }
+        return ordered;
+    }
+
+    ArrayList<String> overviewSavedBlockOrderRaw() {
+        ArrayList<String> order = new ArrayList<>();
+        HashSet<String> seen = new HashSet<>();
+        String saved = getSharedPreferences(UI_PREFS, MODE_PRIVATE)
+                .getString(PREF_OVERVIEW_BLOCK_ORDER, "");
+        if (saved != null && !saved.trim().isEmpty()) {
+            try {
+                JSONArray array = new JSONArray(saved);
+                for (int i = 0; i < array.length() && order.size() < 128; i++) {
+                    String id = array.optString(i, "").trim();
+                    if (!id.isEmpty() && seen.add(id)) order.add(id);
+                }
+            } catch (Exception ignored) { }
+        }
+        return order;
+    }
+
+    ArrayList<String> overviewLegacyBlockFullOrder() {
+        ArrayList<String> order = new ArrayList<>();
+        HashSet<String> seen = new HashSet<>();
+        for (String id : overviewSavedBlockOrderRaw()) {
+            if (isOverviewTileStreamId(id)) continue;
+            if (seen.add(id)) order.add(id);
+        }
+        for (String id : DEFAULT_OVERVIEW_BLOCK_ORDER) {
+            if (seen.add(id)) order.add(id);
+        }
+        return order;
+    }
+
+    ArrayList<String> overviewStreamFullOrder() {
+        ArrayList<String> raw = overviewSavedBlockOrderRaw();
+        boolean hasCombinedOrder = false;
+        for (String id : raw) {
+            if (isOverviewTileStreamId(id)) {
+                hasCombinedOrder = true;
+                break;
+            }
+        }
+
+        ArrayList<String> tileOrder = overviewTileFullOrder();
+        ArrayList<String> order = new ArrayList<>();
+        HashSet<String> seen = new HashSet<>();
+        if (!hasCombinedOrder) {
+            boolean insertedTiles = false;
+            for (String id : overviewLegacyBlockFullOrder()) {
+                if ("details".equals(id)) {
+                    for (String tileId : tileOrder) {
+                        String streamId = overviewTileStreamId(tileId);
+                        if (seen.add(streamId)) order.add(streamId);
+                    }
+                    insertedTiles = true;
+                } else if (seen.add(id)) {
+                    order.add(id);
+                }
+            }
+            if (!insertedTiles) {
+                for (String tileId : tileOrder) {
+                    String streamId = overviewTileStreamId(tileId);
+                    if (seen.add(streamId)) order.add(streamId);
+                }
+            }
+            return order;
+        }
+
+        for (String id : raw) {
+            if ("details".equals(id)) continue;
+            if (seen.add(id)) order.add(id);
+        }
+
+        int tileInsert = -1;
+        for (int i = 0; i < order.size(); i++) {
+            if (isOverviewTileStreamId(order.get(i))) tileInsert = i + 1;
+        }
+        if (tileInsert < 0) {
+            tileInsert = order.indexOf("solar");
+            if (tileInsert < 0) tileInsert = order.size();
+        }
+        for (String tileId : tileOrder) {
+            String streamId = overviewTileStreamId(tileId);
+            if (seen.add(streamId)) order.add(tileInsert++, streamId);
+        }
+        for (String id : DEFAULT_OVERVIEW_BLOCK_ORDER) {
+            if ("details".equals(id)) continue;
+            if (seen.add(id)) order.add(id);
+        }
+        return order;
+    }
+
+    void persistOverviewStreamOrder(ArrayList<OverviewStreamSpec> visibleStream) {
+        if (visibleStream == null || visibleStream.isEmpty()) return;
+        ArrayList<String> fullOrder = overviewStreamFullOrder();
+        HashSet<String> visibleIds = new HashSet<>();
+        for (OverviewStreamSpec spec : visibleStream) visibleIds.add(spec.id);
+
+        int nextVisible = 0;
+        for (int i = 0; i < fullOrder.size() && nextVisible < visibleStream.size(); i++) {
+            if (!visibleIds.contains(fullOrder.get(i))) continue;
+            fullOrder.set(i, visibleStream.get(nextVisible++).id);
+        }
+        while (nextVisible < visibleStream.size()) {
+            String id = visibleStream.get(nextVisible++).id;
+            if (!fullOrder.contains(id)) fullOrder.add(id);
+        }
+
+        JSONArray serialized = new JSONArray();
+        for (String id : fullOrder) serialized.put(id);
+        getSharedPreferences(UI_PREFS, MODE_PRIVATE)
+                .edit()
+                .putString(PREF_OVERVIEW_BLOCK_ORDER, serialized.toString())
+                .apply();
+
+        ArrayList<String> visibleTileIds = new ArrayList<>();
+        for (OverviewStreamSpec spec : visibleStream) {
+            if (spec.tile) visibleTileIds.add(overviewTileIdFromStreamId(spec.id));
+        }
+        persistOverviewTileIds(visibleTileIds);
+    }
+
+    void persistOverviewTileIds(ArrayList<String> visibleTileIds) {
+        if (visibleTileIds == null || visibleTileIds.isEmpty()) return;
+        ArrayList<String> fullOrder = overviewTileFullOrder();
+        HashSet<String> visibleIds = new HashSet<>(visibleTileIds);
+        int nextVisible = 0;
+        for (int i = 0; i < fullOrder.size() && nextVisible < visibleTileIds.size(); i++) {
+            if (!visibleIds.contains(fullOrder.get(i))) continue;
+            fullOrder.set(i, visibleTileIds.get(nextVisible++));
+        }
+        while (nextVisible < visibleTileIds.size()) {
+            String id = visibleTileIds.get(nextVisible++);
+            if (!fullOrder.contains(id)) fullOrder.add(id);
+        }
+        JSONArray serialized = new JSONArray();
+        for (String id : fullOrder) serialized.put(id);
+        getSharedPreferences(UI_PREFS, MODE_PRIVATE)
+                .edit()
+                .putString(PREF_OVERVIEW_TILE_ORDER, serialized.toString())
+                .apply();
+    }
+
+    void configureOverviewStreamReordering(
+            LinearLayout board,
+            ArrayList<OverviewStreamSpec> stream,
+            OverviewStreamSpec spec) {
+        View source = spec.view;
+        if (!spec.tile) source.setId(overviewBlockViewId(spec.id));
+        source.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_YES);
+        CharSequence existingDescription = source.getContentDescription();
+        String accessibleBase = existingDescription == null
+                ? "" : existingDescription.toString().trim();
+        if (accessibleBase.isEmpty() && source instanceof TextView) {
+            CharSequence sourceText = ((TextView) source).getText();
+            accessibleBase = sourceText == null ? "" : sourceText.toString().trim();
+        }
+        if (accessibleBase.isEmpty()) {
+            accessibleBase = spec.tile ? "Information tile" : overviewBlockLabel(spec.id);
+        }
+        source.setContentDescription(accessibleBase);
+        source.setTooltipText(spec.tile ? "Reorder information tile" : "Reorder section");
+        source.setLongClickable(true);
+
+        View.OnLongClickListener longClick = v -> startOverviewStreamDrag(board, stream, spec);
+        source.setOnLongClickListener(longClick);
+        if (!spec.tile) installOverviewLongPressOnDescendants(source, longClick);
+
+        source.setAccessibilityDelegate(new View.AccessibilityDelegate() {
+            @Override
+            public void onInitializeAccessibilityNodeInfo(
+                    View host, AccessibilityNodeInfo info) {
+                super.onInitializeAccessibilityNodeInfo(host, info);
+                int index = indexOfOverviewStream(stream, spec.id);
+                info.setLongClickable(true);
+                info.setTooltipText(spec.tile ? "Reorder information tile" : "Reorder section");
+                if (index > 0) {
+                    info.addAction(new AccessibilityNodeInfo.AccessibilityAction(
+                            spec.tile ? ACCESSIBILITY_MOVE_TILE_EARLIER
+                                    : AccessibilityNodeInfo.ACTION_SCROLL_BACKWARD,
+                            spec.tile ? "Move earlier" : "Move section earlier"));
+                }
+                if (index >= 0 && index < stream.size() - 1) {
+                    info.addAction(new AccessibilityNodeInfo.AccessibilityAction(
+                            spec.tile ? ACCESSIBILITY_MOVE_TILE_LATER
+                                    : AccessibilityNodeInfo.ACTION_SCROLL_FORWARD,
+                            spec.tile ? "Move later" : "Move section later"));
+                }
+            }
+
+            @Override
+            public boolean performAccessibilityAction(View host, int action, Bundle args) {
+                if (action == (spec.tile ? ACCESSIBILITY_MOVE_TILE_EARLIER
+                        : AccessibilityNodeInfo.ACTION_SCROLL_BACKWARD)) {
+                    return moveOverviewStreamByOffset(board, stream, spec.id, -1);
+                }
+                if (action == (spec.tile ? ACCESSIBILITY_MOVE_TILE_LATER
+                        : AccessibilityNodeInfo.ACTION_SCROLL_FORWARD)) {
+                    return moveOverviewStreamByOffset(board, stream, spec.id, 1);
+                }
+                return super.performAccessibilityAction(host, action, args);
+            }
+        });
+    }
+
+    void installOverviewLongPressOnDescendants(
+            View root, View.OnLongClickListener listener) {
+        if (!(root instanceof ViewGroup)) return;
+        ViewGroup group = (ViewGroup) root;
+        for (int i = 0; i < group.getChildCount(); i++) {
+            View child = group.getChildAt(i);
+            if (child.isClickable() || child.isLongClickable()
+                    || child instanceof HorizontalScrollView || child instanceof ScrollView) {
+                child.setOnLongClickListener(listener);
+            }
+            if (child instanceof ViewGroup) {
+                installOverviewLongPressOnDescendants(child, listener);
+            }
+        }
+    }
+
+    boolean startOverviewStreamDrag(
+            LinearLayout board,
+            ArrayList<OverviewStreamSpec> stream,
+            OverviewStreamSpec spec) {
+        int index = indexOfOverviewStream(stream, spec.id);
+        if (index < 0 || spec.view.getParent() == null) return false;
+        OverviewDragState state = new OverviewDragState(spec.id, spec.view, spec.tile, index);
+        ClipData data = ClipData.newPlainText(
+                spec.tile ? "overview_tile_id" : "overview_block_id", spec.id);
+        boolean started = spec.view.startDragAndDrop(
+                data, new View.DragShadowBuilder(spec.view), state, 0);
+        if (!started) {
+            state.dragActive = false;
+            clearOverviewAutoScroll(state);
+            removeOverviewPlaceholder(state);
+            rebuildOverviewStreamBoard(board, stream, null);
+            restoreOverviewStreamDragVisuals(stream);
+        }
+        return started;
+    }
+
+    boolean handleOverviewStreamDrag(
+            LinearLayout board,
+            ArrayList<OverviewStreamSpec> stream,
+            DragEvent event) {
+        Object local = event.getLocalState();
+        if (!(local instanceof OverviewDragState)) return false;
+        OverviewDragState state = (OverviewDragState) local;
+        OverviewStreamSpec dragged = findOverviewStreamSpec(stream, state.id);
+        if (dragged == null || dragged.view != state.source) {
+            state.dragActive = false;
+            clearOverviewAutoScroll(state);
+            removeOverviewPlaceholder(state);
+            rebuildOverviewStreamBoard(board, stream, null);
+            restoreOverviewStreamDragVisuals(stream);
+            return false;
+        }
+
+        switch (event.getAction()) {
+            case DragEvent.ACTION_DRAG_STARTED:
+                state.dragActive = true;
+                state.dropHandled = false;
+                state.source.animate().cancel();
+                state.source.setAlpha(0.38f);
+                state.source.setScaleX(0.985f);
+                state.source.setScaleY(0.985f);
+                if (state.placeholder == null) {
+                    state.placeholder = createOverviewPlaceholder(state.source, state.tile);
+                    startOverviewPlaceholderAnimation(state);
+                }
+                rebuildOverviewStreamBoard(board, stream, state);
+                return true;
+            case DragEvent.ACTION_DRAG_LOCATION:
+                updateOverviewDragLocation(board, stream, state, event.getX(), event.getY());
+                return true;
+            case DragEvent.ACTION_DRAG_EXITED:
+                // EXITED at a clipped edge is not termination. The self-rescheduling frame loop
+                // continues from the last screen coordinate until scrolling reaches its limit.
+                return true;
+            case DragEvent.ACTION_DROP:
+                updateOverviewDragLocation(board, stream, state, event.getX(), event.getY());
+                state.dragActive = false;
+                boolean changed = moveOverviewStreamToInsertion(
+                        stream, state.id, state.insertionIndex);
+                state.dropHandled = true;
+                if (changed) persistOverviewStreamOrder(stream);
+                clearOverviewAutoScroll(state);
+                removeOverviewPlaceholder(state);
+                rebuildOverviewStreamBoard(board, stream, null);
+                restoreOverviewStreamDragVisuals(stream);
+                if (changed) {
+                    state.source.announceForAccessibility(
+                            state.tile ? "Information tile moved"
+                                    : overviewBlockLabel(state.id) + " moved");
+                }
+                return true;
+            case DragEvent.ACTION_DRAG_ENDED:
+                state.dragActive = false;
+                clearOverviewAutoScroll(state);
+                removeOverviewPlaceholder(state);
+                if (!state.dropHandled) rebuildOverviewStreamBoard(board, stream, null);
+                restoreOverviewStreamDragVisuals(stream);
+                return true;
+            default:
+                return true;
+        }
+    }
+
+    void updateOverviewDragLocation(
+            LinearLayout board,
+            ArrayList<OverviewStreamSpec> stream,
+            OverviewDragState state,
+            float boardX,
+            float boardY) {
+        if (state == null || !state.dragActive || board == null) return;
+        int[] boardLocation = new int[2];
+        board.getLocationOnScreen(boardLocation);
+        state.latestPointerScreenX = boardLocation[0] + boardX;
+        state.latestPointerScreenY = boardLocation[1] + boardY;
+        int insertion = overviewInsertionIndexForPosition(
+                board, stream, state.id, boardX, boardY);
+        if (insertion != state.insertionIndex) {
+            state.insertionIndex = insertion;
+            rebuildOverviewStreamBoard(board, stream, state);
+        }
+        updateOverviewAutoScroll(board, stream, state);
+    }
+
+    int overviewInsertionIndexForPosition(
+            LinearLayout board,
+            ArrayList<OverviewStreamSpec> stream,
+            String draggedId,
+            float boardX,
+            float boardY) {
+        ArrayList<OverviewStreamSpec> remaining = new ArrayList<>();
+        for (OverviewStreamSpec spec : stream) {
+            if (!spec.id.equals(draggedId)) remaining.add(spec);
+        }
+        if (remaining.isEmpty()) return 0;
+
+        int[] boardLocation = new int[2];
+        board.getLocationOnScreen(boardLocation);
+        int i = 0;
+        while (i < remaining.size()) {
+            OverviewStreamSpec first = remaining.get(i);
+            ViewParent firstParent = first.view.getParent();
+            int end = i + 1;
+            if (first.tile && firstParent instanceof ViewGroup && firstParent != board) {
+                while (end < remaining.size()) {
+                    OverviewStreamSpec next = remaining.get(end);
+                    if (!next.tile || next.view.getParent() != firstParent) break;
+                    end++;
+                }
+            }
+
+            int groupTop = Integer.MAX_VALUE;
+            int groupBottom = Integer.MIN_VALUE;
+            for (int j = i; j < end; j++) {
+                int[] location = new int[2];
+                View view = remaining.get(j).view;
+                view.getLocationOnScreen(location);
+                int top = location[1] - boardLocation[1];
+                groupTop = Math.min(groupTop, top);
+                groupBottom = Math.max(groupBottom, top + Math.max(1, view.getHeight()));
+            }
+            if (boardY < groupTop) return i;
+            if (boardY <= groupBottom) {
+                if (first.tile) {
+                    for (int j = i; j < end; j++) {
+                        View view = remaining.get(j).view;
+                        int[] location = new int[2];
+                        view.getLocationOnScreen(location);
+                        float left = location[0] - boardLocation[0];
+                        float midpoint = left + view.getWidth() / 2f;
+                        if (boardX < midpoint) return j;
+                    }
+                    return end;
+                }
+                View view = first.view;
+                int[] location = new int[2];
+                view.getLocationOnScreen(location);
+                float midpoint = location[1] - boardLocation[1] + view.getHeight() / 2f;
+                return boardY < midpoint ? i : end;
+            }
+
+            if (end < remaining.size()) {
+                int[] nextLocation = new int[2];
+                remaining.get(end).view.getLocationOnScreen(nextLocation);
+                float nextTop = nextLocation[1] - boardLocation[1];
+                if (boardY < nextTop) return end;
+            }
+            i = end;
+        }
+        return remaining.size();
+    }
+
+    boolean moveOverviewStreamToInsertion(
+            ArrayList<OverviewStreamSpec> stream, String draggedId, int insertionIndex) {
+        int from = indexOfOverviewStream(stream, draggedId);
+        if (from < 0) return false;
+        OverviewStreamSpec moving = stream.remove(from);
+        int insertion = Math.max(0, Math.min(insertionIndex, stream.size()));
+        stream.add(insertion, moving);
+        return insertion != from;
+    }
+
+    boolean moveOverviewStreamByOffset(
+            LinearLayout board,
+            ArrayList<OverviewStreamSpec> stream,
+            String id,
+            int offset) {
+        int from = indexOfOverviewStream(stream, id);
+        int to = from + offset;
+        if (from < 0 || to < 0 || to >= stream.size()) return false;
+        OverviewStreamSpec moving = stream.remove(from);
+        stream.add(to, moving);
+        persistOverviewStreamOrder(stream);
+        rebuildOverviewStreamBoard(board, stream, null);
+        moving.view.announceForAccessibility(moving.tile
+                ? (offset < 0 ? "Information tile moved earlier" : "Information tile moved later")
+                : overviewBlockLabel(id) + (offset < 0 ? " moved earlier" : " moved later"));
+        return true;
+    }
+
+    void rebuildOverviewStreamBoard(
+            LinearLayout board,
+            ArrayList<OverviewStreamSpec> stream,
+            OverviewDragState dragState) {
+        if (board == null || stream == null) return;
+        for (OverviewStreamSpec spec : stream) {
+            ViewParent parent = spec.view.getParent();
+            if (parent instanceof ViewGroup) ((ViewGroup) parent).removeView(spec.view);
+        }
+        if (dragState != null && dragState.placeholder != null) {
+            ViewParent parent = dragState.placeholder.getParent();
+            if (parent instanceof ViewGroup) ((ViewGroup) parent).removeView(dragState.placeholder);
+        }
+        board.removeAllViews();
+
+        ArrayList<View> views = new ArrayList<>();
+        ArrayList<Boolean> tiles = new ArrayList<>();
+        if (dragState == null || dragState.placeholder == null) {
+            for (OverviewStreamSpec spec : stream) {
+                views.add(spec.view);
+                tiles.add(spec.tile);
+            }
+        } else {
+            ArrayList<OverviewStreamSpec> remaining = new ArrayList<>();
+            for (OverviewStreamSpec spec : stream) {
+                if (!dragState.id.equals(spec.id)) remaining.add(spec);
+            }
+            int insertion = Math.max(0, Math.min(dragState.insertionIndex, remaining.size()));
+            for (int i = 0; i <= remaining.size(); i++) {
+                if (i == insertion) {
+                    views.add(dragState.placeholder);
+                    tiles.add(dragState.tile);
+                }
+                if (i < remaining.size()) {
+                    views.add(remaining.get(i).view);
+                    tiles.add(remaining.get(i).tile);
+                }
+            }
+        }
+
+        int columns = overviewTileColumnCount(board);
+        int index = 0;
+        boolean previousWasTileRow = false;
+        while (index < views.size()) {
+            if (!tiles.get(index)) {
+                View view = views.get(index);
+                ViewGroup.LayoutParams existing = view.getLayoutParams();
+                LinearLayout.LayoutParams lp = existing instanceof LinearLayout.LayoutParams
+                        ? new LinearLayout.LayoutParams((LinearLayout.LayoutParams) existing)
+                        : new LinearLayout.LayoutParams(-1, -2);
+                if (lp.width == 0) lp.width = -1;
+                board.addView(view, lp);
+                previousWasTileRow = false;
+                index++;
+                continue;
+            }
+
+            int runEnd = index;
+            while (runEnd < views.size() && tiles.get(runEnd)) runEnd++;
+            for (int rowStart = index; rowStart < runEnd; rowStart += columns) {
+                LinearLayout row = new LinearLayout(this);
+                row.setOrientation(LinearLayout.HORIZONTAL);
+                row.setBaselineAligned(false);
+                row.setClipChildren(false);
+                row.setClipToPadding(false);
+                int count = Math.min(columns, runEnd - rowStart);
+                for (int column = 0; column < count; column++) {
+                    int left = column == 0 ? 0 : dp(4);
+                    int right = column == count - 1 ? 0 : dp(4);
+                    addWeightedTile(row, views.get(rowStart + column), left, right);
+                }
+                LinearLayout.LayoutParams rowLp = new LinearLayout.LayoutParams(-1, -2);
+                rowLp.topMargin = previousWasTileRow ? dp(8) : dp(12);
+                board.addView(row, rowLp);
+                previousWasTileRow = true;
+            }
+            index = runEnd;
+        }
+        board.requestLayout();
+        board.invalidate();
+    }
+
+    View createOverviewPlaceholder(View source, boolean tile) {
+        FrameLayout placeholder = new FrameLayout(this);
+        placeholder.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
+        placeholder.setClickable(false);
+        placeholder.setFocusable(false);
+        GradientDrawable ghost = new GradientDrawable();
+        ghost.setColor(Color.argb(78,
+                Color.red(cardColor), Color.green(cardColor), Color.blue(cardColor)));
+        ghost.setCornerRadius(dp(tile ? 20 : 22));
+        ghost.setStroke(dp(2), Color.argb(190,
+                Color.red(ACCENT_BLUE), Color.green(ACCENT_BLUE), Color.blue(ACCENT_BLUE)));
+        placeholder.setBackground(ghost);
+        if (!tile) {
+            int height = Math.max(dp(48), Math.max(source.getHeight(), source.getMeasuredHeight()));
+            LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-1, height);
+            ViewGroup.LayoutParams sourceParams = source.getLayoutParams();
+            if (sourceParams instanceof LinearLayout.LayoutParams) {
+                lp = new LinearLayout.LayoutParams((LinearLayout.LayoutParams) sourceParams);
+                lp.width = -1;
+                lp.height = height;
+            }
+            placeholder.setLayoutParams(lp);
+        }
+        return placeholder;
+    }
+
+    void startOverviewPlaceholderAnimation(OverviewDragState state) {
+        if (state == null || state.placeholder == null) return;
+        ValueAnimator pulse = ValueAnimator.ofFloat(0.62f, 0.92f);
+        pulse.setDuration(520L);
+        pulse.setRepeatMode(ValueAnimator.REVERSE);
+        pulse.setRepeatCount(ValueAnimator.INFINITE);
+        pulse.addUpdateListener(animation -> {
+            if (state.placeholder != null) {
+                state.placeholder.setAlpha((Float) animation.getAnimatedValue());
+            }
+        });
+        state.placeholderAnimator = pulse;
+        pulse.start();
+    }
+
+    void removeOverviewPlaceholder(OverviewDragState state) {
+        if (state == null) return;
+        if (state.placeholderAnimator != null) {
+            state.placeholderAnimator.cancel();
+            state.placeholderAnimator = null;
+        }
+        if (state.placeholder != null) {
+            ViewParent parent = state.placeholder.getParent();
+            if (parent instanceof ViewGroup) ((ViewGroup) parent).removeView(state.placeholder);
+            state.placeholder = null;
+        }
+    }
+
+    void restoreOverviewStreamDragVisuals(ArrayList<OverviewStreamSpec> stream) {
+        if (stream == null) return;
+        for (OverviewStreamSpec spec : stream) {
+            spec.view.animate().cancel();
+            spec.view.setAlpha(1f);
+            spec.view.setScaleX(1f);
+            spec.view.setScaleY(1f);
+        }
+    }
+
+    void updateOverviewAutoScroll(
+            LinearLayout board,
+            ArrayList<OverviewStreamSpec> stream,
+            OverviewDragState state) {
+        if (state == null || !state.dragActive || board == null || !board.isAttachedToWindow()
+                || Float.isNaN(state.latestPointerScreenY)) return;
+        ScrollView viewport = overviewAutoScrollViewport(board);
+        if (viewport == null) return;
+        int direction = overviewAutoScrollDirection(viewport, state.latestPointerScreenY);
+        if (direction == 0 || !overviewCanAutoScroll(viewport, direction)) return;
+        if (state.autoScrollRunnable == null) {
+            state.autoScrollRunnable = () -> runOverviewAutoScrollFrame(board, stream, state);
+        }
+        scheduleOverviewAutoScrollFrame(state, viewport);
+    }
+
+    void scheduleOverviewAutoScrollFrame(OverviewDragState state, ScrollView viewport) {
+        if (state == null || viewport == null || state.autoScrollRunnable == null
+                || state.autoScrollFrameScheduled || !state.dragActive) return;
+        state.autoScrollViewport = viewport;
+        state.autoScrollFrameScheduled = true;
+        viewport.postOnAnimation(state.autoScrollRunnable);
+    }
+
+    void runOverviewAutoScrollFrame(
+            LinearLayout board,
+            ArrayList<OverviewStreamSpec> stream,
+            OverviewDragState state) {
+        if (state == null) return;
+        state.autoScrollFrameScheduled = false;
+        if (!state.dragActive || state.autoScrollRunnable == null || board == null
+                || !board.isAttachedToWindow() || Float.isNaN(state.latestPointerScreenY)) return;
+
+        ScrollView viewport = overviewAutoScrollViewport(board);
+        if (viewport == null || !viewport.isAttachedToWindow()) return;
+        state.autoScrollViewport = viewport;
+        int direction = overviewAutoScrollDirection(viewport, state.latestPointerScreenY);
+        if (direction == 0 || !overviewCanAutoScroll(viewport, direction)) return;
+
+        float depth = overviewAutoScrollDepth(viewport, state.latestPointerScreenY, direction);
+        int step = Math.max(1, Math.round(dp(18) * Math.max(0.18f, depth)));
+        int before = Math.max(0, viewport.getScrollY());
+        int maxScrollY = overviewMaxScrollY(viewport);
+        int target = Math.max(0, Math.min(maxScrollY, before + direction * step));
+        if (target != before) {
+            viewport.scrollTo(viewport.getScrollX(), target);
+        } else if (viewport.canScrollVertically(direction)) {
+            viewport.scrollBy(0, direction * step);
+        }
+
+        int after = Math.max(0, viewport.getScrollY());
+        if (after != before) {
+            int[] boardLocation = new int[2];
+            board.getLocationOnScreen(boardLocation);
+            float clippedY = overviewClippedPointerScreenY(viewport, state.latestPointerScreenY);
+            if (!Float.isNaN(clippedY)) {
+                float boardX = Float.isNaN(state.latestPointerScreenX)
+                        ? board.getWidth() / 2f : state.latestPointerScreenX - boardLocation[0];
+                float boardY = clippedY - boardLocation[1];
+                int insertion = overviewInsertionIndexForPosition(
+                        board, stream, state.id, boardX, boardY);
+                if (insertion != state.insertionIndex) {
+                    state.insertionIndex = insertion;
+                    rebuildOverviewStreamBoard(board, stream, state);
+                }
+            }
+        }
+
+        ScrollView liveViewport = overviewAutoScrollViewport(board);
+        if (state.dragActive && liveViewport != null) {
+            int liveDirection = overviewAutoScrollDirection(
+                    liveViewport, state.latestPointerScreenY);
+            if (liveDirection != 0 && overviewCanAutoScroll(liveViewport, liveDirection)) {
+                scheduleOverviewAutoScrollFrame(state, liveViewport);
+            }
+        }
+    }
+
+    ScrollView overviewAutoScrollViewport(LinearLayout board) {
+        ViewParent parent = board == null ? null : board.getParent();
+        while (parent instanceof View) {
+            View candidate = (View) parent;
+            if (candidate instanceof ScrollView && overviewViewportIsVisible(candidate)) {
+                return (ScrollView) candidate;
+            }
+            parent = candidate.getParent();
+        }
+        if (mainScroll instanceof ScrollView && overviewViewportIsVisible(mainScroll)) {
+            return (ScrollView) mainScroll;
+        }
+        return null;
+    }
+
+    boolean overviewViewportIsVisible(View viewport) {
+        if (viewport == null || !viewport.isShown() || !viewport.isAttachedToWindow()) return false;
+        Rect visible = new Rect();
+        return viewport.getGlobalVisibleRect(visible) && visible.height() > 0;
+    }
+
+    boolean overviewCanAutoScroll(ScrollView viewport, int direction) {
+        if (viewport == null || direction == 0) return false;
+        int scrollY = Math.max(0, viewport.getScrollY());
+        int maxScrollY = overviewMaxScrollY(viewport);
+        boolean platformCanScroll = viewport.canScrollVertically(direction);
+        if (direction < 0) return platformCanScroll || scrollY > 0;
+        return platformCanScroll || scrollY < maxScrollY;
+    }
+
+    int overviewMaxScrollY(ScrollView viewport) {
+        if (viewport == null || viewport.getChildCount() == 0) return 0;
+        View child = viewport.getChildAt(0);
+        int bottomMargin = 0;
+        ViewGroup.LayoutParams params = child.getLayoutParams();
+        if (params instanceof ViewGroup.MarginLayoutParams) {
+            bottomMargin = ((ViewGroup.MarginLayoutParams) params).bottomMargin;
+        }
+        int childBottom = Math.max(child.getBottom(),
+                child.getTop() + Math.max(child.getHeight(), child.getMeasuredHeight()));
+        int visibleBottom = Math.max(viewport.getPaddingTop(),
+                viewport.getHeight() - viewport.getPaddingBottom());
+        int laidOutRange = Math.max(0, childBottom + bottomMargin - visibleBottom);
+        return Math.max(Math.max(0, viewport.getScrollY()), laidOutRange);
+    }
+
+    boolean overviewAutoScrollBoundsOnScreen(View viewport, Rect outBounds) {
+        if (viewport == null || outBounds == null || !viewport.getGlobalVisibleRect(outBounds)
+                || outBounds.height() <= 0) return false;
+        int[] viewportLocation = new int[2];
+        viewport.getLocationOnScreen(viewportLocation);
+        int contentTop = viewportLocation[1] + viewport.getPaddingTop();
+        int contentBottom = viewportLocation[1] + viewport.getHeight()
+                - viewport.getPaddingBottom();
+        outBounds.top = Math.max(outBounds.top, contentTop);
+        outBounds.bottom = Math.min(outBounds.bottom, contentBottom);
+        return outBounds.bottom > outBounds.top;
+    }
+
+    float overviewClippedPointerScreenY(View viewport, float pointerScreenY) {
+        Rect bounds = new Rect();
+        if (!overviewAutoScrollBoundsOnScreen(viewport, bounds) || Float.isNaN(pointerScreenY)) {
+            return Float.NaN;
+        }
+        return Math.max(bounds.top, Math.min(pointerScreenY, bounds.bottom));
+    }
+
+    int overviewAutoScrollDirection(View viewport, float pointerScreenY) {
+        if (Float.isNaN(pointerScreenY)) return 0;
+        Rect bounds = new Rect();
+        if (!overviewAutoScrollBoundsOnScreen(viewport, bounds)) return 0;
+        float clippedY = Math.max(bounds.top, Math.min(pointerScreenY, bounds.bottom));
+        int band = Math.min(dp(120), Math.max(1, bounds.height() / 2));
+        float topDepth = Math.max(0f, Math.min(1f,
+                (bounds.top + band - clippedY) / band));
+        float bottomDepth = Math.max(0f, Math.min(1f,
+                (clippedY - (bounds.bottom - band)) / band));
+        if (topDepth <= 0f && bottomDepth <= 0f) return 0;
+        return topDepth >= bottomDepth ? -1 : 1;
+    }
+
+    float overviewAutoScrollDepth(View viewport, float pointerScreenY, int direction) {
+        if (Float.isNaN(pointerScreenY)) return 0f;
+        Rect bounds = new Rect();
+        if (!overviewAutoScrollBoundsOnScreen(viewport, bounds)) return 0f;
+        float clippedY = Math.max(bounds.top, Math.min(pointerScreenY, bounds.bottom));
+        int band = Math.min(dp(120), Math.max(1, bounds.height() / 2));
+        float depth = direction < 0
+                ? (bounds.top + band - clippedY) / band
+                : (clippedY - (bounds.bottom - band)) / band;
+        return Math.max(0f, Math.min(1f, depth));
+    }
+
+    void clearOverviewAutoScroll(OverviewDragState state) {
+        if (state == null) return;
+        if (state.autoScrollViewport != null && state.autoScrollRunnable != null) {
+            state.autoScrollViewport.removeCallbacks(state.autoScrollRunnable);
+        }
+        state.autoScrollFrameScheduled = false;
+        state.autoScrollRunnable = null;
+        state.autoScrollViewport = null;
+        state.latestPointerScreenX = Float.NaN;
+        state.latestPointerScreenY = Float.NaN;
+    }
+
+    OverviewStreamSpec findOverviewStreamSpec(ArrayList<OverviewStreamSpec> stream, String id) {
+        if (stream == null || id == null) return null;
+        for (OverviewStreamSpec spec : stream) {
+            if (id.equals(spec.id)) return spec;
+        }
+        return null;
+    }
+
+    int indexOfOverviewStream(ArrayList<OverviewStreamSpec> stream, String id) {
+        if (stream == null || id == null) return -1;
+        for (int i = 0; i < stream.size(); i++) {
+            if (id.equals(stream.get(i).id)) return i;
+        }
+        return -1;
+    }
+
+    int overviewBlockViewId(String id) {
+        if ("hero".equals(id)) return OVERVIEW_ID_HERO;
+        if ("alerts".equals(id)) return OVERVIEW_ID_ALERTS;
+        if ("hourly".equals(id)) return OVERVIEW_ID_HOURLY;
+        if ("daily".equals(id)) return OVERVIEW_ID_DAILY;
+        if ("details".equals(id)) return OVERVIEW_ID_DETAILS;
+        if ("solar".equals(id)) return OVERVIEW_ID_SOLAR;
+        if ("moon".equals(id)) return OVERVIEW_ID_MOON;
+        if ("attribution".equals(id)) return OVERVIEW_ID_ATTRIBUTION;
+        int hash = id == null ? 1 : id.hashCode();
+        return 0x6f720000 | (hash & 0xffff);
+    }
+
+    String overviewBlockLabel(String id) {
+        if ("hero".equals(id)) return "Current weather";
+        if ("alerts".equals(id)) return "Severe weather alert";
+        if ("hourly".equals(id)) return "Hourly forecast";
+        if ("daily".equals(id)) return "Multi-day forecast";
+        if ("details".equals(id)) return "Weather information";
+        if ("solar".equals(id)) return "Next solar event";
+        if ("moon".equals(id)) return "Moon";
+        if ("attribution".equals(id)) return "Attribution";
+        return "Overview section";
+    }
+
     void render(JSONObject current, JSONObject hourly, JSONObject daily, String responseUnit) {
         activeTemperatureUnit = normalizeTemperatureUnit(responseUnit);
         lastCurrentWeather = current;
@@ -161,7 +1106,185 @@ abstract class WeatherOverviewRenderingActivity extends MinuteForecastRenderingA
         subtitleLp.topMargin = dp(8);
         hero.addView(subtitle, subtitleLp);
 
-        content.addView(hero);
+        pageContent().addView(hero);
+    }
+
+    void addWeatherAlertsCard() {
+        if (!severeAlertsEnabled()) return;
+        OptionalDataState state;
+        synchronized (optionalDataLock) {
+            state = severeAlertsState;
+        }
+        String language = Locale.getDefault().toLanguageTag();
+        if (state == null || !state.matches(
+                weatherRequestGeneration, latitude, longitude, language)
+                || state.loading || !state.available || state.details == null) return;
+        JSONArray alerts = state.details.optJSONArray("weatherAlerts");
+        if (alerts == null || alerts.length() == 0) return;
+        JSONObject alert = alerts.optJSONObject(0);
+        if (alert == null) return;
+
+        LinearLayout body = new LinearLayout(this);
+        body.setOrientation(LinearLayout.VERTICAL);
+        body.setPadding(dp(18), dp(15), dp(18), dp(15));
+        TextView eyebrow = text("OFFICIAL WEATHER ALERT", 11, true, Color.rgb(255, 220, 150));
+        body.addView(eyebrow);
+        String titleValue = alertTitle(alert);
+        if (titleValue.isEmpty()) titleValue = prettyEnum(alert.optString("eventType", "Weather alert"));
+        TextView title = text(titleValue, 19, true, WHITE);
+        LinearLayout.LayoutParams titleLp = new LinearLayout.LayoutParams(-1, -2);
+        titleLp.topMargin = dp(4);
+        body.addView(title, titleLp);
+        String severity = prettyEnum(alert.optString("severity", ""));
+        String area = alert.optString("areaName", "").trim();
+        String summary = firstNonEmpty(severity, area);
+        if (!severity.isEmpty() && !area.isEmpty()) summary = severity + " · " + area;
+        if (alerts.length() > 1) summary += " · " + alerts.length() + " active alerts";
+        TextView subtitle = text(summary, 12, false, SOFT_WHITE);
+        subtitle.setMaxLines(3);
+        LinearLayout.LayoutParams subtitleLp = new LinearLayout.LayoutParams(-1, -2);
+        subtitleLp.topMargin = dp(5);
+        body.addView(subtitle, subtitleLp);
+        JSONObject source = alert.optJSONObject("dataSource");
+        String sourceName = source == null ? "" : source.optString("name", "").trim();
+        String sourceUrl = source == null ? "" : source.optString("authorityUri", "").trim();
+        if (!sourceName.isEmpty()) {
+            TextView sourceLink = text("Source: " + sourceName + (sourceUrl.isEmpty() ? "" : " ↗"),
+                    11, true, ACCENT_BLUE);
+            sourceLink.setPadding(0, dp(7), 0, 0);
+            if (!sourceUrl.isEmpty()) {
+                sourceLink.setClickable(true);
+                sourceLink.setFocusable(true);
+                sourceLink.setOnClickListener(v -> openExternalUrl(sourceUrl));
+                sourceLink.setContentDescription("Open alert source " + sourceName);
+            }
+            body.addView(sourceLink);
+        }
+        body.setClickable(true);
+        body.setFocusable(true);
+        body.setContentDescription(titleValue + ", " + summary + ". Tap for official details.");
+        body.setOnClickListener(v -> showWeatherAlertsDialog(alerts));
+        View alertCard = card(body, dp(24), cardColor);
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-1, -2);
+        lp.topMargin = dp(12);
+        pageContent().addView(alertCard, lp);
+    }
+
+    void showWeatherAlertsDialog(JSONArray alerts) {
+        Dialog dialog = new Dialog(this);
+        dialog.requestWindowFeature(Window.FEATURE_NO_TITLE);
+        dialog.setCancelable(true);
+        dialog.setCanceledOnTouchOutside(true);
+        ScrollView scroller = new ScrollView(this);
+        scroller.setVerticalScrollBarEnabled(false);
+        LinearLayout panel = new LinearLayout(this);
+        panel.setOrientation(LinearLayout.VERTICAL);
+        panel.setPadding(dp(20), dp(20), dp(20), dp(18));
+        panel.setBackground(roundedBg(Color.rgb(15, 48, 81), dp(24)));
+        scroller.addView(panel, new ScrollView.LayoutParams(-1, -2));
+        panel.addView(text("Official weather alerts", 23, true, WHITE));
+        TextView intro = text("Warnings for " + locationName + ". Follow the issuing authority's instructions.",
+                12, false, SOFT_WHITE);
+        intro.setPadding(0, dp(5), 0, dp(8));
+        panel.addView(intro);
+        for (int i = 0; i < alerts.length(); i++) {
+            JSONObject alert = alerts.optJSONObject(i);
+            if (alert == null) continue;
+            LinearLayout block = new LinearLayout(this);
+            block.setOrientation(LinearLayout.VERTICAL);
+            block.setPadding(dp(14), dp(13), dp(14), dp(13));
+            block.setBackground(roundedBg(Color.argb(42, 255, 255, 255), dp(16)));
+            String heading = alertTitle(alert);
+            if (heading.isEmpty()) heading = prettyEnum(alert.optString("eventType", "Weather alert"));
+            block.addView(text(heading, 17, true, WHITE));
+            String meta = prettyEnum(alert.optString("severity", ""));
+            String certainty = prettyEnum(alert.optString("certainty", ""));
+            String urgency = prettyEnum(alert.optString("urgency", ""));
+            if (!certainty.isEmpty()) meta += (meta.isEmpty() ? "" : " · ") + certainty;
+            if (!urgency.isEmpty()) meta += (meta.isEmpty() ? "" : " · ") + urgency;
+            String area = alert.optString("areaName", "").trim();
+            if (!area.isEmpty()) meta += (meta.isEmpty() ? "" : "\n") + area;
+            String expiry = formatAlertTime(alert.optString("expirationTime", ""));
+            if (!expiry.isEmpty()) meta += (meta.isEmpty() ? "" : "\n") + "Until " + expiry;
+            TextView metaView = text(meta, 12, false, Color.rgb(255, 220, 150));
+            metaView.setPadding(0, dp(4), 0, 0);
+            block.addView(metaView);
+            String description = alert.optString("description", "").trim();
+            if (!description.isEmpty()) {
+                TextView descriptionView = text(description, 13, false, SOFT_WHITE);
+                descriptionView.setPadding(0, dp(9), 0, 0);
+                block.addView(descriptionView);
+            }
+            JSONArray instructions = alert.optJSONArray("instruction");
+            if (instructions != null) {
+                for (int j = 0; j < instructions.length(); j++) {
+                    String instruction = instructions.optString(j, "").trim();
+                    if (!instruction.isEmpty()) {
+                        TextView item = text("• " + instruction, 13, false, WHITE);
+                        item.setPadding(0, dp(8), 0, 0);
+                        block.addView(item);
+                    }
+                }
+            }
+            JSONArray safety = alert.optJSONArray("safetyRecommendations");
+            if (safety != null) {
+                for (int j = 0; j < safety.length(); j++) {
+                    JSONObject recommendation = safety.optJSONObject(j);
+                    if (recommendation == null) continue;
+                    String directive = recommendation.optString("directive", "").trim();
+                    String subtext = recommendation.optString("subtext", "").trim();
+                    String combined = directive + (subtext.isEmpty() ? "" : "\n" + subtext);
+                    if (!combined.trim().isEmpty()) {
+                        TextView item = text("• " + combined, 13, false, WHITE);
+                        item.setPadding(0, dp(8), 0, 0);
+                        block.addView(item);
+                    }
+                }
+            }
+            JSONObject source = alert.optJSONObject("dataSource");
+            String sourceName = source == null ? "" : source.optString("name", "").trim();
+            String sourceUrl = source == null ? "" : source.optString("authorityUri", "").trim();
+            if (!sourceName.isEmpty()) {
+                Button sourceButton = button("Source: " + sourceName + (sourceUrl.isEmpty() ? "" : " ↗"));
+                sourceButton.setEnabled(!sourceUrl.isEmpty());
+                if (!sourceUrl.isEmpty()) sourceButton.setOnClickListener(v -> openExternalUrl(sourceUrl));
+                LinearLayout.LayoutParams sourceLp = new LinearLayout.LayoutParams(-1, dp(44));
+                sourceLp.topMargin = dp(10);
+                block.addView(sourceButton, sourceLp);
+            }
+            LinearLayout.LayoutParams blockLp = new LinearLayout.LayoutParams(-1, -2);
+            blockLp.topMargin = dp(10);
+            panel.addView(block, blockLp);
+        }
+        Button close = button("Close");
+        close.setOnClickListener(v -> dialog.dismiss());
+        LinearLayout.LayoutParams closeLp = new LinearLayout.LayoutParams(-1, dp(46));
+        closeLp.topMargin = dp(12);
+        panel.addView(close, closeLp);
+        dialog.setContentView(scroller);
+        dialog.show();
+        Window window = dialog.getWindow();
+        if (window != null) {
+            window.setBackgroundDrawable(new ColorDrawable(Color.TRANSPARENT));
+            window.addFlags(WindowManager.LayoutParams.FLAG_DIM_BEHIND);
+            WindowManager.LayoutParams attributes = window.getAttributes();
+            attributes.dimAmount = 0.76f;
+            window.setAttributes(attributes);
+            window.setLayout(Math.min(getResources().getDisplayMetrics().widthPixels - dp(30), dp(460)),
+                    Math.min(getResources().getDisplayMetrics().heightPixels - dp(70), dp(720)));
+        }
+    }
+
+    String formatAlertTime(String value) {
+        Instant instant = parseInstant(value);
+        if (instant == null) return "";
+        try {
+            ZoneId zone = responseZone(lastCurrentWeather, lastHourlyWeather, lastDailyWeather);
+            return DateTimeFormatter.ofPattern("EEE d MMM, HH:mm", Locale.getDefault())
+                    .format(instant.atZone(zone));
+        } catch (Exception ignored) {
+            return value;
+        }
     }
 
     static String stringValue(JSONObject object, String key) {
@@ -286,7 +1409,7 @@ abstract class WeatherOverviewRenderingActivity extends MinuteForecastRenderingA
         cardLp.topMargin = dp(8);
         View card = card(cardBody, dp(24), cardColor);
         card.setLayoutParams(cardLp);
-        content.addView(card);
+        pageContent().addView(card);
     }
 
     static String hourlyDiagnostic(JSONObject hourly) {
@@ -342,6 +1465,7 @@ abstract class WeatherOverviewRenderingActivity extends MinuteForecastRenderingA
 
         DayDetailCoordinator details = new DayDetailCoordinator(
                 days, hours, zone, hourlyDiagnostic(hourly), lineDetailHost);
+        details.expandedDay = Math.min(expandedDayIndex, dayCount - 1);
         ForecastChartView chart = new ForecastChartView(
                 this, days, zone, chartWidth, chartHeight, details::toggleDay);
         chart.setLayoutParams(new FrameLayout.LayoutParams(chartWidth, chartHeight));
@@ -376,6 +1500,10 @@ abstract class WeatherOverviewRenderingActivity extends MinuteForecastRenderingA
         boolean listMode = "list".equals(savedMode);
         applyDailyMode(lineButton, listButton, chartScroller, list, listMode);
         details.setListMode(listMode);
+        if (details.expandedDay >= 0) {
+            LocalDate selectedDate = displayDate(days.optJSONObject(details.expandedDay), zone);
+            ensureHourlyCoverage(selectedDate, details);
+        }
 
         lineButton.setOnClickListener(v -> switchDailyMode(
                 lineButton, listButton, chartScroller, list, details, false));
@@ -386,7 +1514,7 @@ abstract class WeatherOverviewRenderingActivity extends MinuteForecastRenderingA
         cardLp.topMargin = dp(12);
         View card = card(body, dp(24), cardColor);
         card.setLayoutParams(cardLp);
-        content.addView(card);
+        pageContent().addView(card);
     }
 
     TextView dailyModeButton(String label, String accessibilityLabel) {
@@ -604,6 +1732,7 @@ abstract class WeatherOverviewRenderingActivity extends MinuteForecastRenderingA
                     ? displayDate(days.optJSONObject(expandedDay), zone)
                     : null;
             expandedDay = sameDay ? -1 : index;
+            expandedDayIndex = expandedDay;
             if (sameDay) {
                 forecastPreview.restore(true);
                 synchronized (hourlyCoverageLock) {
@@ -801,6 +1930,11 @@ abstract class WeatherOverviewRenderingActivity extends MinuteForecastRenderingA
             addHourlyMetricLine(cell, "Wind", hourWindValue);
             addHourlyMetricLine(cell, "Pressure", hourPressureValue);
             addHourlyMetricLine(cell, "Visibility", hourVisibilityValue);
+            JSONObject predictedAqi = airQualityForecastForWeatherHour(hour);
+            String predictedAqiValue = aqiDisplayValue(predictedAqi);
+            if (!predictedAqiValue.isEmpty()) {
+                addHourlyMetricLine(cell, "AQI", predictedAqiValue);
+            }
 
             TextView condition = text(description(hour), 9, false, FAINT_WHITE);
             condition.setGravity(Gravity.CENTER);
@@ -816,6 +1950,9 @@ abstract class WeatherOverviewRenderingActivity extends MinuteForecastRenderingA
             if (!"—".equals(hourWindValue)) hourDescription.append(", wind ").append(hourWindValue);
             if (!"—".equals(hourPressureValue)) hourDescription.append(", pressure ").append(hourPressureValue);
             if (!"—".equals(hourVisibilityValue)) hourDescription.append(", visibility ").append(hourVisibilityValue);
+            if (!predictedAqiValue.isEmpty()) {
+                hourDescription.append(", predicted air quality index ").append(predictedAqiValue);
+            }
             configureHourPreviewCell(
                     cell,
                     hour,
@@ -863,6 +2000,55 @@ abstract class WeatherOverviewRenderingActivity extends MinuteForecastRenderingA
         cell.addView(metric, new LinearLayout.LayoutParams(-1, dp(17)));
     }
 
+    JSONObject airQualityForecastForWeatherHour(JSONObject weatherHour) {
+        if (!weatherPreferences.airQualityEnabled() || weatherHour == null) return null;
+        OptionalDataState state = optionalDataStateForCurrentScope(true);
+        JSONObject forecast = state == null || state.details == null
+                ? null : state.details.optJSONObject("forecast");
+        JSONArray predictions = forecast == null ? null : forecast.optJSONArray("hourlyForecasts");
+        ZoneId zone = responseZone(lastCurrentWeather, lastHourlyWeather, lastDailyWeather);
+        Instant target = weatherHourInstant(weatherHour, zone);
+        if (predictions == null || target == null) return null;
+        Instant targetHour = target.truncatedTo(ChronoUnit.HOURS);
+        for (int i = 0; i < predictions.length(); i++) {
+            JSONObject prediction = predictions.optJSONObject(i);
+            Instant instant = parseInstant(prediction == null
+                    ? null : stringValue(prediction, "dateTime"));
+            if (prediction == null || instant == null) continue;
+            if (targetHour.equals(instant.truncatedTo(ChronoUnit.HOURS))) {
+                return universalAqiIndex(prediction.optJSONArray("indexes"));
+            }
+        }
+        return null;
+    }
+
+    Instant weatherHourInstant(JSONObject hour, ZoneId zone) {
+        JSONObject interval = firstJSONObject(hour, "interval", "timeInterval", "time_interval");
+        String start = firstNonEmpty(
+                firstNonEmpty(stringValue(interval, "startTime"),
+                        stringValue(interval, "start_time")),
+                stringValue(interval, "start"));
+        Instant exact = parseInstant(start);
+        if (exact != null) return exact;
+        JSONObject display = firstJSONObject(hour,
+                "displayDateTime", "display_date_time", "displayTime", "display_time");
+        LocalDate date = localDateFields(display);
+        int hourOfDay = safeInt(display, "hours", safeInt(display, "hour", -1));
+        int minute = safeInt(display, "minutes", safeInt(display, "minute", 0));
+        if (date == null || hourOfDay < 0 || hourOfDay > 23 || minute < 0 || minute > 59) {
+            return null;
+        }
+        return date.atTime(hourOfDay, minute).atZone(zone).toInstant();
+    }
+
+    String aqiDisplayValue(JSONObject index) {
+        if (index == null) return "";
+        String display = stringValue(index, "aqiDisplay");
+        if (!display.isEmpty()) return display;
+        Double value = numberValue(index, "aqi");
+        return value == null ? "" : Integer.toString((int) Math.round(value));
+    }
+
     void addDetailTiles(JSONObject current) {
         Integer feels = degreesOrNull(current == null ? null : current.optJSONObject("feelsLikeTemperature"));
         int humidity = safeInt(current, "relativeHumidity", -1);
@@ -881,48 +2067,189 @@ abstract class WeatherOverviewRenderingActivity extends MinuteForecastRenderingA
         String visibilityValue = formatVisibility(
                 current == null ? null : current.optJSONObject("visibility"));
 
-        LinearLayout first = tileRow(
-                detailTile("UV", uv < 0 ? "—" : uv + "\n" + uvHint(uv).trim(), "uv"),
-                detailTile("Feels like", feels == null ? "—" : feels + temperatureUnitSymbol(), "temperature"),
-                detailTile("Humidity", humidity < 0 ? "—" : humidity + "%", "humidity"));
+        ArrayList<OverviewTileSpec> tiles = new ArrayList<>();
+        if (detailEnabled(WeatherDetailSettingsActivity.PREF_UV_INDEX, true)) {
+            addOverviewTile(tiles, "uv",
+                    detailTile("UV", uv < 0 ? "—" : uv + "\n" + uvHint(uv).trim(), "uv"));
+        }
+        if (detailEnabled(WeatherDetailSettingsActivity.PREF_FEELS_LIKE, true)) {
+            addOverviewTile(tiles, "feels_like", detailTile("Feels like",
+                    feels == null ? "—" : feels + temperatureUnitSymbol(), "temperature"));
+        }
+        if (detailEnabled(WeatherDetailSettingsActivity.PREF_HUMIDITY, true)) {
+            addOverviewTile(tiles, "humidity",
+                    detailTile("Humidity", humidity < 0 ? "—" : humidity + "%", "humidity"));
+        }
+        if (detailEnabled(WeatherDetailSettingsActivity.PREF_WIND, true)) {
+            addOverviewTile(tiles, "wind", detailTile(
+                    windLabel.isEmpty() ? "Wind" : windLabel + " wind", windValue, "wind"));
+        }
+        if (detailEnabled(WeatherDetailSettingsActivity.PREF_AIR_PRESSURE, true)) {
+            addOverviewTile(tiles, "air_pressure",
+                    detailTile("Air pressure", pressureValue, "pressure"));
+        }
+        if (detailEnabled(WeatherDetailSettingsActivity.PREF_VISIBILITY, true)) {
+            addOverviewTile(tiles, "visibility",
+                    detailTile("Visibility", visibilityValue, "visibility"));
+        }
 
-        LinearLayout second = tileRow(
-                detailTile(windLabel.isEmpty() ? "Wind" : windLabel + " wind", windValue, "wind"),
-                detailTile("Air pressure", pressureValue, "pressure"),
-                detailTile("Visibility", visibilityValue, "visibility"));
+        int cloudCover = safeInt(current, "cloudCover", -1);
+        if (detailEnabled(WeatherDetailSettingsActivity.PREF_CLOUD_COVER, true)
+                && cloudCover >= 0) {
+            addOverviewTile(tiles, "cloud_cover",
+                    detailTile("Cloud cover", cloudCover + "%", "visibility"));
+        }
+        String gustValue = formatWindSpeed(wind == null ? null : wind.optJSONObject("gust"));
+        if (detailEnabled(WeatherDetailSettingsActivity.PREF_WIND_GUST, true)
+                && !"—".equals(gustValue)) {
+            addOverviewTile(tiles, "wind_gust", detailTile("Wind gust", gustValue, "wind"));
+        }
+        int thunder = safeInt(current, "thunderstormProbability", -1);
+        if (detailEnabled(WeatherDetailSettingsActivity.PREF_THUNDERSTORM_CHANCE, true)
+                && thunder > 0) {
+            addOverviewTile(tiles, "thunder_chance",
+                    detailTile("Thunder chance", thunder + "%", "uv"));
+        }
+        addTemperatureDetailTile(tiles, "dew_point", current, "Dew point", "dewPoint",
+                WeatherDetailSettingsActivity.PREF_DEW_POINT, false);
+        addTemperatureDetailTile(tiles, "heat_index", current, "Heat index", "heatIndex",
+                WeatherDetailSettingsActivity.PREF_HEAT_INDEX, false);
+        addTemperatureDetailTile(tiles, "wind_chill", current, "Wind chill", "windChill",
+                WeatherDetailSettingsActivity.PREF_WIND_CHILL, false);
 
-        LinearLayout.LayoutParams firstLp = new LinearLayout.LayoutParams(-1, -2);
-        firstLp.topMargin = dp(12);
-        content.addView(first, firstLp);
+        JSONObject history = current == null ? null : current.optJSONObject("currentConditionsHistory");
+        JSONObject temperatureChangeObject = history == null
+                ? null : history.optJSONObject("temperatureChange");
+        Double temperatureChangeCelsius = numberValue(temperatureChangeObject, "degrees");
+        if (temperatureChangeCelsius == null) {
+            temperatureChangeCelsius = numberValue(temperatureChangeObject, "value");
+        }
+        Integer temperatureChange = temperatureChangeCelsius == null ? null
+                : (int) Math.round(isFahrenheitUnit()
+                        ? temperatureChangeCelsius * 9d / 5d : temperatureChangeCelsius);
+        if (detailEnabled(WeatherDetailSettingsActivity.PREF_TEMPERATURE_CHANGE_24H, false)
+                && temperatureChange != null) {
+            addOverviewTile(tiles, "temperature_change_24h", detailTile("24h temperature",
+                    (temperatureChange > 0 ? "+" : "") + temperatureChange + temperatureUnitSymbol(),
+                    "temperature"));
+        }
+        String precipitation24h = formatQpf(history == null ? null : history.optJSONObject("qpf"));
+        if (detailEnabled(WeatherDetailSettingsActivity.PREF_PRECIPITATION_24H, false)
+                && !"—".equals(precipitation24h)) {
+            addOverviewTile(tiles, "precipitation_24h",
+                    detailTile("24h precipitation", precipitation24h, "humidity"));
+        }
 
-        LinearLayout.LayoutParams secondLp = new LinearLayout.LayoutParams(-1, -2);
-        secondLp.topMargin = dp(8);
-        content.addView(second, secondLp);
-
-        ArrayList<View> optionalTiles = new ArrayList<>();
         if (airQualityEnabled()) {
             OptionalDataState state = optionalDataStateForCurrentScope(true);
-            optionalTiles.add(optionalDetailTile(
+            addOverviewTile(tiles, "air_quality", optionalDetailTile(
                     "Air quality", state, "air", "Universal AQI loading", true));
         }
         if (pollenEnabled()) {
             OptionalDataState state = optionalDataStateForCurrentScope(false);
-            optionalTiles.add(optionalDetailTile(
+            addOverviewTile(tiles, "pollen", optionalDetailTile(
                     "Pollen", state, "pollen", "Pollen forecast loading", false));
         }
-        if (!optionalTiles.isEmpty()) {
-            LinearLayout optionalRow = new LinearLayout(this);
-            optionalRow.setOrientation(LinearLayout.HORIZONTAL);
-            for (int i = 0; i < optionalTiles.size(); i++) {
-                LinearLayout.LayoutParams tileLp = new LinearLayout.LayoutParams(0, dp(138), 1f);
-                if (i > 0) tileLp.leftMargin = dp(4);
-                if (i < optionalTiles.size() - 1) tileLp.rightMargin = dp(4);
-                optionalRow.addView(optionalTiles.get(i), tileLp);
-            }
-            LinearLayout.LayoutParams optionalLp = new LinearLayout.LayoutParams(-1, -2);
-            optionalLp.topMargin = dp(8);
-            content.addView(optionalRow, optionalLp);
+        addDetailTileRows(tiles);
+    }
+
+    boolean detailEnabled(String key, boolean defaultValue) {
+        return getSharedPreferences(UI_PREFS, MODE_PRIVATE).getBoolean(key, defaultValue);
+    }
+
+    void addOverviewTile(ArrayList<OverviewTileSpec> tiles, String id, View view) {
+        if (tiles == null || id == null || id.isEmpty() || view == null) return;
+        tiles.add(new OverviewTileSpec(id, view));
+    }
+
+    void addTemperatureDetailTile(
+            ArrayList<OverviewTileSpec> tiles,
+            String tileId,
+            JSONObject current,
+            String label,
+            String responseKey,
+            String preferenceKey,
+            boolean defaultValue) {
+        if (!detailEnabled(preferenceKey, defaultValue)) return;
+        Integer value = degreesOrNull(current == null ? null : current.optJSONObject(responseKey));
+        if (value != null) {
+            addOverviewTile(tiles, tileId,
+                    detailTile(label, value + temperatureUnitSymbol(), "temperature"));
         }
+    }
+
+    void addDetailTileRows(ArrayList<OverviewTileSpec> availableTiles) {
+        if (availableTiles == null || availableTiles.isEmpty()) return;
+        ArrayList<OverviewTileSpec> tiles = orderedOverviewTiles(availableTiles);
+        for (OverviewTileSpec tile : tiles) {
+            tile.view.setTag(overviewTileStreamId(tile.id));
+            pageContent().addView(tile.view, new LinearLayout.LayoutParams(-1, -2));
+        }
+    }
+
+    ArrayList<OverviewTileSpec> orderedOverviewTiles(ArrayList<OverviewTileSpec> availableTiles) {
+        ArrayList<OverviewTileSpec> ordered = new ArrayList<>();
+        ArrayList<String> savedOrder = overviewTileFullOrder();
+        for (String id : savedOrder) {
+            OverviewTileSpec tile = findOverviewTileSpec(availableTiles, id);
+            if (tile != null && findOverviewTileSpec(ordered, id) == null) ordered.add(tile);
+        }
+        for (OverviewTileSpec tile : availableTiles) {
+            if (findOverviewTileSpec(ordered, tile.id) == null) ordered.add(tile);
+        }
+        return ordered;
+    }
+
+    ArrayList<String> overviewTileFullOrder() {
+        ArrayList<String> order = new ArrayList<>();
+        HashSet<String> seen = new HashSet<>();
+        String saved = getSharedPreferences(UI_PREFS, MODE_PRIVATE)
+                .getString(PREF_OVERVIEW_TILE_ORDER, "");
+        if (saved != null && !saved.trim().isEmpty()) {
+            try {
+                JSONArray array = new JSONArray(saved);
+                for (int i = 0; i < array.length() && order.size() < 64; i++) {
+                    String id = array.optString(i, "").trim();
+                    if (!id.isEmpty() && seen.add(id)) order.add(id);
+                }
+            } catch (Exception ignored) { }
+        }
+        for (String id : DEFAULT_OVERVIEW_TILE_ORDER) {
+            if (seen.add(id)) order.add(id);
+        }
+        return order;
+    }
+
+    int overviewTileColumnCount(LinearLayout board) {
+        int width = board == null ? 0 : board.getWidth();
+        if (width <= 0 && pageContent() != null) width = pageContent().getWidth();
+        if (width <= 0) {
+            width = Math.max(1, getResources().getDisplayMetrics().widthPixels - dp(36));
+        }
+        int minimumTileWidth = Math.max(1, dp(96));
+        return Math.max(1, Math.min(3, width / minimumTileWidth));
+    }
+
+    OverviewTileSpec findOverviewTileSpec(ArrayList<OverviewTileSpec> tiles, String id) {
+        if (tiles == null || id == null) return null;
+        for (OverviewTileSpec tile : tiles) {
+            if (id.equals(tile.id)) return tile;
+        }
+        return null;
+    }
+
+    String formatQpf(JSONObject qpf) {
+        Double quantity = numberValue(qpf, "quantity");
+        if (quantity == null) return "—";
+        String unit = qpf == null ? "" : qpf.optString("unit", "");
+        if (isFahrenheitUnit()) {
+            double inches = unit.toUpperCase(Locale.ROOT).contains("INCH")
+                    ? quantity : quantity / 25.4d;
+            return trimNumber(inches) + " in";
+        }
+        double millimeters = unit.toUpperCase(Locale.ROOT).contains("INCH")
+                ? quantity * 25.4d : quantity;
+        return trimNumber(millimeters) + " mm";
     }
 
     OptionalDataState optionalDataStateForCurrentScope(boolean airQuality) {
@@ -965,8 +2292,758 @@ abstract class WeatherOverviewRenderingActivity extends MinuteForecastRenderingA
             tile.setFocusable(true);
             tile.setContentDescription(label + ", " + state.accessibility + ". Tap for help.");
             tile.setOnClickListener(v -> showOptionalDataHelpDialog(label, airQuality, state));
+        } else if (state != null && !state.loading && state.available && state.details != null) {
+            tile.setClickable(true);
+            tile.setFocusable(true);
+            tile.setContentDescription(label + ", " + state.accessibility + ". Tap for forecast details.");
+            tile.setOnClickListener(v -> showEnvironmentalDetailsDialog(label, airQuality, state));
         }
         return tile;
+    }
+
+    void showEnvironmentalDetailsDialog(
+            String label, boolean airQuality, OptionalDataState state) {
+        Dialog dialog = new Dialog(this);
+        dialog.requestWindowFeature(Window.FEATURE_NO_TITLE);
+        dialog.setCancelable(true);
+        dialog.setCanceledOnTouchOutside(true);
+
+        ScrollView scroller = new ScrollView(this);
+        scroller.setVerticalScrollBarEnabled(false);
+        scroller.setFillViewport(false);
+        scroller.setClipToPadding(false);
+        scroller.setAccessibilityPaneTitle(label + " details");
+
+        int horizontalPadding = getResources().getConfiguration().screenWidthDp < 360
+                ? dp(14) : dp(18);
+        LinearLayout panel = new LinearLayout(this);
+        panel.setOrientation(LinearLayout.VERTICAL);
+        panel.setPadding(horizontalPadding, dp(17), horizontalPadding, dp(16));
+        panel.setBackground(newGlassDrawable(dp(26), false));
+        scroller.addView(panel, new ScrollView.LayoutParams(-1, -2));
+
+        TextView title = text(label, 22, true, WHITE);
+        title.setAccessibilityHeading(true);
+        title.setPadding(0, 0, 0, 0);
+        panel.addView(title);
+
+        int sceneAccent = environmentAccentColor();
+
+        if (airQuality) addAirQualityDialogContent(panel, state.details);
+        else addPollenDialogContent(panel, state.details);
+
+        Button close = button("Close");
+        close.setContentDescription("Close " + label + " details");
+        GradientDrawable closeBackground = roundedBg(Color.argb(
+                44, Color.red(sceneAccent), Color.green(sceneAccent), Color.blue(sceneAccent)),
+                dp(22));
+        closeBackground.setStroke(dp(1), Color.argb(
+                76, Color.red(sceneAccent), Color.green(sceneAccent), Color.blue(sceneAccent)));
+        close.setBackground(closeBackground);
+        close.setOnClickListener(v -> dialog.dismiss());
+        LinearLayout.LayoutParams closeLp = new LinearLayout.LayoutParams(-1, dp(44));
+        closeLp.topMargin = dp(13);
+        panel.addView(close, closeLp);
+
+        dialog.setOnDismissListener(ignored -> removePageGlassDrawables(scroller));
+        dialog.setContentView(scroller);
+        dialog.show();
+        Window window = dialog.getWindow();
+        if (window != null) {
+            window.setBackgroundDrawable(new ColorDrawable(Color.TRANSPARENT));
+            window.addFlags(WindowManager.LayoutParams.FLAG_DIM_BEHIND);
+            WindowManager.LayoutParams attributes = window.getAttributes();
+            attributes.dimAmount = 0.72f;
+            window.setAttributes(attributes);
+            window.getDecorView().setPadding(0, 0, 0, 0);
+            int screenWidth = getResources().getDisplayMetrics().widthPixels;
+            int screenHeight = getResources().getDisplayMetrics().heightPixels;
+            int dialogWidth = Math.max(1, Math.min(screenWidth - dp(20), dp(480)));
+            int dialogHeight = Math.max(1, Math.min(screenHeight - dp(36), dp(760)));
+            window.setLayout(dialogWidth, dialogHeight);
+        }
+    }
+
+    void addAirQualityDialogContent(LinearLayout panel, JSONObject details) {
+        JSONObject current = details == null ? null : details.optJSONObject("current");
+        JSONObject index = universalAqiIndex(current == null ? null : current.optJSONArray("indexes"));
+        panel.addView(airQualityHero(index));
+
+        JSONObject recommendations = current == null
+                ? null : current.optJSONObject("healthRecommendations");
+        View guidance = airQualityGuidanceCard(recommendations);
+        if (guidance != null) {
+            panel.addView(sectionHeading("HEALTH GUIDANCE"));
+            panel.addView(guidance);
+        }
+
+        JSONArray pollutants = current == null ? null : current.optJSONArray("pollutants");
+        if (pollutants != null) {
+            ArrayList<View> pollutantCards = new ArrayList<>();
+            for (int i = 0; i < pollutants.length(); i++) {
+                JSONObject pollutant = pollutants.optJSONObject(i);
+                JSONObject concentration = pollutant == null
+                        ? null : pollutant.optJSONObject("concentration");
+                Double concentrationValue = numberValue(concentration, "value");
+                if (pollutant == null || concentrationValue == null) continue;
+                String pollutantName = firstNonEmpty(
+                        stringValue(pollutant, "displayName"),
+                        stringValue(pollutant, "code").toUpperCase(Locale.ROOT));
+                String units = stringValue(concentration, "units")
+                        .replace("MICROGRAMS_PER_CUBIC_METER", "µg/m³")
+                        .replace('_', ' ').toLowerCase(Locale.getDefault());
+                String value = trimNumber(concentrationValue)
+                        + (units.isEmpty() ? "" : " " + units);
+                View metric = environmentMetricRow(pollutantName, value);
+                String code = stringValue(pollutant, "code").toUpperCase(Locale.ROOT);
+                metric.setContentDescription((pollutantName.isEmpty() ? code : pollutantName)
+                        + ", " + value);
+                pollutantCards.add(metric);
+            }
+            if (!pollutantCards.isEmpty()) {
+                panel.addView(sectionHeading("POLLUTANTS"));
+                addEnvironmentResponsiveCards(panel, pollutantCards);
+            }
+        }
+
+        JSONObject forecast = details == null ? null : details.optJSONObject("forecast");
+        JSONArray hours = forecast == null ? null : forecast.optJSONArray("hourlyForecasts");
+        if (hours == null || hours.length() == 0) {
+            panel.addView(sectionHeading("NEXT 24 HOURS"));
+            panel.addView(environmentDetailBlock(
+                    "Hourly outlook", "No hourly forecast was returned."));
+            return;
+        }
+
+        panel.addView(sectionHeading("NEXT 24 HOURS"));
+        TextView forecastHint = text("Swipe sideways for later hours", 10, false, FAINT_WHITE);
+        forecastHint.setPadding(dp(2), 0, 0, dp(6));
+        panel.addView(forecastHint);
+
+        ZoneId zone = responseZone(lastCurrentWeather, lastHourlyWeather, lastDailyWeather);
+        GestureHorizontalScrollView scroller = new GestureHorizontalScrollView(this);
+        scroller.setHorizontalScrollBarEnabled(false);
+        scroller.setOverScrollMode(View.OVER_SCROLL_ALWAYS);
+        scroller.setContentDescription(
+                "24-hour air quality forecast. Swipe horizontally for later hours.");
+        LinearLayout forecastRow = new LinearLayout(this);
+        forecastRow.setOrientation(LinearLayout.HORIZONTAL);
+        forecastRow.setPadding(0, dp(1), dp(2), dp(4));
+        for (int i = 0; i < hours.length(); i++) {
+            JSONObject hour = hours.optJSONObject(i);
+            if (hour == null) continue;
+            JSONObject hourIndex = universalAqiIndex(hour.optJSONArray("indexes"));
+            String time = formatEnvironmentalHour(stringValue(hour, "dateTime"), zone);
+            forecastRow.addView(airQualityForecastCell(time, hourIndex));
+        }
+        scroller.addView(forecastRow, new HorizontalScrollView.LayoutParams(-2, -2));
+        panel.addView(scroller, new LinearLayout.LayoutParams(-1, dp(118)));
+    }
+
+    View airQualityGuidanceCard(JSONObject recommendations) {
+        if (recommendations == null) return null;
+        String[][] guidance = new String[][]{
+                {"General guidance", stringValue(recommendations, "generalPopulation")}
+        };
+        boolean hasGuidance = false;
+        for (String[] row : guidance) {
+            if (!row[1].isEmpty()) {
+                hasGuidance = true;
+                break;
+            }
+        }
+        if (!hasGuidance) return null;
+
+        LinearLayout card = new LinearLayout(this);
+        card.setOrientation(LinearLayout.VERTICAL);
+        card.setPadding(dp(13), dp(11), dp(13), dp(11));
+        card.setBackground(newGlassDrawable(dp(17), true));
+        StringBuilder accessibility = new StringBuilder("Health guidance. ");
+        boolean added = false;
+        for (String[] row : guidance) {
+            if (row[1].isEmpty()) continue;
+            if (added) {
+                View divider = environmentDivider();
+                LinearLayout.LayoutParams dividerLp = new LinearLayout.LayoutParams(-1, dp(1));
+                dividerLp.topMargin = dp(9);
+                dividerLp.bottomMargin = dp(9);
+                card.addView(divider, dividerLp);
+                accessibility.append(". ");
+            }
+            card.addView(environmentGuidanceRow(row[0], row[1]));
+            accessibility.append(row[0]).append(": ").append(row[1]);
+            added = true;
+        }
+        card.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_YES);
+        card.setContentDescription(accessibility.toString());
+        makeChildrenUnimportant(card);
+        return card;
+    }
+
+    View environmentGuidanceRow(String titleValue, String bodyValue) {
+        LinearLayout row = new LinearLayout(this);
+        row.setOrientation(LinearLayout.VERTICAL);
+        TextView title = text(titleValue, 11, true, environmentAccentColor());
+        row.addView(title);
+        TextView body = text(bodyValue, 12, false, SOFT_WHITE);
+        body.setLineSpacing(0f, 1.08f);
+        body.setPadding(0, dp(3), 0, 0);
+        row.addView(body);
+        return row;
+    }
+
+    void addEnvironmentResponsiveCards(LinearLayout panel, ArrayList<View> cards) {
+        if (panel == null || cards == null || cards.isEmpty()) return;
+        boolean twoColumns = getResources().getConfiguration().screenWidthDp >= 410;
+        if (!twoColumns) {
+            for (int i = 0; i < cards.size(); i++) {
+                LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-1, -2);
+                if (i > 0) lp.topMargin = dp(6);
+                panel.addView(cards.get(i), lp);
+            }
+            return;
+        }
+
+        for (int i = 0; i < cards.size();) {
+            int remaining = cards.size() - i;
+            if (remaining == 1) {
+                LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-1, -2);
+                if (i > 0) lp.topMargin = dp(6);
+                panel.addView(cards.get(i), lp);
+                i++;
+                continue;
+            }
+            LinearLayout row = new LinearLayout(this);
+            row.setOrientation(LinearLayout.HORIZONTAL);
+            row.setBaselineAligned(false);
+            LinearLayout.LayoutParams leftLp = new LinearLayout.LayoutParams(0, -2, 1f);
+            leftLp.rightMargin = dp(3);
+            LinearLayout.LayoutParams rightLp = new LinearLayout.LayoutParams(0, -2, 1f);
+            rightLp.leftMargin = dp(3);
+            row.addView(cards.get(i), leftLp);
+            row.addView(cards.get(i + 1), rightLp);
+            LinearLayout.LayoutParams rowLp = new LinearLayout.LayoutParams(-1, -2);
+            if (i > 0) rowLp.topMargin = dp(6);
+            panel.addView(row, rowLp);
+            i += 2;
+        }
+    }
+
+    void addPollenDialogContent(LinearLayout panel, JSONObject details) {
+        JSONArray days = details == null ? null : details.optJSONArray("dailyInfo");
+        if (days == null || days.length() == 0) {
+            panel.addView(environmentDetailBlock(
+                    "Five-day outlook", "No pollen forecast was returned."));
+            return;
+        }
+        for (int i = 0; i < days.length(); i++) {
+            JSONObject day = days.optJSONObject(i);
+            if (day == null) continue;
+            JSONObject date = day.optJSONObject("date");
+            String dateLabel = pollenDateLabel(date, i);
+            JSONArray types = day.optJSONArray("pollenTypeInfo");
+            String recommendation = "";
+            String recommendationType = "";
+            int recommendationIndex = -1;
+
+            int highestValue = -1;
+            String highestCategory = "";
+            if (types != null) {
+                for (int j = 0; j < types.length(); j++) {
+                    JSONObject type = types.optJSONObject(j);
+                    JSONObject typeIndex = type == null ? null : type.optJSONObject("indexInfo");
+                    int value = typeIndex == null ? -1 : typeIndex.optInt("value", -1);
+                    if (value > highestValue) {
+                        highestValue = value;
+                        highestCategory = typeIndex.optString("category", "");
+                    }
+                }
+            }
+
+            int severityColor = pollenColor(highestValue);
+            LinearLayout dayCard = new LinearLayout(this);
+            dayCard.setOrientation(LinearLayout.VERTICAL);
+            dayCard.setPadding(dp(13), dp(12), dp(13), dp(12));
+            dayCard.setBackground(newGlassDrawable(dp(19), false));
+
+            LinearLayout dayHeader = new LinearLayout(this);
+            dayHeader.setGravity(Gravity.CENTER_VERTICAL);
+            LinearLayout headerCopy = new LinearLayout(this);
+            headerCopy.setOrientation(LinearLayout.VERTICAL);
+            TextView dateView = text(dateLabel, 16, true, WHITE);
+            dateView.setAccessibilityHeading(true);
+            headerCopy.addView(dateView);
+            String dailySummary = highestValue < 0
+                    ? "Daily index unavailable"
+                    : firstNonEmpty(highestCategory, "Universal Pollen Index")
+                            + " · highest daily level";
+            TextView summary = text(dailySummary, 10, false, SOFT_WHITE);
+            summary.setPadding(0, dp(2), dp(6), 0);
+            headerCopy.addView(summary);
+            dayHeader.addView(headerCopy, new LinearLayout.LayoutParams(0, -2, 1f));
+            TextView badge = environmentBadge(
+                    highestValue < 0 ? "No index" : "UPI " + highestValue,
+                    severityColor);
+            dayHeader.addView(badge);
+            dayHeader.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_YES);
+            dayHeader.setAccessibilityHeading(true);
+            dayHeader.setContentDescription(dateLabel + ", "
+                    + (highestValue < 0
+                            ? "pollen index unavailable"
+                            : "highest Universal Pollen Index " + highestValue
+                                    + (highestCategory.isEmpty()
+                                            ? "" : ", " + highestCategory)));
+            makeChildrenUnimportant(dayHeader);
+            dayCard.addView(dayHeader);
+
+            LinearLayout.LayoutParams severityLp = new LinearLayout.LayoutParams(-1, dp(4));
+            severityLp.topMargin = dp(9);
+            dayCard.addView(environmentSeverityTrack(highestValue, 5, severityColor), severityLp);
+
+            if (types != null && types.length() > 0) {
+                dayCard.addView(environmentMiniHeading("POLLEN TYPES"));
+                boolean typeAdded = false;
+                for (int j = 0; j < types.length(); j++) {
+                    JSONObject type = types.optJSONObject(j);
+                    if (type == null) continue;
+                    String typeName = firstNonEmpty(
+                            stringValue(type, "displayName"),
+                            prettyEnum(stringValue(type, "code")));
+                    JSONObject typeIndex = type.optJSONObject("indexInfo");
+                    if (typeIndex == null) continue;
+                    int value = typeIndex.optInt("value", -1);
+                    String category = stringValue(typeIndex, "category");
+                    if (typeAdded) dayCard.addView(environmentDivider());
+                    dayCard.addView(pollenTypeRow(typeName, value, category));
+                    typeAdded = true;
+
+                    JSONArray recs = type.optJSONArray("healthRecommendations");
+                    String candidateRecommendation = recs == null || recs.isNull(0)
+                            ? "" : recs.optString(0, "").trim();
+                    if (!candidateRecommendation.isEmpty() && value > recommendationIndex) {
+                        recommendation = candidateRecommendation;
+                        recommendationType = typeName;
+                        recommendationIndex = value;
+                    }
+                }
+            }
+
+            JSONArray plants = day.optJSONArray("plantInfo");
+            int activePlantCount = 0;
+            if (plants != null) {
+                ArrayList<View> plantRows = new ArrayList<>();
+                for (int j = 0; j < plants.length() && plantRows.size() < 5; j++) {
+                    JSONObject plant = plants.optJSONObject(j);
+                    JSONObject plantIndex = plant == null ? null : plant.optJSONObject("indexInfo");
+                    if (plant == null || plantIndex == null) continue;
+                    int plantValue = plantIndex.optInt("value", -1);
+                    boolean inSeason = plant.optBoolean("inSeason", false);
+                    if (plantValue <= 0 && !inSeason) continue;
+                    String plantName = firstNonEmpty(
+                            stringValue(plant, "displayName"),
+                            prettyEnum(stringValue(plant, "code")));
+                    if (plantName.isEmpty()) continue;
+                    String category = stringValue(plantIndex, "category");
+                    plantRows.add(pollenPlantRow(
+                            plantName, plantValue, category, inSeason));
+                }
+                if (!plantRows.isEmpty()) {
+                    dayCard.addView(environmentMiniHeading("ACTIVE PLANTS"));
+                    for (int j = 0; j < plantRows.size(); j++) {
+                        if (j > 0) dayCard.addView(environmentDivider());
+                        dayCard.addView(plantRows.get(j));
+                    }
+                    activePlantCount = plantRows.size();
+                }
+            }
+
+            if (!recommendation.isEmpty()) {
+                dayCard.addView(environmentInset(
+                        recommendationType.isEmpty() ? "Health guidance"
+                                : recommendationType + " guidance",
+                        recommendation));
+            }
+            if ((types == null || types.length() == 0) && activePlantCount == 0) {
+                TextView empty = text("No in-season pollen index.", 12, false, SOFT_WHITE);
+                LinearLayout.LayoutParams emptyLp = new LinearLayout.LayoutParams(-1, -2);
+                emptyLp.topMargin = dp(10);
+                dayCard.addView(empty, emptyLp);
+            }
+
+            LinearLayout.LayoutParams dayLp = new LinearLayout.LayoutParams(-1, -2);
+            dayLp.topMargin = dp(i == 0 ? 7 : 9);
+            panel.addView(dayCard, dayLp);
+        }
+    }
+
+    View airQualityHero(JSONObject index) {
+        LinearLayout hero = new LinearLayout(this);
+        hero.setOrientation(LinearLayout.HORIZONTAL);
+        hero.setGravity(Gravity.CENTER_VERTICAL);
+        hero.setPadding(dp(13), dp(13), dp(13), dp(13));
+        hero.setBackground(newGlassDrawable(dp(19), false));
+
+        int accent = airQualityColor(index);
+        LinearLayout score = new LinearLayout(this);
+        score.setOrientation(LinearLayout.VERTICAL);
+        score.setGravity(Gravity.CENTER);
+        GradientDrawable scoreBackground = roundedBg(Color.argb(
+                62, Color.red(accent), Color.green(accent), Color.blue(accent)), dp(16));
+        score.setBackground(scoreBackground);
+        TextView value = text(aqiDisplayValue(index).isEmpty() ? "—" : aqiDisplayValue(index),
+                30, true, WHITE);
+        value.setGravity(Gravity.CENTER);
+        value.setIncludeFontPadding(false);
+        score.addView(value);
+        TextView aqi = text("UAQI", 9, true, WHITE);
+        aqi.setAlpha(0.86f);
+        aqi.setGravity(Gravity.CENTER);
+        score.addView(aqi);
+        hero.addView(score, new LinearLayout.LayoutParams(dp(80), dp(76)));
+
+        LinearLayout copy = new LinearLayout(this);
+        copy.setOrientation(LinearLayout.VERTICAL);
+        TextView statusLabel = text("CURRENT STATUS", 9, true, environmentAccentColor());
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) statusLabel.setLetterSpacing(0.08f);
+        copy.addView(statusLabel);
+
+        String category = index == null ? "Current air quality unavailable"
+                : firstNonEmpty(stringValue(index, "category"), "Current air quality");
+        View status = environmentStatusLine(category, accent, 16, true);
+        LinearLayout.LayoutParams statusLp = new LinearLayout.LayoutParams(-1, -2);
+        statusLp.topMargin = dp(3);
+        copy.addView(status, statusLp);
+
+        String dominant = index == null ? ""
+                : prettyEnum(stringValue(index, "dominantPollutant"));
+        TextView detail = text(dominant.isEmpty()
+                ? "Universal Air Quality Index"
+                : "Main pollutant · " + dominant, 11, false, SOFT_WHITE);
+        detail.setPadding(0, dp(4), 0, 0);
+        detail.setMaxLines(2);
+        copy.addView(detail);
+        LinearLayout.LayoutParams copyLp = new LinearLayout.LayoutParams(0, -2, 1f);
+        copyLp.leftMargin = dp(12);
+        hero.addView(copy, copyLp);
+
+        String aqiValue = aqiDisplayValue(index);
+        hero.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_YES);
+        hero.setContentDescription("Air quality index "
+                + (aqiValue.isEmpty() ? "unavailable" : aqiValue)
+                + ", " + category
+                + (dominant.isEmpty() ? "" : ", main pollutant " + dominant));
+        makeChildrenUnimportant(hero);
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-1, -2);
+        lp.topMargin = dp(6);
+        lp.bottomMargin = dp(2);
+        hero.setLayoutParams(lp);
+        return hero;
+    }
+
+    View airQualityForecastCell(String time, JSONObject index) {
+        LinearLayout cell = new LinearLayout(this);
+        cell.setOrientation(LinearLayout.VERTICAL);
+        cell.setGravity(Gravity.CENTER_HORIZONTAL);
+        cell.setPadding(dp(7), dp(7), dp(7), dp(7));
+        cell.setBackground(newGlassDrawable(dp(15), true));
+        int accent = airQualityColor(index);
+
+        View accentBar = new View(this);
+        accentBar.setBackground(roundedBg(accent, dp(2)));
+        cell.addView(accentBar, new LinearLayout.LayoutParams(-1, dp(3)));
+
+        String safeTime = time == null ? "" : time.trim();
+        int split = safeTime.lastIndexOf(' ');
+        String dayLabel = split > 0 ? safeTime.substring(0, split) : "";
+        String clockLabel = split > 0 ? safeTime.substring(split + 1) : safeTime;
+        if (!dayLabel.isEmpty()) {
+            TextView day = text(dayLabel, 9, false, FAINT_WHITE);
+            day.setGravity(Gravity.CENTER);
+            day.setPadding(0, dp(5), 0, 0);
+            cell.addView(day);
+        }
+        TextView timeView = text(clockLabel.isEmpty() ? "—" : clockLabel, 11, true, SOFT_WHITE);
+        timeView.setGravity(Gravity.CENTER);
+        if (dayLabel.isEmpty()) timeView.setPadding(0, dp(5), 0, 0);
+        cell.addView(timeView);
+
+        TextView value = text(aqiDisplayValue(index).isEmpty() ? "—" : aqiDisplayValue(index),
+                21, true, WHITE);
+        value.setGravity(Gravity.CENTER);
+        value.setPadding(0, dp(3), 0, 0);
+        cell.addView(value);
+
+        String category = index == null ? "Unavailable" : stringValue(index, "category");
+        TextView categoryView = text(category, 9, false, SOFT_WHITE);
+        categoryView.setGravity(Gravity.CENTER);
+        categoryView.setMaxLines(2);
+        categoryView.setEllipsize(android.text.TextUtils.TruncateAt.END);
+        LinearLayout.LayoutParams categoryLp = new LinearLayout.LayoutParams(-1, dp(27));
+        categoryLp.topMargin = dp(2);
+        cell.addView(categoryView, categoryLp);
+
+        LinearLayout.LayoutParams cellLp = new LinearLayout.LayoutParams(dp(84), dp(110));
+        cellLp.rightMargin = dp(6);
+        cell.setLayoutParams(cellLp);
+        cell.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_YES);
+        cell.setContentDescription((safeTime.isEmpty() ? "Forecast hour" : safeTime)
+                + ", air quality index "
+                + (aqiDisplayValue(index).isEmpty() ? "unavailable" : aqiDisplayValue(index))
+                + (category.isEmpty() ? "" : ", " + category));
+        makeChildrenUnimportant(cell);
+        return cell;
+    }
+
+    View environmentMetricRow(String label, String value) {
+        LinearLayout row = new LinearLayout(this);
+        row.setOrientation(LinearLayout.VERTICAL);
+        row.setPadding(dp(12), dp(10), dp(12), dp(10));
+        row.setBackground(newGlassDrawable(dp(15), true));
+        TextView metricLabel = text(label, 10, true, SOFT_WHITE);
+        metricLabel.setMaxLines(2);
+        metricLabel.setEllipsize(android.text.TextUtils.TruncateAt.END);
+        row.addView(metricLabel);
+        TextView amount = text(value, 15, true, WHITE);
+        amount.setPadding(0, dp(3), 0, 0);
+        amount.setMaxLines(2);
+        row.addView(amount);
+        row.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_YES);
+        row.setContentDescription(label + ", " + value);
+        makeChildrenUnimportant(row);
+        return row;
+    }
+
+    View pollenTypeRow(String name, int value, String category) {
+        LinearLayout block = new LinearLayout(this);
+        block.setOrientation(LinearLayout.VERTICAL);
+        block.setPadding(0, dp(8), 0, dp(8));
+
+        LinearLayout labels = new LinearLayout(this);
+        labels.setGravity(Gravity.CENTER_VERTICAL);
+        LinearLayout labelCopy = new LinearLayout(this);
+        labelCopy.setOrientation(LinearLayout.VERTICAL);
+        TextView nameView = text(name, 12, true, WHITE);
+        labelCopy.addView(nameView);
+        if (category != null && !category.isEmpty()) {
+            TextView categoryView = text(category, 10, false, SOFT_WHITE);
+            categoryView.setPadding(0, dp(1), dp(6), 0);
+            labelCopy.addView(categoryView);
+        }
+        labels.addView(labelCopy, new LinearLayout.LayoutParams(0, -2, 1f));
+        labels.addView(environmentBadge(
+                value < 0 ? "No index" : "UPI " + value, pollenColor(value)));
+        block.addView(labels);
+
+        LinearLayout.LayoutParams trackLp = new LinearLayout.LayoutParams(-1, dp(4));
+        trackLp.topMargin = dp(6);
+        block.addView(environmentSeverityTrack(value, 5, pollenColor(value)), trackLp);
+        block.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_YES);
+        block.setContentDescription(name + ", "
+                + (value < 0 ? "pollen index unavailable" : "Universal Pollen Index " + value)
+                + (category == null || category.isEmpty() ? "" : ", " + category));
+        makeChildrenUnimportant(block);
+        return block;
+    }
+
+    View pollenPlantRow(String name, int value, String category, boolean inSeason) {
+        LinearLayout row = new LinearLayout(this);
+        row.setGravity(Gravity.CENTER_VERTICAL);
+        row.setPadding(0, dp(7), 0, dp(7));
+        LinearLayout copy = new LinearLayout(this);
+        copy.setOrientation(LinearLayout.VERTICAL);
+        copy.addView(text(name, 11, true, WHITE));
+        if (inSeason) {
+            TextView season = text("In season", 9, false, FAINT_WHITE);
+            season.setPadding(0, dp(1), 0, 0);
+            copy.addView(season);
+        }
+        row.addView(copy, new LinearLayout.LayoutParams(0, -2, 1f));
+
+        String level = value < 0 ? "Index unavailable" : "UPI " + value;
+        if (category != null && !category.isEmpty()) level += " · " + category;
+        LinearLayout levelLine = new LinearLayout(this);
+        levelLine.setGravity(Gravity.CENTER_VERTICAL);
+        View dot = new View(this);
+        dot.setBackground(roundedBg(pollenColor(value), dp(4)));
+        levelLine.addView(dot, new LinearLayout.LayoutParams(dp(7), dp(7)));
+        TextView levelView = text(level, 10, false, SOFT_WHITE);
+        levelView.setGravity(Gravity.END);
+        levelView.setMaxLines(2);
+        LinearLayout.LayoutParams levelLp = new LinearLayout.LayoutParams(-2, -2);
+        levelLp.leftMargin = dp(5);
+        levelLine.addView(levelView, levelLp);
+        row.addView(levelLine);
+        row.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_YES);
+        row.setContentDescription(name + (inSeason ? ", in season" : "") + ", " + level);
+        makeChildrenUnimportant(row);
+        return row;
+    }
+
+    View environmentInset(String titleValue, String bodyValue) {
+        LinearLayout inset = new LinearLayout(this);
+        inset.setOrientation(LinearLayout.HORIZONTAL);
+        inset.setGravity(Gravity.TOP);
+        inset.setPadding(0, dp(10), 0, 0);
+        int accent = environmentAccentColor();
+        View rail = new View(this);
+        rail.setBackground(roundedBg(accent, dp(2)));
+        inset.addView(rail, new LinearLayout.LayoutParams(dp(3), -1));
+
+        LinearLayout copy = new LinearLayout(this);
+        copy.setOrientation(LinearLayout.VERTICAL);
+        TextView title = text(titleValue, 10, true, accent);
+        copy.addView(title);
+        TextView body = text(bodyValue, 11, false, SOFT_WHITE);
+        body.setLineSpacing(0f, 1.08f);
+        body.setPadding(0, dp(3), 0, 0);
+        copy.addView(body);
+        LinearLayout.LayoutParams copyLp = new LinearLayout.LayoutParams(0, -2, 1f);
+        copyLp.leftMargin = dp(9);
+        inset.addView(copy, copyLp);
+        inset.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_YES);
+        inset.setContentDescription(titleValue + ". " + bodyValue);
+        makeChildrenUnimportant(inset);
+        return inset;
+    }
+
+    TextView environmentBadge(String value, int color) {
+        TextView badge = text(value, 10, true, WHITE);
+        badge.setGravity(Gravity.CENTER);
+        badge.setPadding(dp(9), dp(4), dp(9), dp(4));
+        GradientDrawable background = roundedBg(Color.argb(
+                78, Color.red(color), Color.green(color), Color.blue(color)), dp(13));
+        badge.setBackground(background);
+        badge.setContentDescription(value);
+        return badge;
+    }
+
+    TextView sectionHeading(String value) {
+        TextView heading = text(value, 10, true, environmentAccentColor());
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) heading.setLetterSpacing(0.08f);
+        heading.setAccessibilityHeading(true);
+        heading.setPadding(dp(1), dp(13), 0, dp(7));
+        return heading;
+    }
+
+    TextView environmentMiniHeading(String value) {
+        TextView heading = text(value, 9, true, environmentAccentColor());
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) heading.setLetterSpacing(0.08f);
+        heading.setAccessibilityHeading(true);
+        heading.setPadding(0, dp(11), 0, dp(2));
+        return heading;
+    }
+
+    View environmentStatusLine(String value, int color, int textSizeSp, boolean bold) {
+        LinearLayout line = new LinearLayout(this);
+        line.setGravity(Gravity.CENTER_VERTICAL);
+        View dot = new View(this);
+        dot.setBackground(roundedBg(color, dp(5)));
+        line.addView(dot, new LinearLayout.LayoutParams(dp(8), dp(8)));
+        TextView label = text(value, textSizeSp, bold, WHITE);
+        label.setMaxLines(2);
+        label.setEllipsize(android.text.TextUtils.TruncateAt.END);
+        LinearLayout.LayoutParams labelLp = new LinearLayout.LayoutParams(0, -2, 1f);
+        labelLp.leftMargin = dp(6);
+        line.addView(label, labelLp);
+        return line;
+    }
+
+    View environmentSeverityTrack(int value, int maximum, int color) {
+        LinearLayout track = new LinearLayout(this);
+        track.setOrientation(LinearLayout.HORIZONTAL);
+        track.setBackground(roundedBg(Color.argb(28, 255, 255, 255), dp(3)));
+        int max = Math.max(1, maximum);
+        int clamped = Math.max(0, Math.min(max, value));
+        View fill = new View(this);
+        fill.setBackground(roundedBg(color, dp(3)));
+        track.addView(fill, new LinearLayout.LayoutParams(0, -1, clamped));
+        View remainder = new View(this);
+        track.addView(remainder, new LinearLayout.LayoutParams(
+                0, -1, Math.max(0.001f, max - clamped)));
+        track.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
+        return track;
+    }
+
+    View environmentDivider() {
+        View divider = new View(this);
+        divider.setBackground(roundedBg(Color.argb(28, 255, 255, 255), dp(1)));
+        divider.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
+        divider.setLayoutParams(new LinearLayout.LayoutParams(-1, dp(1)));
+        return divider;
+    }
+
+    int environmentAccentColor() {
+        String scene = displayedScene == null ? "" : displayedScene;
+        if (scene.trim().isEmpty()) scene = settingsSceneKey(lastCurrentWeather, displayedDaytime);
+        return settingsAccent(scene);
+    }
+
+    int airQualityColor(JSONObject index) {
+        int value = index == null ? -1 : index.optInt("aqi", -1);
+        if (value < 0) return Color.rgb(157, 177, 196);
+        if (value <= 20) return Color.rgb(74, 222, 128);
+        if (value <= 40) return Color.rgb(163, 230, 53);
+        if (value <= 60) return Color.rgb(250, 204, 21);
+        if (value <= 80) return Color.rgb(251, 146, 60);
+        if (value <= 100) return Color.rgb(248, 113, 113);
+        return Color.rgb(192, 132, 252);
+    }
+
+    int pollenColor(int value) {
+        if (value < 0) return Color.rgb(148, 163, 184);
+        if (value <= 1) return Color.rgb(74, 222, 128);
+        if (value == 2) return Color.rgb(163, 230, 53);
+        if (value == 3) return Color.rgb(250, 204, 21);
+        if (value == 4) return Color.rgb(251, 146, 60);
+        return Color.rgb(248, 113, 113);
+    }
+
+    View environmentDetailBlock(String titleValue, String bodyValue) {
+        LinearLayout block = new LinearLayout(this);
+        block.setOrientation(LinearLayout.VERTICAL);
+        block.setPadding(dp(12), dp(10), dp(12), dp(10));
+        block.setBackground(newGlassDrawable(dp(15), true));
+        block.addView(text(titleValue, 12, true, WHITE));
+        TextView body = text(bodyValue, 11, false, SOFT_WHITE);
+        body.setLineSpacing(0f, 1.08f);
+        body.setPadding(0, dp(3), 0, 0);
+        block.addView(body);
+        block.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_YES);
+        block.setContentDescription(titleValue + ". " + bodyValue);
+        makeChildrenUnimportant(block);
+        return block;
+    }
+
+    static JSONObject universalAqiIndex(JSONArray indexes) {
+        if (indexes == null) return null;
+        for (int i = 0; i < indexes.length(); i++) {
+            JSONObject candidate = indexes.optJSONObject(i);
+            if (candidate == null) continue;
+            if ("uaqi".equalsIgnoreCase(stringValue(candidate, "code"))) return candidate;
+        }
+        return null;
+    }
+
+    String formatEnvironmentalHour(String value, ZoneId zone) {
+        Instant instant = parseInstant(value);
+        if (instant == null) return "";
+        try {
+            return DateTimeFormatter.ofPattern("EEE HH:mm", Locale.getDefault())
+                    .format(instant.atZone(zone));
+        } catch (Exception ignored) {
+            return "";
+        }
+    }
+
+    String pollenDateLabel(JSONObject date, int index) {
+        if (date != null) {
+            try {
+                LocalDate local = LocalDate.of(
+                        date.optInt("year"), date.optInt("month"), date.optInt("day"));
+                return DateTimeFormatter.ofPattern("EEEE d MMM", Locale.getDefault()).format(local);
+            } catch (Exception ignored) { }
+        }
+        return index == 0 ? "Today" : "Day " + (index + 1);
     }
 
     void showOptionalDataHelpDialog(
@@ -988,6 +3065,7 @@ abstract class WeatherOverviewRenderingActivity extends MinuteForecastRenderingA
         background.setStroke(dp(1), Color.argb(58, 255, 255, 255));
         panel.setBackground(background);
         scroller.addView(panel, new ScrollView.LayoutParams(-1, -2));
+        scroller.setAccessibilityPaneTitle(label + " help");
 
         boolean keyBlocked = state != null && "Key blocked".equals(state.value);
         TextView title = text(keyBlocked ? label + " needs key access" : label + " help",
@@ -1243,7 +3321,7 @@ abstract class WeatherOverviewRenderingActivity extends MinuteForecastRenderingA
         lp.topMargin = dp(12);
         View card = card(body, dp(24), cardColor);
         card.setLayoutParams(lp);
-        content.addView(card);
+        pageContent().addView(card);
     }
 
     int findForecastDayIndex(JSONArray days, LocalDate target, ZoneId zone) {
@@ -1325,7 +3403,7 @@ abstract class WeatherOverviewRenderingActivity extends MinuteForecastRenderingA
         lp.topMargin = dp(12);
         View card = card(body, dp(24), cardColor);
         card.setLayoutParams(lp);
-        content.addView(card);
+        pageContent().addView(card);
     }
 
     View moonEventRow(String label, String time) {
@@ -1354,7 +3432,7 @@ abstract class WeatherOverviewRenderingActivity extends MinuteForecastRenderingA
         TextView attribution = text(source.toString(), 12, false, FAINT_WHITE);
         attribution.setGravity(Gravity.CENTER);
         attribution.setPadding(dp(4), dp(24), dp(4), dp(10));
-        content.addView(attribution);
+        pageContent().addView(attribution);
     }
 
 
@@ -1520,13 +3598,18 @@ abstract class WeatherOverviewRenderingActivity extends MinuteForecastRenderingA
         retryLp.topMargin = dp(14);
         box.addView(retry, retryLp);
 
-        content.addView(card(box, dp(24), cardColor));
+        globalErrorView = card(box, dp(24), cardColor);
+        content.addView(globalErrorView);
     }
 
     void clearDynamicContent() {
-        while (content.getChildCount() > dynamicStartIndex) {
-            content.removeViewAt(dynamicStartIndex);
+        if (globalErrorView != null) {
+            content.removeView(globalErrorView);
+            globalErrorView = null;
         }
+        if (overviewPageContent != null) overviewPageContent.removeAllViews();
+        if (precipitationPageContent != null) precipitationPageContent.removeAllViews();
+        activePageContent = precipitationMode ? precipitationPageContent : overviewPageContent;
         glassDrawables.clear();
         if (modeSwitchGlass != null) {
             applyGlassPalette(modeSwitchGlass);

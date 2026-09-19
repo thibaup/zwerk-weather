@@ -380,7 +380,7 @@ public class CityManagerActivity extends Activity {
         searchStatus.setSingleLine(false);
         meta.addView(searchStatus, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
 
-        coordinateShortcut = makeText("Coordinates", 13f, Color.rgb(158, 191, 236), true);
+        coordinateShortcut = makeText("Advanced coordinates", 13f, Color.rgb(158, 191, 236), true);
         coordinateShortcut.setGravity(Gravity.CENTER);
         coordinateShortcut.setPadding(dp(10), dp(7), dp(10), dp(7));
         coordinateShortcut.setClickable(true);
@@ -778,55 +778,228 @@ public class CityManagerActivity extends Activity {
         }
         hideKeyboard();
 
+        final int helperColor = Color.rgb(154, 169, 188);
+        final int errorColor = Color.rgb(255, 132, 132);
+        final String helperText = "Decimal degrees  •  lat −90…90  •  lon −180…180";
+
         LinearLayout form = new LinearLayout(this);
         form.setOrientation(LinearLayout.VERTICAL);
-        form.setPadding(dp(22), dp(4), dp(22), 0);
+        form.setPadding(dp(20), dp(4), dp(20), dp(2));
+
+        TextView intro = makeText(
+                "Add a saved place using exact decimal coordinates.",
+                13f,
+                COLOR_SECONDARY_TEXT,
+                false);
+        intro.setLineSpacing(0f, 1.08f);
+        LinearLayout.LayoutParams introLp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        introLp.bottomMargin = dp(12);
+        form.addView(intro, introLp);
+
+        LinearLayout card = new LinearLayout(this);
+        card.setOrientation(LinearLayout.VERTICAL);
+        card.setPadding(dp(14), dp(14), dp(14), dp(14));
+        card.setBackground(coordinatePanelBackground());
+        form.addView(card, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+
+        TextView nameLabel = makeText("Place name", 12f, COLOR_SECONDARY_TEXT, true);
+        card.addView(nameLabel);
 
         EditText name = new EditText(this);
-        name.setHint("Name (optional)");
+        name.setHint("Optional, e.g. Brussels");
         name.setSingleLine(true);
         name.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_FLAG_CAP_WORDS);
         name.setImeOptions(EditorInfo.IME_ACTION_NEXT);
         name.setContentDescription("Optional location name");
+        name.setTextColor(COLOR_PRIMARY_TEXT);
+        name.setHintTextColor(Color.rgb(145, 159, 177));
+        name.setTextSize(16f);
+        name.setGravity(Gravity.CENTER_VERTICAL);
+        name.setPadding(dp(14), 0, dp(14), 0);
+        name.setBackground(coordinateInputBackground());
+        name.setBackgroundTintList(null);
+        LinearLayout.LayoutParams nameLp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(50));
+        nameLp.topMargin = dp(6);
+        nameLp.bottomMargin = dp(12);
+        card.addView(name, nameLp);
+
+        LinearLayout coordinateRow = new LinearLayout(this);
+        coordinateRow.setOrientation(LinearLayout.HORIZONTAL);
+        coordinateRow.setGravity(Gravity.TOP);
+        LinearLayout.LayoutParams coordinateRowLp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        coordinateRowLp.topMargin = dp(12);
+        card.addView(coordinateRow, coordinateRowLp);
+
+        LinearLayout latitudeColumn = new LinearLayout(this);
+        latitudeColumn.setOrientation(LinearLayout.VERTICAL);
+        coordinateRow.addView(latitudeColumn, new LinearLayout.LayoutParams(
+                0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+
+        TextView latitudeLabel = makeText("Latitude", 12f, COLOR_SECONDARY_TEXT, true);
+        latitudeLabel.setContentDescription("Latitude, minus 90 to 90 degrees");
+        latitudeColumn.addView(latitudeLabel);
 
         EditText latitude = new EditText(this);
-        latitude.setHint("Latitude, e.g. 50.8503");
+        latitude.setHint("50.8503");
         latitude.setSingleLine(true);
         latitude.setInputType(InputType.TYPE_CLASS_NUMBER
                 | InputType.TYPE_NUMBER_FLAG_DECIMAL
                 | InputType.TYPE_NUMBER_FLAG_SIGNED);
         latitude.setImeOptions(EditorInfo.IME_ACTION_NEXT);
         latitude.setContentDescription("Latitude");
+        latitude.setTextColor(COLOR_PRIMARY_TEXT);
+        latitude.setHintTextColor(Color.rgb(126, 143, 164));
+        latitude.setTextSize(16f);
+        latitude.setGravity(Gravity.CENTER_VERTICAL);
+        latitude.setPadding(dp(12), 0, dp(12), 0);
+        latitude.setBackground(coordinateInputBackground());
+        latitude.setBackgroundTintList(null);
+        LinearLayout.LayoutParams latitudeLp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(50));
+        latitudeLp.topMargin = dp(6);
+        latitudeColumn.addView(latitude, latitudeLp);
+
+        LinearLayout longitudeColumn = new LinearLayout(this);
+        longitudeColumn.setOrientation(LinearLayout.VERTICAL);
+        LinearLayout.LayoutParams longitudeColumnLp = new LinearLayout.LayoutParams(
+                0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f);
+        longitudeColumnLp.leftMargin = dp(10);
+        coordinateRow.addView(longitudeColumn, longitudeColumnLp);
+
+        TextView longitudeLabel = makeText("Longitude", 12f, COLOR_SECONDARY_TEXT, true);
+        longitudeLabel.setContentDescription("Longitude, minus 180 to 180 degrees");
+        longitudeColumn.addView(longitudeLabel);
 
         EditText longitude = new EditText(this);
-        longitude.setHint("Longitude, e.g. 4.3517");
+        longitude.setHint("4.3517");
         longitude.setSingleLine(true);
         longitude.setInputType(InputType.TYPE_CLASS_NUMBER
                 | InputType.TYPE_NUMBER_FLAG_DECIMAL
                 | InputType.TYPE_NUMBER_FLAG_SIGNED);
         longitude.setImeOptions(EditorInfo.IME_ACTION_DONE);
         longitude.setContentDescription("Longitude");
+        longitude.setTextColor(COLOR_PRIMARY_TEXT);
+        longitude.setHintTextColor(Color.rgb(126, 143, 164));
+        longitude.setTextSize(16f);
+        longitude.setGravity(Gravity.CENTER_VERTICAL);
+        longitude.setPadding(dp(12), 0, dp(12), 0);
+        longitude.setBackground(coordinateInputBackground());
+        longitude.setBackgroundTintList(null);
+        LinearLayout.LayoutParams longitudeLp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(50));
+        longitudeLp.topMargin = dp(6);
+        longitudeColumn.addView(longitude, longitudeLp);
 
-        form.addView(name, new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, dp(52)));
-        form.addView(latitude, new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, dp(52)));
-        form.addView(longitude, new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, dp(52)));
+        TextView coordinateHelp = makeText(helperText, 12f, helperColor, false);
+        coordinateHelp.setPadding(dp(2), dp(10), dp(2), 0);
+        coordinateHelp.setContentDescription(helperText);
+        card.addView(coordinateHelp, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+
+        LinearLayout actions = new LinearLayout(this);
+        actions.setOrientation(LinearLayout.HORIZONTAL);
+        actions.setGravity(Gravity.END | Gravity.CENTER_VERTICAL);
+        LinearLayout.LayoutParams actionsLp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        actionsLp.topMargin = dp(12);
+        card.addView(actions, actionsLp);
+
+        LocationSnapshot deviceLocation = getLocationById(this, DEVICE_LOCATION_ID);
+        if (deviceLocation != null && validCoordinates(deviceLocation.lat, deviceLocation.lon)) {
+            TextView useDevice = makeText("Use device location", 13f, Color.rgb(170, 207, 255), true);
+            useDevice.setGravity(Gravity.CENTER);
+            useDevice.setPadding(dp(10), dp(7), dp(10), dp(7));
+            useDevice.setClickable(true);
+            useDevice.setFocusable(true);
+            useDevice.setContentDescription("Fill coordinates from saved device location");
+            useDevice.setBackground(pressableRoundedBackground(
+                    Color.argb(44, 78, 139, 214), Color.argb(92, 86, 154, 235), dp(12)));
+            useDevice.setOnClickListener(v -> {
+                if (name.length() == 0 && !cleanString(deviceLocation.name).isEmpty()) {
+                    name.setText(deviceLocation.name);
+                }
+                latitude.setText(String.format(Locale.US, "%.6f", deviceLocation.lat));
+                longitude.setText(String.format(Locale.US, "%.6f", deviceLocation.lon));
+                longitude.setSelection(longitude.length());
+            });
+            LinearLayout.LayoutParams useDeviceLp = new LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.WRAP_CONTENT, dp(38));
+            useDeviceLp.rightMargin = dp(8);
+            actions.addView(useDevice, useDeviceLp);
+        }
+
+        TextView reset = makeText("Reset", 13f, COLOR_SECONDARY_TEXT, true);
+        reset.setGravity(Gravity.CENTER);
+        reset.setPadding(dp(10), dp(7), dp(10), dp(7));
+        reset.setClickable(true);
+        reset.setFocusable(true);
+        reset.setContentDescription("Clear coordinate form");
+        reset.setBackground(pressableRoundedBackground(
+                Color.argb(38, 255, 255, 255), Color.argb(70, 255, 255, 255), dp(12)));
+        reset.setOnClickListener(v -> {
+            name.setText("");
+            latitude.setText("");
+            longitude.setText("");
+            latitude.setError(null);
+            longitude.setError(null);
+            coordinateHelp.setText(helperText);
+            coordinateHelp.setTextColor(helperColor);
+            coordinateHelp.setContentDescription(helperText);
+            latitude.requestFocus();
+        });
+        actions.addView(reset, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, dp(38)));
+
+        TextWatcher coordinateWatcher = new TextWatcher() {
+            @Override public void beforeTextChanged(CharSequence s, int start, int count, int after) { }
+            @Override public void onTextChanged(CharSequence s, int start, int before, int count) { }
+            @Override public void afterTextChanged(Editable s) {
+                latitude.setError(null);
+                longitude.setError(null);
+                coordinateHelp.setText(helperText);
+                coordinateHelp.setTextColor(helperColor);
+                coordinateHelp.setContentDescription(helperText);
+            }
+        };
+        latitude.addTextChangedListener(coordinateWatcher);
+        longitude.addTextChangedListener(coordinateWatcher);
 
         AlertDialog dialog = new AlertDialog.Builder(this)
-                .setTitle("Advanced coordinate entry")
-                .setMessage("City-name search is recommended. Use coordinates only when needed.")
+                .setTitle("Advanced coordinates")
                 .setView(form)
                 .setPositiveButton("Add", null)
                 .setNegativeButton("Cancel", null)
                 .create();
         dialog.setOnShowListener(ignored -> {
+            Window window = dialog.getWindow();
+            if (window != null) {
+                window.setBackgroundDrawable(coordinateDialogBackground());
+                window.addFlags(WindowManager.LayoutParams.FLAG_DIM_BEHIND);
+                WindowManager.LayoutParams attributes = window.getAttributes();
+                attributes.dimAmount = 0.72f;
+                window.setAttributes(attributes);
+                window.setLayout(
+                        Math.min(dp(420), getResources().getDisplayMetrics().widthPixels - dp(28)),
+                        WindowManager.LayoutParams.WRAP_CONTENT);
+            }
+            dialog.getButton(AlertDialog.BUTTON_POSITIVE).setTextColor(Color.rgb(164, 204, 255));
+            dialog.getButton(AlertDialog.BUTTON_NEGATIVE).setTextColor(Color.rgb(190, 201, 216));
             dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v -> {
                 Double lat = parseFiniteDouble(latitude.getText().toString());
                 Double lon = parseFiniteDouble(longitude.getText().toString());
-                if (lat == null || lon == null || !validCoordinates(lat, lon)) {
-                    Toast.makeText(this, "Enter a latitude from -90 to 90 and longitude from -180 to 180.", Toast.LENGTH_LONG).show();
+                boolean latitudeValid = lat != null && lat >= -90.0 && lat <= 90.0;
+                boolean longitudeValid = lon != null && lon >= -180.0 && lon <= 180.0;
+                if (!latitudeValid || !longitudeValid) {
+                    if (!latitudeValid) latitude.setError("Enter −90 to 90");
+                    if (!longitudeValid) longitude.setError("Enter −180 to 180");
+                    String error = "Check the highlighted coordinate and use decimal degrees.";
+                    coordinateHelp.setText(error);
+                    coordinateHelp.setTextColor(errorColor);
+                    coordinateHelp.setContentDescription(error);
                     return;
                 }
                 String explicitName = cleanString(name.getText().toString());
@@ -915,6 +1088,47 @@ public class CityManagerActivity extends Activity {
         states.addState(new int[]{android.R.attr.state_focused}, pressedBg);
         states.addState(new int[]{}, normalBg);
         return states;
+    }
+
+    private StateListDrawable coordinateInputBackground() {
+        float radius = dp(14);
+        StateListDrawable states = new StateListDrawable();
+
+        GradientDrawable focused = new GradientDrawable();
+        focused.setColor(Color.rgb(37, 67, 101));
+        focused.setCornerRadius(radius);
+        focused.setStroke(dp(2), Color.rgb(145, 195, 255));
+
+        GradientDrawable pressed = new GradientDrawable();
+        pressed.setColor(Color.rgb(40, 75, 112));
+        pressed.setCornerRadius(radius);
+        pressed.setStroke(dp(1), Color.rgb(112, 166, 229));
+
+        GradientDrawable normal = new GradientDrawable();
+        normal.setColor(Color.rgb(27, 36, 49));
+        normal.setCornerRadius(radius);
+        normal.setStroke(dp(1), Color.rgb(63, 78, 98));
+
+        states.addState(new int[]{android.R.attr.state_focused}, focused);
+        states.addState(new int[]{android.R.attr.state_pressed}, pressed);
+        states.addState(new int[]{}, normal);
+        return states;
+    }
+
+    private GradientDrawable coordinatePanelBackground() {
+        GradientDrawable panel = new GradientDrawable();
+        panel.setColor(Color.rgb(24, 31, 42));
+        panel.setCornerRadius(dp(18));
+        panel.setStroke(dp(1), Color.rgb(53, 69, 89));
+        return panel;
+    }
+
+    private GradientDrawable coordinateDialogBackground() {
+        GradientDrawable dialog = new GradientDrawable();
+        dialog.setColor(Color.rgb(18, 23, 31));
+        dialog.setCornerRadius(dp(24));
+        dialog.setStroke(dp(1), Color.rgb(56, 71, 91));
+        return dialog;
     }
 
     private TextView makeText(String value, float sizeSp, int color, boolean bold) {

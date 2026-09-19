@@ -1,12 +1,15 @@
 package com.zwerk.weather;
 
+import android.Manifest;
 import android.annotation.SuppressLint;
 import android.annotation.TargetApi;
 import android.app.Activity;
 import android.app.Dialog;
+import android.app.NotificationManager;
 import android.content.Context;
 import android.content.Intent;
 import android.content.SharedPreferences;
+import android.content.pm.PackageManager;
 import android.content.res.ColorStateList;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
@@ -66,6 +69,8 @@ public class SettingsActivity extends Activity {
     public static final String EXTRA_DISPLAY_UNIT_CHANGED = "com.zwerk.weather.extra.DISPLAY_UNIT_CHANGED";
     static final String EXTRA_AIR_QUALITY_CHANGED = "com.zwerk.weather.extra.AIR_QUALITY_CHANGED";
     static final String EXTRA_POLLEN_CHANGED = "com.zwerk.weather.extra.POLLEN_CHANGED";
+    static final String EXTRA_SEVERE_ALERTS_CHANGED = "com.zwerk.weather.extra.SEVERE_ALERTS_CHANGED";
+    static final String EXTRA_WEATHER_DETAILS_CHANGED = "com.zwerk.weather.extra.WEATHER_DETAILS_CHANGED";
     public static final String ACTION_REFRESH = "refresh";
     public static final String ACTION_DEVICE_LOCATION = "device_location";
     public static final String ACTION_ADVANCED_COORDINATES = "advanced_coordinates";
@@ -96,6 +101,12 @@ public class SettingsActivity extends Activity {
     private static final String PREF_SETTINGS_TILE_TOP = "settings_tile_top";
     private static final String PREF_SETTINGS_TILE_BOTTOM = "settings_tile_bottom";
     private static final String PREF_SETTINGS_ACCENT = "settings_accent";
+    private static final String STATE_INITIAL_AIR = "state_initial_air";
+    private static final String STATE_INITIAL_POLLEN = "state_initial_pollen";
+    private static final String STATE_INITIAL_ALERTS = "state_initial_alerts";
+    private static final String STATE_INITIAL_DETAILS = "state_initial_details";
+    private static final String STATE_TEMPERATURE_CHANGED = "state_temperature_changed";
+    private static final String STATE_DISPLAY_CHANGED = "state_display_changed";
     private static final String TEMP_CELSIUS = "C";
     private static final String TEMP_FAHRENHEIT = "F";
     private static final String WIND_KMH = "km/h";
@@ -125,7 +136,10 @@ public class SettingsActivity extends Activity {
     private boolean displayUnitChanged;
     private boolean initialAirQualityEnabled;
     private boolean initialPollenEnabled;
+    private boolean initialSevereAlertsEnabled;
+    private String initialWeatherDetailsSignature;
     private String displayedBudgetProfile;
+    private boolean displayedNotificationsBlocked;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -133,8 +147,26 @@ public class SettingsActivity extends Activity {
         readSceneStyle();
         normalizeUnitPreferences();
         SharedPreferences prefs = getSharedPreferences(UI_PREFS, MODE_PRIVATE);
-        initialAirQualityEnabled = prefs.getBoolean(PREF_AIR_QUALITY, false);
-        initialPollenEnabled = prefs.getBoolean(PREF_POLLEN, false);
+        RainAlertManager.reconcile(this);
+        if (savedInstanceState == null) {
+            initialAirQualityEnabled = prefs.getBoolean(PREF_AIR_QUALITY, false);
+            initialPollenEnabled = prefs.getBoolean(PREF_POLLEN, false);
+            initialSevereAlertsEnabled = prefs.getBoolean(PREF_SEVERE_ALERTS, false);
+            initialWeatherDetailsSignature = weatherDetailsSignature(prefs);
+        } else {
+            initialAirQualityEnabled = savedInstanceState.getBoolean(
+                    STATE_INITIAL_AIR, prefs.getBoolean(PREF_AIR_QUALITY, false));
+            initialPollenEnabled = savedInstanceState.getBoolean(
+                    STATE_INITIAL_POLLEN, prefs.getBoolean(PREF_POLLEN, false));
+            initialSevereAlertsEnabled = savedInstanceState.getBoolean(
+                    STATE_INITIAL_ALERTS, prefs.getBoolean(PREF_SEVERE_ALERTS, false));
+            initialWeatherDetailsSignature = savedInstanceState.getString(
+                    STATE_INITIAL_DETAILS, weatherDetailsSignature(prefs));
+            temperatureUnitChanged = savedInstanceState.getBoolean(
+                    STATE_TEMPERATURE_CHANGED, false);
+            displayUnitChanged = savedInstanceState.getBoolean(
+                    STATE_DISPLAY_CHANGED, false);
+        }
         configureWindow();
         buildUi();
         if (Build.VERSION.SDK_INT >= 33) {
@@ -283,6 +315,7 @@ public class SettingsActivity extends Activity {
 
     private void buildUi() {
         displayedBudgetProfile = ApiRequestBudgetManager.profile(this);
+        displayedNotificationsBlocked = alertNotificationsBlocked();
         FrameLayout root = new FrameLayout(this);
         root.setBackgroundColor(scrimBase);
 
@@ -359,11 +392,6 @@ public class SettingsActivity extends Activity {
                 "Check for updates",
                 "Checks GitHub Releases for a newer APK.",
                 () -> UpdateChecker.checkForUpdates(this, true));
-        addActionRow(
-                "Advanced coordinates",
-                "Choose a forecast point by latitude and longitude.",
-                () -> returnAction(ACTION_ADVANCED_COORDINATES));
-
         addSectionHeading("Alerts");
         addSwitchRow(
                 "Rain alerts",
@@ -375,6 +403,14 @@ public class SettingsActivity extends Activity {
                 "",
                 PREF_SEVERE_ALERTS,
                 false);
+        if (displayedNotificationsBlocked) {
+            addActionRow("Enable alert notifications", "", () -> {
+                Intent notificationSettings = new Intent(
+                        android.provider.Settings.ACTION_APP_NOTIFICATION_SETTINGS)
+                        .putExtra(android.provider.Settings.EXTRA_APP_PACKAGE, getPackageName());
+                startActivity(notificationSettings);
+            });
+        }
 
         addSectionHeading("Optional Google data");
         addSwitchRow(
@@ -389,6 +425,10 @@ public class SettingsActivity extends Activity {
                 false);
 
         addSectionHeading("Display");
+        addActionRow(
+                "Weather details",
+                "Choose the measurements shown on the overview.",
+                () -> startActivity(new Intent(this, WeatherDetailSettingsActivity.class)));
         addTemperatureUnitRow();
         addChoiceUnitRow(
                 "Wind speed",
@@ -422,7 +462,15 @@ public class SettingsActivity extends Activity {
                 "",
                 this::showScenePreview);
 
-        TextView footer = text("Zwerk Weather 1.0.2", 12f, Color.argb(170, 210, 222, 236), false);
+        String versionName = "";
+        try {
+            versionName = getPackageManager()
+                    .getPackageInfo(getPackageName(), 0).versionName;
+        } catch (Exception ignored) {
+            // Keep the footer usable if package metadata is unavailable.
+        }
+        TextView footer = text("Zwerk Weather " + (versionName == null ? "" : versionName),
+                12f, Color.argb(170, 210, 222, 236), false);
         footer.setGravity(Gravity.CENTER);
         footer.setPadding(dp(4), dp(28), dp(4), dp(8));
         page.addView(footer);
@@ -1662,6 +1710,18 @@ public class SettingsActivity extends Activity {
             if (PREF_ANIMATIONS.equals(preferenceKey) && backdrop != null) {
                 backdrop.setAnimationRunning(isChecked);
             }
+            if (PREF_RAIN_ALERTS.equals(preferenceKey)) {
+                RainAlertManager.reconcile(this);
+                if (isChecked) RainAlertManager.checkSoon(this);
+            }
+            if ((PREF_RAIN_ALERTS.equals(preferenceKey)
+                    || PREF_SEVERE_ALERTS.equals(preferenceKey))
+                    && isChecked
+                    && Build.VERSION.SDK_INT >= 33
+                    && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS)
+                    != PackageManager.PERMISSION_GRANTED) {
+                requestPermissions(new String[]{Manifest.permission.POST_NOTIFICATIONS}, 73);
+            }
         });
         row.addView(toggle, new LinearLayout.LayoutParams(dp(62), dp(48)));
         page.addView(row, surfaceParams());
@@ -1960,6 +2020,8 @@ public class SettingsActivity extends Activity {
         if (displayUnitChanged) result.putExtra(EXTRA_DISPLAY_UNIT_CHANGED, true);
         if (airQualityPreferenceChanged()) result.putExtra(EXTRA_AIR_QUALITY_CHANGED, true);
         if (pollenPreferenceChanged()) result.putExtra(EXTRA_POLLEN_CHANGED, true);
+        if (severeAlertsPreferenceChanged()) result.putExtra(EXTRA_SEVERE_ALERTS_CHANGED, true);
+        if (weatherDetailsPreferenceChanged()) result.putExtra(EXTRA_WEATHER_DETAILS_CHANGED, true);
         setResult(RESULT_OK, result);
         finishAfterTransition();
     }
@@ -1974,12 +2036,48 @@ public class SettingsActivity extends Activity {
                 .getBoolean(PREF_POLLEN, false) != initialPollenEnabled;
     }
 
+    private boolean severeAlertsPreferenceChanged() {
+        return getSharedPreferences(UI_PREFS, MODE_PRIVATE)
+                .getBoolean(PREF_SEVERE_ALERTS, false) != initialSevereAlertsEnabled;
+    }
+
+    private boolean alertNotificationsBlocked() {
+        SharedPreferences prefs = getSharedPreferences(UI_PREFS, MODE_PRIVATE);
+        if (!prefs.getBoolean(PREF_RAIN_ALERTS, false)
+                && !prefs.getBoolean(PREF_SEVERE_ALERTS, false)) return false;
+        NotificationManager manager = (NotificationManager) getSystemService(NOTIFICATION_SERVICE);
+        return manager == null || !manager.areNotificationsEnabled()
+                || (Build.VERSION.SDK_INT >= 33
+                && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS)
+                != PackageManager.PERMISSION_GRANTED);
+    }
+
+    private boolean weatherDetailsPreferenceChanged() {
+        return !weatherDetailsSignature(getSharedPreferences(UI_PREFS, MODE_PRIVATE))
+                .equals(initialWeatherDetailsSignature);
+    }
+
+    private static String weatherDetailsSignature(SharedPreferences prefs) {
+        StringBuilder result = new StringBuilder();
+        for (WeatherDetailSettingsActivity.DetailOption option
+                : WeatherDetailSettingsActivity.OPTIONS) {
+            result.append(option.key).append('=')
+                    .append(prefs.getBoolean(option.key, option.defaultValue)).append(';');
+        }
+        return result.toString();
+    }
+
     @Override
     protected void onResume() {
         super.onResume();
         String currentProfile = ApiRequestBudgetManager.profile(this);
+        boolean notificationsBlocked = alertNotificationsBlocked();
+        if (displayedNotificationsBlocked && !notificationsBlocked) {
+            RainAlertManager.checkSoon(this);
+        }
         if (page != null && displayedBudgetProfile != null
-                && !displayedBudgetProfile.equals(currentProfile)) {
+                && (!displayedBudgetProfile.equals(currentProfile)
+                || displayedNotificationsBlocked != notificationsBlocked)) {
             buildUi();
         }
         if (backdrop != null) {
@@ -1994,6 +2092,30 @@ public class SettingsActivity extends Activity {
         super.onPause();
     }
 
+    @Override
+    protected void onSaveInstanceState(Bundle outState) {
+        outState.putBoolean(STATE_INITIAL_AIR, initialAirQualityEnabled);
+        outState.putBoolean(STATE_INITIAL_POLLEN, initialPollenEnabled);
+        outState.putBoolean(STATE_INITIAL_ALERTS, initialSevereAlertsEnabled);
+        outState.putString(STATE_INITIAL_DETAILS, initialWeatherDetailsSignature);
+        outState.putBoolean(STATE_TEMPERATURE_CHANGED, temperatureUnitChanged);
+        outState.putBoolean(STATE_DISPLAY_CHANGED, displayUnitChanged);
+        super.onSaveInstanceState(outState);
+    }
+
+    @Override
+    public void onRequestPermissionsResult(
+            int requestCode, String[] permissions, int[] grantResults) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults);
+        if (requestCode == 73) {
+            if (grantResults.length > 0
+                    && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
+                RainAlertManager.checkSoon(this);
+            }
+            buildUi();
+        }
+    }
+
     @SuppressLint("GestureBackNavigation")
     @Override
     public void onBackPressed() {
@@ -2003,12 +2125,17 @@ public class SettingsActivity extends Activity {
     private void handleBack() {
         boolean airQualityChanged = airQualityPreferenceChanged();
         boolean pollenChanged = pollenPreferenceChanged();
-        if (temperatureUnitChanged || displayUnitChanged || airQualityChanged || pollenChanged) {
+        boolean severeAlertsChanged = severeAlertsPreferenceChanged();
+        boolean weatherDetailsChanged = weatherDetailsPreferenceChanged();
+        if (temperatureUnitChanged || displayUnitChanged || airQualityChanged || pollenChanged
+                || severeAlertsChanged || weatherDetailsChanged) {
             Intent result = new Intent().putExtra(EXTRA_ACTION, ACTION_PREFERENCES_CHANGED);
             if (temperatureUnitChanged) result.putExtra(EXTRA_UNIT_CHANGED, true);
             if (displayUnitChanged) result.putExtra(EXTRA_DISPLAY_UNIT_CHANGED, true);
             if (airQualityChanged) result.putExtra(EXTRA_AIR_QUALITY_CHANGED, true);
             if (pollenChanged) result.putExtra(EXTRA_POLLEN_CHANGED, true);
+            if (severeAlertsChanged) result.putExtra(EXTRA_SEVERE_ALERTS_CHANGED, true);
+            if (weatherDetailsChanged) result.putExtra(EXTRA_WEATHER_DETAILS_CHANGED, true);
             setResult(RESULT_OK, result);
         }
         finishAfterTransition();

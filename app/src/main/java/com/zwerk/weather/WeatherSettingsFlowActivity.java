@@ -105,35 +105,42 @@ abstract class WeatherSettingsFlowActivity extends WeatherOverviewRenderingActiv
                 SettingsActivity.EXTRA_AIR_QUALITY_CHANGED, false);
         boolean pollenChanged = data.getBooleanExtra(
                 SettingsActivity.EXTRA_POLLEN_CHANGED, false);
-        if (unitChanged || displayUnitChanged || airQualityChanged || pollenChanged) {
+        boolean severeAlertsChanged = data.getBooleanExtra(
+                SettingsActivity.EXTRA_SEVERE_ALERTS_CHANGED, false);
+        boolean weatherDetailsChanged = data.getBooleanExtra(
+                SettingsActivity.EXTRA_WEATHER_DETAILS_CHANGED, false);
+        if (unitChanged || displayUnitChanged || airQualityChanged || pollenChanged
+                || severeAlertsChanged || weatherDetailsChanged) {
             suppressNextResumeWeatherLoad = true;
         }
         boolean actionReloadsBaseWeather = SettingsActivity.ACTION_API_KEY_CHANGED.equals(action)
                 || SettingsActivity.ACTION_REFRESH.equals(action)
                 || SettingsActivity.ACTION_DEVICE_LOCATION.equals(action)
                 || SettingsActivity.ACTION_SELECTED_CITY.equals(action);
-        if (airQualityChanged || pollenChanged) {
+        if (airQualityChanged || pollenChanged || severeAlertsChanged) {
             // Clear changed optional state immediately. For actions that already reload base weather,
             // defer optional requests until the new weather generation succeeds; otherwise request
             // only the optional datasets whose switches actually changed.
             applyOptionalPreferenceChanges(
-                    airQualityChanged, pollenChanged, !actionReloadsBaseWeather);
+                    airQualityChanged, pollenChanged, severeAlertsChanged,
+                    !actionReloadsBaseWeather);
         }
         if (SettingsActivity.ACTION_API_KEY_CHANGED.equals(action)) {
             refreshWeather(true);
         } else if (SettingsActivity.ACTION_REFRESH.equals(action)) {
             refreshWeather(true, precipitationMode);
         } else if (SettingsActivity.ACTION_PREFERENCES_CHANGED.equals(action)) {
-            if (unitChanged || displayUnitChanged) rerenderLastWeather();
+            if (unitChanged || displayUnitChanged || weatherDetailsChanged) rerenderLastWeather();
         } else if (SettingsActivity.ACTION_DEVICE_LOCATION.equals(action)) {
             selectDeviceLocationAndRefresh();
         } else if (SettingsActivity.ACTION_ADVANCED_COORDINATES.equals(action)) {
-            if (unitChanged || displayUnitChanged) rerenderLastWeather();
+            if (unitChanged || displayUnitChanged || weatherDetailsChanged) rerenderLastWeather();
             showCoordinateDialog();
         } else if (SettingsActivity.ACTION_SELECTED_CITY.equals(action)) {
             applySelectedLocationResult(data);
-        } else if (unitChanged || displayUnitChanged || airQualityChanged || pollenChanged) {
-            if (unitChanged || displayUnitChanged) rerenderLastWeather();
+        } else if (unitChanged || displayUnitChanged || airQualityChanged || pollenChanged
+                || severeAlertsChanged || weatherDetailsChanged) {
+            if (unitChanged || displayUnitChanged || weatherDetailsChanged) rerenderLastWeather();
         }
     }
 

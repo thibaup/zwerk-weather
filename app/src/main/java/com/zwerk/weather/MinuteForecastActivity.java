@@ -87,6 +87,10 @@ import java.util.concurrent.Executors;
 
 
 abstract class MinuteForecastActivity extends OptionalWeatherDataActivity {
+    /** Renders the prepared precipitation page for the current minute-forecast state. */
+    protected abstract void rerenderPrecipitationPage();
+    private Runnable minuteExpirationRunnable;
+
     void cleanupMinuteForecastCaches() {
         File[] files = getFilesDir().listFiles();
         if (files == null) return;
@@ -222,6 +226,7 @@ abstract class MinuteForecastActivity extends OptionalWeatherDataActivity {
     }
 
     void invalidateMinuteForecastState() {
+        cancelMinuteExpiration();
         synchronized (minuteForecastLock) {
             minuteForecastState = null;
         }
@@ -263,19 +268,29 @@ abstract class MinuteForecastActivity extends OptionalWeatherDataActivity {
         final double lat = latitude;
         final double lon = longitude;
         final String language = Locale.getDefault().getLanguage();
-        final MinuteForecastState requestState;
+        MinuteForecastState pendingRequestState = null;
         synchronized (minuteForecastLock) {
             MinuteForecastState current = minuteForecastState;
-            if (current != null && current.matches(generation, lat, lon, language)) {
-                if (current.loading) return;
-                if (!forceNetwork && current.isFresh(System.currentTimeMillis())) return;
-                if (!forceNetwork && current.response == null && !current.errorMessage.isEmpty()) return;
+            boolean keepCurrent = current != null
+                    && current.matches(generation, lat, lon, language)
+                    && (current.loading
+                            || (!forceNetwork && current.isFresh(System.currentTimeMillis()))
+                            || (!forceNetwork
+                                    && current.response == null
+                                    && !current.errorMessage.isEmpty()));
+            if (!keepCurrent) {
+                pendingRequestState = new MinuteForecastState(
+                        generation, lat, lon, language, true, 0L, null, "", false);
+                minuteForecastState = pendingRequestState;
             }
-            requestState = new MinuteForecastState(
-                    generation, lat, lon, language, true, 0L, null, "", false);
-            minuteForecastState = requestState;
         }
+
+        // Even when an already-loading/fresh/error state means no new request is needed,
+        // synchronize the prepared precipitation page with that state. This prevents a
+        // stale pre-rendered "Load precipitation" card from surviving a mode switch.
         rerenderPrecipitationPreservingScroll();
+        if (pendingRequestState == null) return;
+        final MinuteForecastState requestState = pendingRequestState;
 
         executor.execute(() -> {
             try {
@@ -350,15 +365,20 @@ abstract class MinuteForecastActivity extends OptionalWeatherDataActivity {
             }
             minuteForecastState = resultState;
         }
+        if (resultState.response != null && RainAlertManager.isEnabled(this)) {
+            RainAlertManager.evaluateMinuteForecast(
+                    this, resultState.response, latitude, longitude, locationName);
+        }
         scheduleMinuteExpiration(resultState);
         rerenderPrecipitationPreservingScroll();
     }
 
     void scheduleMinuteExpiration(MinuteForecastState state) {
         if (state == null || state.response == null || state.fetchedAtMillis <= 0L || mainScroll == null) return;
+        cancelMinuteExpiration();
         long expiresAt = state.fetchedAtMillis + MINUTE_CACHE_MAX_AGE_MILLIS;
         long delay = Math.max(1L, expiresAt - System.currentTimeMillis() + 25L);
-        mainScroll.postDelayed(() -> {
+        minuteExpirationRunnable = () -> {
             boolean expired = false;
             synchronized (minuteForecastLock) {
                 MinuteForecastState current = minuteForecastState;
@@ -375,7 +395,16 @@ abstract class MinuteForecastActivity extends OptionalWeatherDataActivity {
                 cleanupMinuteForecastCaches();
                 rerenderPrecipitationPreservingScroll();
             }
-        }, delay);
+            minuteExpirationRunnable = null;
+        };
+        mainScroll.postDelayed(minuteExpirationRunnable, delay);
+    }
+
+    void cancelMinuteExpiration() {
+        if (mainScroll != null && minuteExpirationRunnable != null) {
+            mainScroll.removeCallbacks(minuteExpirationRunnable);
+        }
+        minuteExpirationRunnable = null;
     }
 
     boolean minuteRequestScopeCurrent(MinuteForecastState requestState) {
@@ -487,11 +516,27 @@ abstract class MinuteForecastActivity extends OptionalWeatherDataActivity {
     }
 
     void rerenderPrecipitationPreservingScroll() {
-        if (!precipitationMode || content == null) return;
-        int scrollY = mainScroll == null ? 0 : mainScroll.getScrollY();
-        renderPrecipitationContent();
-        if (mainScroll != null) {
-            mainScroll.post(() -> mainScroll.scrollTo(0, Math.max(0, scrollY)));
+        if (precipitationPageContent == null || content == null) return;
+        boolean precipitationPageActive = precipitationMode
+                && activePageContent == precipitationPageContent;
+        int scrollY = precipitationPageActive && mainScroll != null
+                ? mainScroll.getScrollY() : 0;
+
+        // Render the precipitation page itself, including while it is prepared off-screen.
+        // State changes can therefore never leave a stale action card waiting for the next
+        // mode switch. The active page pointer is restored by rerenderPrecipitationPage().
+        rerenderPrecipitationPage();
+
+        if (precipitationPageActive && mainScroll != null) {
+            mainScroll.post(() -> {
+                if (!precipitationMode || activePageContent != precipitationPageContent) return;
+                View scrollChild = mainScroll.getChildCount() == 0 ? null : mainScroll.getChildAt(0);
+                int viewportHeight = Math.max(0, mainScroll.getHeight()
+                        - mainScroll.getPaddingTop() - mainScroll.getPaddingBottom());
+                int maxScroll = scrollChild == null
+                        ? 0 : Math.max(0, scrollChild.getHeight() - viewportHeight);
+                mainScroll.scrollTo(0, Math.min(Math.max(0, scrollY), maxScroll));
+            });
         }
     }
 

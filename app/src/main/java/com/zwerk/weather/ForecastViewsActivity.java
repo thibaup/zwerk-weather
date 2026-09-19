@@ -173,6 +173,11 @@ abstract class ForecastViewsActivity extends WeatherInteractionViewsActivity {
             chart.syncPreviewFromController();
         }
 
+        void clearViewBindings() {
+            bindings.clear();
+            charts.clear();
+        }
+
         void dispose() {
             previewScene = null;
             selectionKey = "";
@@ -211,11 +216,13 @@ abstract class ForecastViewsActivity extends WeatherInteractionViewsActivity {
             previewSubtitle.setText(text);
             previewSubtitle.setVisibility(View.VISIBLE);
             locationArea.setContentDescription(
-                    locationName + ". " + text + ". Tap to restore current weather.");
+                    locationName + ". " + text
+                            + ". Tap to restore current weather. Swipe left or right to switch saved locations.");
         } else {
             previewSubtitle.setText("");
             previewSubtitle.setVisibility(View.GONE);
-            locationArea.setContentDescription(locationName + ". Current forecast location.");
+            locationArea.setContentDescription(locationName
+                    + ". Current forecast location. Swipe left or right to switch saved locations.");
         }
     }
 

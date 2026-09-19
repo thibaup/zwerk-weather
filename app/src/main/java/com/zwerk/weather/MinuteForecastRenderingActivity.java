@@ -87,36 +87,148 @@ import java.util.concurrent.Executors;
 
 
 abstract class MinuteForecastRenderingActivity extends MinuteForecastActivity {
+    void installOverviewTopLevelBoard(LinearLayout staging) {
+        if (staging == null || overviewPageContent == null) return;
+        while (staging.getChildCount() > 0) {
+            View child = staging.getChildAt(0);
+            staging.removeViewAt(0);
+            overviewPageContent.addView(child);
+        }
+    }
+
     void renderCurrentMode() {
         if (lastCurrentWeather == null || lastDailyWeather == null) {
             clearDynamicContent();
             return;
         }
-        if (precipitationMode) {
-            renderPrecipitationContent();
-        } else {
+        renderAllForecastPages();
+    }
+
+    void renderAllForecastPages() {
+        if (renderingAllForecastPages) return;
+        if (this instanceof MainActivity) {
+            ((MainActivity) this).cancelForecastSwipe();
+        }
+        expandedDayIndex = -1;
+        clearDynamicContent();
+        renderingAllForecastPages = true;
+        try {
+            activePageContent = overviewPageContent;
             renderOverviewContent();
+            activePageContent = precipitationPageContent;
+            renderPrecipitationContent();
+        } finally {
+            renderingAllForecastPages = false;
+            activePageContent = precipitationMode
+                    ? precipitationPageContent : overviewPageContent;
+        }
+        if (forecastPageHost != null) forecastPageHost.requestLayout();
+    }
+
+    LinearLayout pageContent() {
+        if (activePageContent != null) return activePageContent;
+        return content;
+    }
+
+    void requestForecastPagesRender() {
+        if (lastCurrentWeather == null || lastDailyWeather == null) {
+            clearDynamicContent();
+        } else {
+            renderAllForecastPages();
         }
     }
 
     void renderOverviewContent() {
-        clearDynamicContent();
+        if (!renderingAllForecastPages) {
+            rerenderOverviewPage();
+            return;
+        }
         ZoneId zone = responseZone(lastCurrentWeather, lastHourlyWeather, lastDailyWeather);
         JSONArray days = lastDailyWeather == null
                 ? null : lastDailyWeather.optJSONArray("forecastDays");
         JSONObject today = firstObject(days);
-        addHero(lastCurrentWeather, today);
-        addHourlyCard(lastHourlyWeather, zone);
-        addMultiDayCard(days, lastHourlyWeather, zone);
-        addDetailTiles(lastCurrentWeather);
-        addSunCard(days, lastCurrentWeather, zone);
-        addMoonCard(today, zone);
-        addAttribution();
+
+        LinearLayout destination = activePageContent;
+        LinearLayout staging = new LinearLayout(this);
+        staging.setOrientation(LinearLayout.VERTICAL);
+        staging.setClipChildren(false);
+        staging.setClipToPadding(false);
+        activePageContent = staging;
+        try {
+            int before = staging.getChildCount();
+            addHero(lastCurrentWeather, today);
+            markOverviewTopLevelBlock(staging, before, "hero");
+
+            before = staging.getChildCount();
+            addWeatherAlertsCard();
+            markOverviewTopLevelBlock(staging, before, "alerts");
+
+            before = staging.getChildCount();
+            addHourlyCard(lastHourlyWeather, zone);
+            markOverviewTopLevelBlock(staging, before, "hourly");
+
+            before = staging.getChildCount();
+            addMultiDayCard(days, lastHourlyWeather, zone);
+            markOverviewTopLevelBlock(staging, before, "daily");
+
+            addDetailTiles(lastCurrentWeather);
+
+            before = staging.getChildCount();
+            addSunCard(days, lastCurrentWeather, zone);
+            markOverviewTopLevelBlock(staging, before, "solar");
+
+            before = staging.getChildCount();
+            addMoonCard(today, zone);
+            markOverviewTopLevelBlock(staging, before, "moon");
+
+            before = staging.getChildCount();
+            addAttribution();
+            markOverviewTopLevelBlock(staging, before, "attribution");
+        } finally {
+            activePageContent = destination;
+        }
+        installOverviewTopLevelBoard(staging);
+    }
+
+    void markOverviewTopLevelBlock(LinearLayout staging, int childCountBefore, String stableId) {
+        if (staging == null || stableId == null || stableId.isEmpty()) return;
+        int added = staging.getChildCount() - childCountBefore;
+        if (added <= 0) return;
+        for (int i = childCountBefore; i < staging.getChildCount(); i++) {
+            View child = staging.getChildAt(i);
+            child.setTag(added == 1 ? stableId : stableId + "_" + (i - childCountBefore));
+        }
+    }
+
+    void rerenderOverviewPage() {
+        if (overviewPageContent == null || lastCurrentWeather == null || lastDailyWeather == null) {
+            return;
+        }
+        if (globalErrorView != null) return;
+        if (this instanceof MainActivity) ((MainActivity) this).cancelForecastSwipe();
+        removePageGlassDrawables(overviewPageContent);
+        overviewPageContent.removeAllViews();
+        sunTrackViews.clear();
+        forecastPreview.clearViewBindings();
+        boolean previous = renderingAllForecastPages;
+        LinearLayout previousContent = activePageContent;
+        renderingAllForecastPages = true;
+        activePageContent = overviewPageContent;
+        try {
+            renderOverviewContent();
+        } finally {
+            renderingAllForecastPages = previous;
+            activePageContent = previousContent;
+        }
+        if (forecastPageHost != null) forecastPageHost.requestLayout();
     }
 
     void renderPrecipitationContent() {
-        clearDynamicContent();
-        forecastPreview.restore(false);
+        if (!renderingAllForecastPages) {
+            rerenderPrecipitationPage();
+            return;
+        }
+        if (precipitationMode) forecastPreview.restore(false);
 
         LinearLayout page = new LinearLayout(this);
         page.setOrientation(LinearLayout.VERTICAL);
@@ -148,7 +260,43 @@ abstract class MinuteForecastRenderingActivity extends MinuteForecastActivity {
         }
 
         addMinuteAttribution(page);
-        content.addView(page, new LinearLayout.LayoutParams(-1, -2));
+        pageContent().addView(page, new LinearLayout.LayoutParams(-1, -2));
+    }
+
+    @Override
+    protected void rerenderPrecipitationPage() {
+        if (precipitationPageContent == null) return;
+        if (globalErrorView != null) return;
+        if (this instanceof MainActivity && precipitationMode) {
+            ((MainActivity) this).cancelForecastSwipe();
+        }
+        removePageGlassDrawables(precipitationPageContent);
+        precipitationPageContent.removeAllViews();
+        precipitationBody = null;
+        boolean previous = renderingAllForecastPages;
+        LinearLayout previousContent = activePageContent;
+        renderingAllForecastPages = true;
+        activePageContent = precipitationPageContent;
+        try {
+            renderPrecipitationContent();
+        } finally {
+            renderingAllForecastPages = previous;
+            activePageContent = previousContent;
+        }
+        if (forecastPageHost != null) forecastPageHost.requestLayout();
+    }
+
+    void removePageGlassDrawables(View view) {
+        if (view == null) return;
+        if (view.getBackground() instanceof GlassDrawable) {
+            glassDrawables.remove(view.getBackground());
+        }
+        if (view instanceof ViewGroup) {
+            ViewGroup group = (ViewGroup) view;
+            for (int i = 0; i < group.getChildCount(); i++) {
+                removePageGlassDrawables(group.getChildAt(i));
+            }
+        }
     }
 
     void addMinuteLoadingCard(LinearLayout page) {
@@ -162,6 +310,7 @@ abstract class MinuteForecastRenderingActivity extends MinuteForecastActivity {
         body.addView(spinner, new LinearLayout.LayoutParams(dp(38), dp(38)));
         TextView headline = text("Loading precipitation…", 17, true, WHITE);
         headline.setGravity(Gravity.CENTER);
+        headline.setAccessibilityLiveRegion(View.ACCESSIBILITY_LIVE_REGION_POLITE);
         LinearLayout.LayoutParams headlineLp = new LinearLayout.LayoutParams(-1, -2);
         headlineLp.topMargin = dp(12);
         body.addView(headline, headlineLp);

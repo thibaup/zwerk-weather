@@ -1,8 +1,13 @@
 package com.zwerk.weather;
 
 import android.animation.ValueAnimator;
+import android.Manifest;
 import android.app.Activity;
 import android.app.Dialog;
+import android.app.Notification;
+import android.app.NotificationChannel;
+import android.app.NotificationManager;
+import android.app.PendingIntent;
 import android.content.Context;
 import android.content.Intent;
 import android.content.pm.ApplicationInfo;
@@ -87,6 +92,9 @@ import java.util.concurrent.Executors;
 
 
 abstract class OptionalWeatherDataActivity extends WeatherApiActivity {
+    private static final String ALERT_CHANNEL_ID = "official_weather_alerts";
+    private static final String PREF_NOTIFIED_ALERT_IDS = "notified_weather_alert_ids";
+
     boolean airQualityEnabled() {
         return getSharedPreferences(UI_PREFS, MODE_PRIVATE)
                 .getBoolean(PREF_AIR_QUALITY, false);
@@ -96,13 +104,20 @@ abstract class OptionalWeatherDataActivity extends WeatherApiActivity {
         return weatherPreferences.pollenEnabled();
     }
 
+    boolean severeAlertsEnabled() {
+        return getSharedPreferences(UI_PREFS, MODE_PRIVATE)
+                .getBoolean(PREF_SEVERE_ALERTS, false);
+    }
+
     void requestEnabledOptionalDataForCurrentScope() {
         if (airQualityEnabled()) requestOptionalData(true, false, false);
         if (pollenEnabled()) requestOptionalData(false, true, false);
+        if (severeAlertsEnabled()) requestSevereWeatherAlerts();
     }
 
     void applyOptionalPreferenceChanges(
-            boolean airChanged, boolean pollenChanged, boolean requestEnabledData) {
+            boolean airChanged, boolean pollenChanged, boolean alertsChanged,
+            boolean requestEnabledData) {
         boolean rerender = false;
         synchronized (optionalDataLock) {
             if (airChanged) {
@@ -115,11 +130,116 @@ abstract class OptionalWeatherDataActivity extends WeatherApiActivity {
                 pollenState = null;
                 rerender = true;
             }
+            if (alertsChanged) {
+                severeAlertsRequestSerial++;
+                severeAlertsState = null;
+                rerender = true;
+            }
         }
         if (rerender) rerenderOverviewPreservingScroll();
         if (!requestEnabledData) return;
         if (airChanged && airQualityEnabled()) requestOptionalData(true, false, true);
         if (pollenChanged && pollenEnabled()) requestOptionalData(false, true, true);
+        if (alertsChanged && severeAlertsEnabled()) requestSevereWeatherAlerts();
+    }
+
+    void requestSevereWeatherAlerts() {
+        if (!severeAlertsEnabled()) return;
+        final int generation = weatherRequestGeneration;
+        final double lat = latitude;
+        final double lon = longitude;
+        final String language = Locale.getDefault().toLanguageTag();
+        final long serial;
+        synchronized (optionalDataLock) {
+            OptionalDataState state = severeAlertsState;
+            if (state != null && state.matches(generation, lat, lon, language)) return;
+            if (state != null && state.available && state.details != null
+                    && Double.doubleToLongBits(state.latitude) == Double.doubleToLongBits(lat)
+                    && Double.doubleToLongBits(state.longitude) == Double.doubleToLongBits(lon)
+                    && state.language.equals(language)) {
+                long fetchedAt = state.details.optLong("_fetchedAtMillis", 0L);
+                long age = System.currentTimeMillis() - fetchedAt;
+                if (fetchedAt > 0L && age >= 0L && age < 15L * 60L * 1000L) {
+                    severeAlertsState = new OptionalDataState(
+                            generation, lat, lon, language, false, true,
+                            state.value, state.accessibility, state.details);
+                    rerenderOverviewPreservingScroll();
+                    return;
+                }
+            }
+            serial = ++severeAlertsRequestSerial;
+            severeAlertsState = new OptionalDataState(
+                    generation, lat, lon, language, true, false, "", "Weather alerts loading");
+        }
+        optionalExecutor.execute(() -> {
+            OptionalDataState result;
+            try {
+                String key = readApiKey();
+                if (key.isEmpty()) {
+                    result = optionalUnavailable(
+                            generation, lat, lon, language, "Weather alerts unavailable");
+                } else {
+                    StringBuilder address = new StringBuilder(WEATHER_ALERTS_ENDPOINT)
+                            .append("?key=")
+                            .append(URLEncoder.encode(key, StandardCharsets.UTF_8.name()))
+                            .append("&location.latitude=").append(lat)
+                            .append("&location.longitude=").append(lon);
+                    if (!language.isEmpty()) {
+                        address.append("&languageCode=")
+                                .append(URLEncoder.encode(language, StandardCharsets.UTF_8.name()));
+                    }
+                    String baseAddress = address.toString();
+                    JSONObject response = null;
+                    JSONArray combinedAlerts = new JSONArray();
+                    HashSet<String> seenTokens = new HashSet<>();
+                    String pageToken = "";
+                    do {
+                        String pageAddress = baseAddress;
+                        if (!pageToken.isEmpty()) {
+                            pageAddress += "&pageToken="
+                                    + URLEncoder.encode(pageToken, StandardCharsets.UTF_8.name());
+                        }
+                        JSONObject page = requestOptionalJson(
+                                "weather-alerts", pageAddress, "GET", null);
+                        if (response == null) response = page;
+                        JSONArray pageAlerts = page.optJSONArray("weatherAlerts");
+                        if (pageAlerts != null) {
+                            for (int i = 0; i < pageAlerts.length(); i++) {
+                                JSONObject alert = pageAlerts.optJSONObject(i);
+                                if (alert != null) combinedAlerts.put(alert);
+                            }
+                        }
+                        String next = page.optString("nextPageToken", "").trim();
+                        if (next.isEmpty() || !seenTokens.add(next)) pageToken = "";
+                        else pageToken = next;
+                    } while (!pageToken.isEmpty());
+                    if (response == null) response = new JSONObject();
+                    response.put("weatherAlerts", combinedAlerts);
+                    response.remove("nextPageToken");
+                    response.put("_fetchedAtMillis", System.currentTimeMillis());
+                    JSONArray alerts = combinedAlerts;
+                    int count = alerts == null ? 0 : alerts.length();
+                    result = new OptionalDataState(
+                            generation, lat, lon, language, false, true,
+                            Integer.toString(count), count == 1 ? "1 active weather alert"
+                                    : count + " active weather alerts", response);
+                }
+            } catch (Exception error) {
+                result = optionalUnavailable(
+                        generation, lat, lon, language, "Weather alerts unavailable");
+            }
+            final OptionalDataState delivered = result;
+            runOnUiThread(() -> {
+                if (!optionalScopeCurrent(generation, lat, lon, language)
+                        || !severeAlertsEnabled()) return;
+                synchronized (optionalDataLock) {
+                    if (serial != severeAlertsRequestSerial) return;
+                    severeAlertsState = delivered;
+                }
+                if (delivered.available) notifyNewSevereAlert(delivered.details);
+                rerenderOverviewPreservingScroll();
+            });
+        });
     }
 
     void requestOptionalData(boolean airQuality, boolean pollen, boolean force) {
@@ -171,7 +291,8 @@ abstract class OptionalWeatherDataActivity extends WeatherApiActivity {
                     }
                     if (result.available) {
                         persistOptionalDataCacheQuietly(
-                                airQuality, lat, lon, language, result);
+                                airQuality, generation, lat, lon, language,
+                                result, requestSerial);
                     }
                 }
             } catch (OptionalRequestException error) {
@@ -228,6 +349,14 @@ abstract class OptionalWeatherDataActivity extends WeatherApiActivity {
                 && Locale.getDefault().toLanguageTag().equals(language);
     }
 
+    void requireOptionalScopeCurrent(
+            int generation, double lat, double lon, String language)
+            throws SupersededWeatherRequestException {
+        if (!optionalScopeCurrent(generation, lat, lon, language)) {
+            throw new SupersededWeatherRequestException();
+        }
+    }
+
     OptionalDataState optionalUnavailable(
             int generation,
             double lat,
@@ -251,10 +380,10 @@ abstract class OptionalWeatherDataActivity extends WeatherApiActivity {
     }
 
     void rerenderOverviewPreservingScroll() {
-        if (precipitationMode || lastCurrentWeather == null || lastDailyWeather == null) return;
+        if (lastCurrentWeather == null || lastDailyWeather == null) return;
         int scrollY = mainScroll == null ? 0 : mainScroll.getScrollY();
         renderOverviewContent();
-        if (mainScroll != null) {
+        if (!precipitationMode && mainScroll != null) {
             mainScroll.post(() -> mainScroll.scrollTo(0, Math.max(0, scrollY)));
         }
         if (headerGlass != null) headerGlass.requestBlurRefresh();
@@ -317,7 +446,7 @@ abstract class OptionalWeatherDataActivity extends WeatherApiActivity {
                 return null;
             }
             JSONObject root = new JSONObject(body.toString());
-            if (root.optInt("schema", -1) != 1
+            if (root.optInt("schema", -1) != 2
                     || !Boolean.toString(airQuality).equals(root.optString("airQuality", ""))) {
                 cacheFile.delete();
                 return null;
@@ -340,13 +469,19 @@ abstract class OptionalWeatherDataActivity extends WeatherApiActivity {
             }
             String value = root.optString("value", "").trim();
             String accessibility = root.optString("accessibility", "").trim();
+            JSONObject details = root.optJSONObject("details");
+            if (airQuality && (details == null
+                    || details.optJSONObject("current") == null)) {
+                cacheFile.delete();
+                return null;
+            }
             if (value.isEmpty()) {
                 cacheFile.delete();
                 return null;
             }
             return new OptionalDataState(
                     generation, lat, lon, scopeLanguage,
-                    false, true, value, accessibility);
+                    false, true, value, accessibility, details);
         } catch (Exception ignored) {
             cacheFile.delete();
             return null;
@@ -355,17 +490,19 @@ abstract class OptionalWeatherDataActivity extends WeatherApiActivity {
 
     void persistOptionalDataCacheQuietly(
             boolean airQuality,
+            int generation,
             double lat,
             double lon,
             String language,
-            OptionalDataState state) {
+            OptionalDataState state,
+            long requestSerial) {
         if (state == null || !state.available || state.value.trim().isEmpty()) return;
         cleanupOptionalCaches();
         File cacheFile = optionalDataCacheFile(airQuality, lat, lon, language);
         File tempFile = new File(cacheFile.getParentFile(), cacheFile.getName() + ".tmp");
         try {
             JSONObject root = new JSONObject();
-            root.put("schema", 1);
+            root.put("schema", 2);
             root.put("airQuality", Boolean.toString(airQuality));
             root.put("latitude", lat);
             root.put("longitude", lon);
@@ -373,6 +510,7 @@ abstract class OptionalWeatherDataActivity extends WeatherApiActivity {
             root.put("fetchedAtMillis", System.currentTimeMillis());
             root.put("value", state.value);
             root.put("accessibility", state.accessibility);
+            if (state.details != null) root.put("details", state.details);
             byte[] encoded = root.toString().getBytes(StandardCharsets.UTF_8);
             if (tempFile.exists() && !tempFile.delete()) return;
             try (FileOutputStream out = new FileOutputStream(tempFile)) {
@@ -380,7 +518,12 @@ abstract class OptionalWeatherDataActivity extends WeatherApiActivity {
                 out.flush();
                 out.getFD().sync();
             }
-            Os.rename(tempFile.getAbsolutePath(), cacheFile.getAbsolutePath());
+            synchronized (optionalDataLock) {
+                long currentSerial = airQuality ? airQualityRequestSerial : pollenRequestSerial;
+                if (requestSerial != currentSerial
+                        || !optionalScopeCurrent(generation, lat, lon, language)) return;
+                Os.rename(tempFile.getAbsolutePath(), cacheFile.getAbsolutePath());
+            }
         } catch (Exception ignored) {
             // Optional environmental caches are best-effort and never affect weather rendering.
         } finally {
@@ -395,15 +538,22 @@ abstract class OptionalWeatherDataActivity extends WeatherApiActivity {
             double lon,
             String language,
             String key) throws Exception {
+        requireOptionalScopeCurrent(generation, lat, lon, language);
         JSONObject location = new JSONObject();
         location.put("latitude", lat);
         location.put("longitude", lon);
         JSONObject body = new JSONObject();
         body.put("location", location);
         body.put("universalAqi", true);
+        JSONArray computations = new JSONArray();
+        computations.put("HEALTH_RECOMMENDATIONS");
+        computations.put("DOMINANT_POLLUTANT_CONCENTRATION");
+        computations.put("POLLUTANT_CONCENTRATION");
+        computations.put("POLLUTANT_ADDITIONAL_INFO");
+        body.put("extraComputations", computations);
         if (language != null && !language.isEmpty()) body.put("languageCode", language);
 
-        String address = AIR_QUALITY_ENDPOINT + "?key="
+        String address = AIR_QUALITY_CURRENT_ENDPOINT + "?key="
                 + URLEncoder.encode(key, StandardCharsets.UTF_8.name());
         JSONObject response = requestOptionalJson("air-quality-current", address, "POST", body);
         JSONArray indexes = response.optJSONArray("indexes");
@@ -430,9 +580,46 @@ abstract class OptionalWeatherDataActivity extends WeatherApiActivity {
         if (!category.isEmpty()) value += "\n" + category;
         String accessibility = "Universal AQI " + aqi
                 + (category.isEmpty() ? "" : ", " + category);
+
+        JSONObject forecastBody = new JSONObject();
+        requireOptionalScopeCurrent(generation, lat, lon, language);
+        forecastBody.put("location", location);
+        forecastBody.put("universalAqi", true);
+        if (language != null && !language.isEmpty()) {
+            forecastBody.put("languageCode", language);
+        }
+        Instant start = Instant.now().plus(Duration.ofHours(1));
+        JSONObject period = new JSONObject();
+        period.put("startTime", DateTimeFormatter.ISO_INSTANT.format(start));
+        period.put("endTime", DateTimeFormatter.ISO_INSTANT.format(start.plus(Duration.ofHours(23))));
+        forecastBody.put("period", period);
+        forecastBody.put("pageSize", 24);
+        JSONArray forecastComputations = new JSONArray();
+        forecastComputations.put("DOMINANT_POLLUTANT_CONCENTRATION");
+        forecastBody.put("extraComputations", forecastComputations);
+        JSONObject forecast;
+        boolean forecastComplete;
+        try {
+            requireOptionalScopeCurrent(generation, lat, lon, language);
+            forecast = requestOptionalJson(
+                    "air-quality-forecast",
+                    AIR_QUALITY_FORECAST_ENDPOINT + "?key="
+                            + URLEncoder.encode(key, StandardCharsets.UTF_8.name()),
+                    "POST",
+                    forecastBody);
+            forecastComplete = true;
+        } catch (Exception ignored) {
+            // Current AQI remains useful when the separate forecast event is unavailable.
+            forecast = new JSONObject();
+            forecastComplete = false;
+        }
+        JSONObject details = new JSONObject();
+        details.put("current", response);
+        details.put("forecast", forecast);
+        details.put("forecastComplete", forecastComplete);
         return new OptionalDataState(
                 generation, lat, lon, language,
-                false, true, value, accessibility);
+                false, true, value, accessibility, details);
     }
 
     OptionalDataState loadPollenState(
@@ -441,16 +628,18 @@ abstract class OptionalWeatherDataActivity extends WeatherApiActivity {
             double lon,
             String language,
             String key) throws Exception {
+        requireOptionalScopeCurrent(generation, lat, lon, language);
         StringBuilder address = new StringBuilder(POLLEN_ENDPOINT)
                 .append("?key=")
                 .append(URLEncoder.encode(key, StandardCharsets.UTF_8.name()))
                 .append("&location.latitude=").append(lat)
                 .append("&location.longitude=").append(lon)
-                .append("&days=1&pageSize=1&plantsDescription=false");
+                .append("&days=5&pageSize=5&plantsDescription=false");
         if (language != null && !language.isEmpty()) {
             address.append("&languageCode=")
                     .append(URLEncoder.encode(language, StandardCharsets.UTF_8.name()));
         }
+        requireOptionalScopeCurrent(generation, lat, lon, language);
         JSONObject response = requestOptionalJson(
                 "pollen-forecast", address.toString(), "GET", null);
         JSONArray dailyInfo = response.optJSONArray("dailyInfo");
@@ -500,7 +689,7 @@ abstract class OptionalWeatherDataActivity extends WeatherApiActivity {
                 + (dominantText.length() == 0 ? "" : ". Dominant pollen types " + dominantText);
         return new OptionalDataState(
                 generation, lat, lon, language,
-                false, true, value, accessibility);
+                false, true, value, accessibility, response);
     }
 
     JSONObject requestOptionalJson(
@@ -510,6 +699,8 @@ abstract class OptionalWeatherDataActivity extends WeatherApiActivity {
             JSONObject requestBody) throws Exception {
         ApiRequestBudgetManager.Category category = "pollen-forecast".equals(endpointName)
                 ? ApiRequestBudgetManager.Category.POLLEN
+                : "weather-alerts".equals(endpointName)
+                ? ApiRequestBudgetManager.Category.WEATHER
                 : ApiRequestBudgetManager.Category.AIR_QUALITY;
         ApiRequestBudgetManager.Decision budget =
                 ApiRequestBudgetManager.tryAcquire(this, category);
@@ -556,6 +747,93 @@ abstract class OptionalWeatherDataActivity extends WeatherApiActivity {
         } finally {
             connection.disconnect();
         }
+    }
+
+    void notifyNewSevereAlert(JSONObject response) {
+        JSONArray alerts = response == null ? null : response.optJSONArray("weatherAlerts");
+        if (alerts == null || alerts.length() == 0) return;
+        if (Build.VERSION.SDK_INT >= 33
+                && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS)
+                != PackageManager.PERMISSION_GRANTED) return;
+
+        String stored = getSharedPreferences(UI_PREFS, MODE_PRIVATE)
+                .getString(PREF_NOTIFIED_ALERT_IDS, "");
+        HashSet<String> known = new HashSet<>();
+        if (stored != null && !stored.isEmpty()) {
+            for (String value : stored.split("\\n")) if (!value.isEmpty()) known.add(value);
+        }
+        JSONObject selected = null;
+        int selectedRank = -1;
+        HashSet<String> current = new HashSet<>();
+        for (int i = 0; i < alerts.length(); i++) {
+            JSONObject alert = alerts.optJSONObject(i);
+            if (alert == null) continue;
+            String id = alert.optString("alertId", "");
+            if (!id.isEmpty()) current.add(id);
+            if (id.isEmpty() || known.contains(id)) continue;
+            int rank = alertSeverityRank(alert.optString("severity", ""));
+            if (selected == null || rank > selectedRank) {
+                selected = alert;
+                selectedRank = rank;
+            }
+        }
+        if (selected == null) return;
+
+        NotificationManager manager = (NotificationManager) getSystemService(NOTIFICATION_SERVICE);
+        if (manager == null) return;
+        if (Build.VERSION.SDK_INT >= 26) {
+            NotificationChannel channel = new NotificationChannel(
+                    ALERT_CHANNEL_ID, "Official weather alerts", NotificationManager.IMPORTANCE_HIGH);
+            channel.setDescription("Public warnings from official weather authorities");
+            manager.createNotificationChannel(channel);
+        }
+        Intent open = new Intent(this, MainActivity.class)
+                .addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP | Intent.FLAG_ACTIVITY_SINGLE_TOP);
+        PendingIntent pending = PendingIntent.getActivity(
+                this, 501, open, PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
+        String title = alertTitle(selected);
+        String area = selected.optString("areaName", "");
+        String severity = prettyEnum(selected.optString("severity", ""));
+        String bodyText = firstNonEmpty(area, severity);
+        if (!area.isEmpty() && !severity.isEmpty()) bodyText = severity + " · " + area;
+        Notification notification = new Notification.Builder(this, ALERT_CHANNEL_ID)
+                .setSmallIcon(android.R.drawable.ic_dialog_alert)
+                .setContentTitle(title.isEmpty() ? "Weather alert" : title)
+                .setContentText(bodyText)
+                .setStyle(new Notification.BigTextStyle().bigText(bodyText))
+                .setCategory(Notification.CATEGORY_ALARM)
+                .setAutoCancel(true)
+                .setContentIntent(pending)
+                .build();
+        manager.notify(501, notification);
+        HashSet<String> notified = new HashSet<>();
+        for (String id : current) if (known.contains(id)) notified.add(id);
+        String selectedId = selected.optString("alertId", "");
+        if (!selectedId.isEmpty()) notified.add(selectedId);
+        getSharedPreferences(UI_PREFS, MODE_PRIVATE).edit()
+                .putString(PREF_NOTIFIED_ALERT_IDS, android.text.TextUtils.join("\n", notified))
+                .apply();
+    }
+
+    static int alertSeverityRank(String severity) {
+        if ("EXTREME".equalsIgnoreCase(severity)) return 4;
+        if ("SEVERE".equalsIgnoreCase(severity)) return 3;
+        if ("MODERATE".equalsIgnoreCase(severity)) return 2;
+        if ("MINOR".equalsIgnoreCase(severity)) return 1;
+        return 0;
+    }
+
+    static String alertTitle(JSONObject alert) {
+        if (alert == null) return "";
+        JSONObject localized = alert.optJSONObject("alertTitle");
+        if (localized != null) return localized.optString("text", "").trim();
+        return alert.optString("alertTitle", "").trim();
+    }
+
+    static String prettyEnum(String value) {
+        if (value == null || value.trim().isEmpty()) return "";
+        String normalized = value.trim().toLowerCase(Locale.getDefault()).replace('_', ' ');
+        return Character.toUpperCase(normalized.charAt(0)) + normalized.substring(1);
     }
 
 

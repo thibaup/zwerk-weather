@@ -166,9 +166,17 @@ final class OptionalDataState {
     final boolean available;
     final String value;
     final String accessibility;
+    final JSONObject details;
 
     OptionalDataState(int generation, double latitude, double longitude, String language,
                       boolean loading, boolean available, String value, String accessibility) {
+        this(generation, latitude, longitude, language, loading, available,
+                value, accessibility, null);
+    }
+
+    OptionalDataState(int generation, double latitude, double longitude, String language,
+                      boolean loading, boolean available, String value, String accessibility,
+                      JSONObject details) {
         this.generation = generation;
         this.latitude = latitude;
         this.longitude = longitude;
@@ -177,6 +185,7 @@ final class OptionalDataState {
         this.available = available;
         this.value = value == null ? "" : value;
         this.accessibility = accessibility == null ? "" : accessibility;
+        this.details = details;
     }
 
     boolean matches(int generation, double latitude, double longitude, String language) {

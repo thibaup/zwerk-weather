@@ -89,18 +89,19 @@ public final class ApiUsageLimitsActivity extends Activity {
         page.addView(header);
 
         TextView intro = text(
-                "Set a hard local budget before Zwerk Weather sends a request. Retries and additional pages count too; cached forecasts do not.",
+                "Set local request caps. Retries and extra pages count; cached data does not.",
                 14f, SECONDARY);
         intro.setLineSpacing(dp(2), 1f);
         intro.setPadding(dp(4), dp(8), dp(4), dp(16));
         page.addView(intro);
 
         addHeading(page, "PROFILE · " + ApiRequestBudgetManager.profileLabel(this).toUpperCase(Locale.ROOT));
-        addProfile(page, "Off", "No app-side cap. Usage is still counted.",
+        addProfile(page, "Off", "No local cap; usage is still counted.",
                 ApiRequestBudgetManager.PROFILE_OFF);
-        addProfile(page, "Conservative", "Weather/Air Quality 8,000 monthly · Pollen 4,000.",
+        addProfile(page, "Conservative", "Weather/Air Quality 8,000/mo · Pollen 4,000/mo.",
                 ApiRequestBudgetManager.PROFILE_CONSERVATIVE);
-        addProfile(page, "Google free tier", "Weather/Air Quality 10,000 monthly · Pollen 5,000.",
+        addProfile(page, "Google free tier",
+                "Weather/Air Quality 10,000/mo · Pollen 5,000/mo · local pacing uses Pacific time.",
                 ApiRequestBudgetManager.PROFILE_GOOGLE_FREE);
 
         addHeading(page, "USAGE & CUSTOM LIMITS");
@@ -109,7 +110,7 @@ public final class ApiUsageLimitsActivity extends Activity {
         }
 
         TextView note = text(
-                "These limits apply only to this app on this device. Other apps or devices using the same Google Cloud project can still consume its allowance. The monthly counter follows Google's Pacific-time billing month.",
+                "Alerts use Weather. Current and forecast AQI share Air Quality; the 5-day outlook shares Pollen. The Google free-tier profile keeps the published monthly caps as hard stops and paces local daily use in Pacific time; its daily and monthly counters follow Pacific time. Custom limits are local. Counters cover only this app on this device, not other clients using the same Google Cloud project or billing account.",
                 12.5f, SECONDARY);
         note.setLineSpacing(dp(2), 1f);
         note.setPadding(dp(5), dp(12), dp(5), dp(8));
@@ -190,7 +191,7 @@ public final class ApiUsageLimitsActivity extends Activity {
         card.addView(top);
 
         String today = String.format(Locale.getDefault(), "Today  %,d / %s",
-                usage.today, ApiRequestBudgetManager.formatLimit(usage.limits.daily));
+                usage.today, dailyLimitLabel(usage.limits.daily));
         String month = String.format(Locale.getDefault(), "This month  %,d / %s",
                 usage.month, ApiRequestBudgetManager.formatLimit(usage.limits.monthly));
         TextView counters = text(today + "\n" + month, 14f, PRIMARY);
@@ -199,6 +200,10 @@ public final class ApiUsageLimitsActivity extends Activity {
         card.addView(counters);
         card.setOnClickListener(v -> editLimits(category, usage.limits));
         page.addView(card, cardParams());
+    }
+
+    private static String dailyLimitLabel(int value) {
+        return value < 0 ? "No daily cap" : ApiRequestBudgetManager.formatLimit(value);
     }
 
     private void editLimits(

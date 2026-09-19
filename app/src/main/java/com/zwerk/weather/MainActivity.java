@@ -87,8 +87,18 @@ import java.util.concurrent.Executors;
 
 
 public class MainActivity extends WeatherSettingsFlowActivity implements DeviceLocationRefreshCoordinator.Callback {
+    private ForecastSwipeLayout forecastSwipeLayout;
+    private FrameLayout modeSwitchHolder;
+    private View modeSwitchThumb;
+    private ValueAnimator modeSwitchAnimator;
+    private float modeSwitchProgress;
+    private float locationGestureStartX;
+    private float locationGestureStartY;
+    private boolean locationGestureActive;
+
     protected void onCreate(Bundle state) {
         super.onCreate(state);
+        RainAlertManager.reconcile(this);
         weatherPreferences = new WeatherPreferences(this);
         forecastDiskCache = new ForecastDiskCache(this);
         configureWindow();
@@ -178,7 +188,9 @@ public class MainActivity extends WeatherSettingsFlowActivity implements DeviceL
         content.setOrientation(LinearLayout.VERTICAL);
         content.setPadding(dp(18), dp(76), dp(18), dp(44));
         scroll.addView(content, new ScrollView.LayoutParams(-1, -2));
-        root.addView(scroll, new FrameLayout.LayoutParams(-1, -1));
+        forecastSwipeLayout = new ForecastSwipeLayout(this);
+        forecastSwipeLayout.addView(scroll, new FrameLayout.LayoutParams(-1, -1));
+        root.addView(forecastSwipeLayout, new FrameLayout.LayoutParams(-1, -1));
 
         headerGlass = new HeaderGlassView(this, scroll);
         headerGlass.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
@@ -208,6 +220,33 @@ public class MainActivity extends WeatherSettingsFlowActivity implements DeviceL
         locationArea.setFocusable(true);
         locationArea.setOnClickListener(v -> {
             if (forecastPreview.isPreviewing()) forecastPreview.restore(true);
+        });
+        locationArea.setOnTouchListener((view, event) -> {
+            switch (event.getActionMasked()) {
+                case MotionEvent.ACTION_DOWN:
+                    locationGestureStartX = event.getX();
+                    locationGestureStartY = event.getY();
+                    locationGestureActive = true;
+                    return true;
+                case MotionEvent.ACTION_UP:
+                    if (!locationGestureActive) return true;
+                    locationGestureActive = false;
+                    float dx = event.getX() - locationGestureStartX;
+                    float dy = event.getY() - locationGestureStartY;
+                    int slop = ViewConfiguration.get(view.getContext()).getScaledTouchSlop();
+                    if (Math.abs(dx) >= Math.max(dp(56), slop * 2)
+                            && Math.abs(dx) > Math.abs(dy) * 1.35f) {
+                        cycleSavedLocation(dx < 0 ? 1 : -1);
+                    } else {
+                        view.performClick();
+                    }
+                    return true;
+                case MotionEvent.ACTION_CANCEL:
+                    locationGestureActive = false;
+                    return true;
+                default:
+                    return locationGestureActive;
+            }
         });
 
         locationTitle = text(locationName, 20, false, WHITE);
@@ -293,45 +332,458 @@ public class MainActivity extends WeatherSettingsFlowActivity implements DeviceL
         content.addView(progress, new LinearLayout.LayoutParams(-1, dp(1)));
 
         addForecastModeSwitch();
-        dynamicStartIndex = content.getChildCount();
+        forecastPageHost = new ForecastPageHost(this);
+        forecastPageHost.setClipChildren(true);
+        forecastPageHost.setClipToPadding(true);
+
+        overviewPageContent = forecastPage();
+        precipitationPageContent = forecastPage();
+        activePageContent = overviewPageContent;
+        forecastPageHost.addView(overviewPageContent,
+                new FrameLayout.LayoutParams(-1, -2, Gravity.TOP));
+        forecastPageHost.addView(precipitationPageContent,
+                new FrameLayout.LayoutParams(-1, -2, Gravity.TOP));
+        precipitationPageContent.setVisibility(View.INVISIBLE);
+        content.addView(forecastPageHost, new LinearLayout.LayoutParams(-1, -2));
+        dynamicStartIndex = content.indexOfChild(forecastPageHost);
         updatePreviewSubtitle();
     }
 
+    /** Selects the next or previous saved city when the location header is swiped. */
+    private void cycleSavedLocation(int direction) {
+        List<CityManagerActivity.LocationSnapshot> saved =
+                CityManagerActivity.getStoredLocations(this);
+        if (saved.size() < 2) return;
+
+        int currentIndex = -1;
+        for (int i = 0; i < saved.size(); i++) {
+            if (saved.get(i).id.equals(selectedLocationId)) {
+                currentIndex = i;
+                break;
+            }
+        }
+        if (currentIndex < 0) {
+            CityManagerActivity.LocationSnapshot selected =
+                    CityManagerActivity.getSelectedLocation(this);
+            if (selected != null) {
+                for (int i = 0; i < saved.size(); i++) {
+                    if (saved.get(i).id.equals(selected.id)) {
+                        currentIndex = i;
+                        break;
+                    }
+                }
+            }
+        }
+        if (currentIndex < 0) currentIndex = 0;
+        int nextIndex = (currentIndex + direction) % saved.size();
+        if (nextIndex < 0) nextIndex += saved.size();
+        CityManagerActivity.LocationSnapshot next = saved.get(nextIndex);
+        if (next.id.equals(selectedLocationId)) return;
+
+        if (locationRefreshCoordinator != null) locationRefreshCoordinator.onSelectionChanged();
+        // A header swipe is an explicit user selection for both saved cities and the saved
+        // device entry. This also clears manual-location protection when returning to device.
+        applyLocationSelection(next.lat, next.lon, next.name, next.isDevice, true);
+        animateLocationHeader(direction);
+        refreshWeather();
+    }
+
+    private void animateLocationHeader(int direction) {
+        if (locationArea == null || !animationsAllowed()) return;
+        locationArea.animate().cancel();
+        locationArea.setAlpha(0.65f);
+        locationArea.setTranslationX(direction > 0 ? -dp(14) : dp(14));
+        locationArea.animate()
+                .translationX(0f)
+                .alpha(1f)
+                .setDuration(180L)
+                .start();
+    }
+
+    private LinearLayout forecastPage() {
+        LinearLayout page = new LinearLayout(this);
+        page.setOrientation(LinearLayout.VERTICAL);
+        page.setClipChildren(false);
+        page.setClipToPadding(false);
+        return page;
+    }
+
+    void cancelForecastSwipe() {
+        if (forecastSwipeLayout != null) forecastSwipeLayout.cancelAndSnap();
+    }
+
+    /** Measures both prepared pages but gives the scroll view only the selected page's height. */
+    private final class ForecastPageHost extends FrameLayout {
+        private boolean transitioning;
+
+        ForecastPageHost(Context context) {
+            super(context);
+        }
+
+        void setTransitioning(boolean value) {
+            if (transitioning == value) return;
+            transitioning = value;
+            requestLayout();
+        }
+
+        @Override
+        protected void onMeasure(int widthMeasureSpec, int heightMeasureSpec) {
+            int width = View.MeasureSpec.getSize(widthMeasureSpec);
+            int childWidth = View.MeasureSpec.makeMeasureSpec(width, View.MeasureSpec.EXACTLY);
+            int childHeight = View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED);
+            overviewPageContent.measure(childWidth, childHeight);
+            precipitationPageContent.measure(childWidth, childHeight);
+            int activeHeight = (precipitationMode
+                    ? precipitationPageContent : overviewPageContent).getMeasuredHeight();
+            int height = activeHeight;
+            if (transitioning) {
+                View incoming = precipitationMode
+                        ? overviewPageContent : precipitationPageContent;
+                height = Math.max(height, incoming.getMeasuredHeight()
+                        + Math.max(0, Math.round(incoming.getTranslationY())));
+            }
+            setMeasuredDimension(resolveSize(width, widthMeasureSpec),
+                    resolveSize(height, heightMeasureSpec));
+        }
+
+        @Override
+        protected void onLayout(boolean changed, int left, int top, int right, int bottom) {
+            int width = right - left;
+            overviewPageContent.layout(0, 0, width, overviewPageContent.getMeasuredHeight());
+            precipitationPageContent.layout(0, 0, width,
+                    precipitationPageContent.getMeasuredHeight());
+        }
+    }
+
+    /** Owns page gestures while leaving the shared status and mode controls stationary. */
+    private final class ForecastSwipeLayout extends FrameLayout {
+        private final int touchSlop;
+        private float startX;
+        private float startY;
+        private boolean candidate;
+        private boolean swiping;
+        private boolean settling;
+        private int animationGeneration;
+
+        void cancelAndSnap() {
+            animationGeneration++;
+            candidate = false;
+            swiping = false;
+            settling = false;
+            if (overviewPageContent != null) overviewPageContent.animate().cancel();
+            if (precipitationPageContent != null) precipitationPageContent.animate().cancel();
+            if (forecastPageHost instanceof ForecastPageHost) {
+                ((ForecastPageHost) forecastPageHost).setTransitioning(false);
+            }
+            if (modeSwitchAnimator != null) modeSwitchAnimator.cancel();
+            resetPagePositions();
+        }
+
+        ForecastSwipeLayout(Context context) {
+            super(context);
+            touchSlop = ViewConfiguration.get(context).getScaledTouchSlop();
+        }
+
+        @Override
+        public boolean onInterceptTouchEvent(MotionEvent event) {
+            switch (event.getActionMasked()) {
+                case MotionEvent.ACTION_DOWN:
+                    if (settling) return true;
+                    startX = event.getX();
+                    startY = event.getY();
+                    swiping = false;
+                    candidate = !hitsHorizontalControl(this, startX, startY);
+                    break;
+                case MotionEvent.ACTION_MOVE:
+                    if (!candidate) break;
+                    float dx = event.getX() - startX;
+                    float dy = event.getY() - startY;
+                    if (Math.max(Math.abs(dx), Math.abs(dy)) <= touchSlop) break;
+                    // Lock the gesture once its direction is clear; a vertical scroll
+                    // must never turn into a page change later in the same gesture.
+                    candidate = false;
+                    swiping = Math.abs(dx) > Math.abs(dy) * 1.5f
+                            && (precipitationMode ? dx > 0 : dx < 0);
+                    return swiping;
+                case MotionEvent.ACTION_POINTER_DOWN:
+                case MotionEvent.ACTION_UP:
+                case MotionEvent.ACTION_CANCEL:
+                    candidate = false;
+                    break;
+            }
+            return false;
+        }
+
+        @Override
+        public boolean onTouchEvent(MotionEvent event) {
+            if (settling) return true;
+            if (!swiping) return super.onTouchEvent(event);
+            switch (event.getActionMasked()) {
+                case MotionEvent.ACTION_MOVE:
+                    float dragX = directionalTranslation(event.getX() - startX);
+                    applyPageDrag(dragX);
+                    break;
+                case MotionEvent.ACTION_POINTER_DOWN:
+                case MotionEvent.ACTION_CANCEL:
+                    swiping = false;
+                    settleBack();
+                    break;
+                case MotionEvent.ACTION_UP:
+                    swiping = false;
+                    float dx = event.getX() - startX;
+                    float dy = event.getY() - startY;
+                    if (Math.abs(dx) >= Math.max(dp(64), touchSlop * 2)
+                            && Math.abs(dx) > Math.abs(dy) * 1.5f
+                            && (precipitationMode ? dx > 0 : dx < 0)) {
+                        animateModeChange(dx < 0);
+                    } else {
+                        settleBack();
+                    }
+                    break;
+            }
+            return true;
+        }
+
+        void animateModeChange(boolean precipitation) {
+            if (settling || precipitationMode == precipitation
+                    || overviewPageContent == null || precipitationPageContent == null) return;
+            settling = true;
+            final int generation = ++animationGeneration;
+            candidate = false;
+            swiping = false;
+            float width = Math.max(1, getWidth());
+            View outgoing = precipitationMode ? precipitationPageContent : overviewPageContent;
+            View incoming = precipitationMode ? overviewPageContent : precipitationPageContent;
+            if (incoming.getVisibility() != View.VISIBLE) preparePageDrag();
+            float outgoingTarget = precipitation ? -width : width;
+            float incomingStart = precipitation ? width : -width;
+            if (Math.abs(incoming.getTranslationX()) < 1f) incoming.setTranslationX(incomingStart);
+            float remaining = Math.abs(outgoingTarget - outgoing.getTranslationX()) / width;
+            long duration = animationsAllowed()
+                    ? Math.max(110L, Math.round(240L * Math.min(1f, remaining))) : 0L;
+            animateModeSwitchProgress(precipitation ? 1f : 0f, duration);
+            outgoing.animate().cancel();
+            incoming.animate().cancel();
+            outgoing.animate()
+                    .translationX(outgoingTarget)
+                    .alpha(0.88f)
+                    .setDuration(duration)
+                    .withEndAction(() -> {
+                        if (generation == animationGeneration) finishModeChange(precipitation);
+                    })
+                    .start();
+            incoming.animate()
+                    .translationX(0f)
+                    .alpha(1f)
+                    .setDuration(duration)
+                    .start();
+        }
+
+        private float directionalTranslation(float dx) {
+            return precipitationMode ? Math.max(0f, dx) : Math.min(0f, dx);
+        }
+
+        private void settleBack() {
+            if (overviewPageContent == null || precipitationPageContent == null) return;
+            settling = true;
+            final int generation = ++animationGeneration;
+            long duration = animationsAllowed() ? 170L : 0L;
+            animateModeSwitchProgress(precipitationMode ? 1f : 0f, duration);
+            float width = Math.max(1, getWidth());
+            View current = precipitationMode ? precipitationPageContent : overviewPageContent;
+            View adjacent = precipitationMode ? overviewPageContent : precipitationPageContent;
+            float adjacentTarget = precipitationMode ? -width : width;
+            current.animate().cancel();
+            adjacent.animate().cancel();
+            current.animate()
+                    .translationX(0f)
+                    .alpha(1f)
+                    .setDuration(duration)
+                    .withEndAction(() -> {
+                        if (generation != animationGeneration) return;
+                        adjacent.setTranslationX(adjacentTarget);
+                        adjacent.setAlpha(1f);
+                        adjacent.setTranslationY(0f);
+                        adjacent.setVisibility(View.INVISIBLE);
+                        ((ForecastPageHost) forecastPageHost).setTransitioning(false);
+                        settling = false;
+                    })
+                    .start();
+            adjacent.animate().translationX(adjacentTarget).alpha(0.88f)
+                    .setDuration(duration).start();
+        }
+
+        private void preparePageDrag() {
+            float width = Math.max(1, getWidth());
+            View current = precipitationMode ? precipitationPageContent : overviewPageContent;
+            View adjacent = precipitationMode ? overviewPageContent : precipitationPageContent;
+            current.setVisibility(View.VISIBLE);
+            adjacent.setVisibility(View.VISIBLE);
+            adjacent.setTranslationY(mainScroll == null ? 0f : mainScroll.getScrollY());
+            ((ForecastPageHost) forecastPageHost).setTransitioning(true);
+            current.setTranslationX(0f);
+            current.setAlpha(1f);
+            adjacent.setTranslationX(precipitationMode ? -width : width);
+            adjacent.setAlpha(0.88f);
+        }
+
+        private void applyPageDrag(float dx) {
+            if ((precipitationMode ? overviewPageContent : precipitationPageContent)
+                    .getVisibility() != View.VISIBLE) preparePageDrag();
+            float width = Math.max(1, getWidth());
+            float progress = Math.min(1f, Math.abs(dx) / width);
+            View current = precipitationMode ? precipitationPageContent : overviewPageContent;
+            View adjacent = precipitationMode ? overviewPageContent : precipitationPageContent;
+            current.setTranslationX(dx);
+            current.setAlpha(1f - (0.12f * progress));
+            adjacent.setTranslationX(dx + (precipitationMode ? -width : width));
+            adjacent.setAlpha(0.88f + (0.12f * progress));
+            setModeSwitchProgress(precipitationMode ? 1f - progress : progress);
+        }
+
+        private void finishModeChange(boolean precipitation) {
+            switchForecastMode(precipitation);
+            View active = precipitation ? precipitationPageContent : overviewPageContent;
+            View inactive = precipitation ? overviewPageContent : precipitationPageContent;
+            active.setTranslationX(0f);
+            active.setTranslationY(0f);
+            active.setAlpha(1f);
+            active.setVisibility(View.VISIBLE);
+            inactive.setTranslationX(0f);
+            inactive.setTranslationY(0f);
+            inactive.setAlpha(1f);
+            inactive.setVisibility(View.INVISIBLE);
+            ((ForecastPageHost) forecastPageHost).setTransitioning(false);
+            setModeSwitchProgress(precipitation ? 1f : 0f);
+            settling = false;
+        }
+
+        void resetPagePositions() {
+            if (overviewPageContent == null || precipitationPageContent == null || settling) return;
+            View active = precipitationMode ? precipitationPageContent : overviewPageContent;
+            View inactive = precipitationMode ? overviewPageContent : precipitationPageContent;
+            active.setTranslationX(0f);
+            active.setTranslationY(0f);
+            active.setAlpha(1f);
+            active.setVisibility(View.VISIBLE);
+            inactive.setTranslationX(0f);
+            inactive.setTranslationY(0f);
+            inactive.setAlpha(1f);
+            inactive.setVisibility(View.INVISIBLE);
+            ((ForecastPageHost) forecastPageHost).setTransitioning(false);
+            setModeSwitchProgress(precipitationMode ? 1f : 0f);
+        }
+
+        private boolean hitsHorizontalControl(View view, float x, float y) {
+            if (view instanceof HorizontalScrollView
+                    || view instanceof MinutePrecipitationGraphView
+                    || view instanceof ForecastChartView) return true;
+            if (view instanceof ViewGroup) {
+                ViewGroup group = (ViewGroup) view;
+                for (int i = group.getChildCount() - 1; i >= 0; i--) {
+                    View child = group.getChildAt(i);
+                    if (child.getVisibility() != View.VISIBLE) continue;
+                    float childX = x + group.getScrollX() - child.getX();
+                    float childY = y + group.getScrollY() - child.getY();
+                    if (childX >= 0 && childX < child.getWidth()
+                            && childY >= 0 && childY < child.getHeight()
+                            && hitsHorizontalControl(child, childX, childY)) return true;
+                }
+            }
+            return false;
+        }
+    }
+
     void addForecastModeSwitch() {
-        LinearLayout switchHolder = new LinearLayout(this);
-        switchHolder.setOrientation(LinearLayout.HORIZONTAL);
-        switchHolder.setGravity(Gravity.CENTER);
-        switchHolder.setPadding(dp(5), dp(4), dp(5), dp(4));
+        modeSwitchHolder = new FrameLayout(this);
         modeSwitchGlass = new GlassDrawable(
                 dp(23),
                 Math.max(1f, getResources().getDisplayMetrics().density),
                 true);
         applyGlassPalette(modeSwitchGlass);
         glassDrawables.add(modeSwitchGlass);
-        switchHolder.setBackground(modeSwitchGlass);
+        modeSwitchHolder.setBackground(modeSwitchGlass);
+
+        modeSwitchThumb = new View(this);
+        GradientDrawable thumbBackground = roundedBg(Color.argb(92, 255, 255, 255), dp(20));
+        thumbBackground.setStroke(dp(1), Color.argb(42, 255, 255, 255));
+        modeSwitchThumb.setBackground(thumbBackground);
+        modeSwitchThumb.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
+        FrameLayout.LayoutParams thumbLp = new FrameLayout.LayoutParams(1, dp(48));
+        thumbLp.leftMargin = dp(5);
+        thumbLp.topMargin = dp(4);
+        modeSwitchHolder.addView(modeSwitchThumb, thumbLp);
+
+        LinearLayout labels = new LinearLayout(this);
+        labels.setGravity(Gravity.CENTER);
+        labels.setPadding(dp(5), dp(4), dp(5), dp(4));
 
         overviewModeButton = dailyModeButton("Overview", "Overview forecast view");
         precipitationModeButton = dailyModeButton("Precipitation", "Minute precipitation view");
         overviewModeButton.setTextSize(13);
         precipitationModeButton.setTextSize(13);
-        overviewModeButton.setOnClickListener(v -> switchForecastMode(false));
-        precipitationModeButton.setOnClickListener(v -> switchForecastMode(true));
-        switchHolder.addView(overviewModeButton, new LinearLayout.LayoutParams(0, dp(48), 1f));
+        overviewModeButton.setBackgroundColor(Color.TRANSPARENT);
+        precipitationModeButton.setBackgroundColor(Color.TRANSPARENT);
+        overviewModeButton.setOnClickListener(v -> forecastSwipeLayout.animateModeChange(false));
+        precipitationModeButton.setOnClickListener(v -> forecastSwipeLayout.animateModeChange(true));
+        labels.addView(overviewModeButton, new LinearLayout.LayoutParams(0, dp(48), 1f));
         LinearLayout.LayoutParams precipLp = new LinearLayout.LayoutParams(0, dp(48), 1f);
         precipLp.leftMargin = dp(4);
-        switchHolder.addView(precipitationModeButton, precipLp);
+        labels.addView(precipitationModeButton, precipLp);
+        modeSwitchHolder.addView(labels, new FrameLayout.LayoutParams(-1, -1));
+        modeSwitchHolder.addOnLayoutChangeListener((v, left, top, right, bottom,
+                oldLeft, oldTop, oldRight, oldBottom) -> setModeSwitchProgress(modeSwitchProgress));
 
         LinearLayout.LayoutParams holderLp = new LinearLayout.LayoutParams(-1, dp(56));
         holderLp.topMargin = dp(11);
         holderLp.bottomMargin = dp(8);
-        content.addView(switchHolder, holderLp);
+        content.addView(modeSwitchHolder, holderLp);
         updateForecastModeButtons();
     }
 
     void updateForecastModeButtons() {
         if (overviewModeButton == null || precipitationModeButton == null) return;
-        updateDailyModeButton(overviewModeButton, !precipitationMode, "Overview forecast view");
-        updateDailyModeButton(precipitationModeButton, precipitationMode, "Minute precipitation view");
+        overviewModeButton.setSelected(!precipitationMode);
+        precipitationModeButton.setSelected(precipitationMode);
+        overviewModeButton.setContentDescription("Overview forecast view"
+                + (precipitationMode ? ", not selected" : ", selected"));
+        precipitationModeButton.setContentDescription("Minute precipitation view"
+                + (precipitationMode ? ", selected" : ", not selected"));
+        if (Build.VERSION.SDK_INT >= 30) {
+            overviewModeButton.setStateDescription(precipitationMode ? "Not selected" : "Selected");
+            precipitationModeButton.setStateDescription(precipitationMode ? "Selected" : "Not selected");
+        }
+        setModeSwitchProgress(precipitationMode ? 1f : 0f);
+    }
+
+    void setModeSwitchProgress(float value) {
+        modeSwitchProgress = Math.max(0f, Math.min(1f, value));
+        if (modeSwitchHolder == null || modeSwitchThumb == null) return;
+        int innerWidth = modeSwitchHolder.getWidth() - dp(10) - dp(4);
+        if (innerWidth <= 0) return;
+        int thumbWidth = innerWidth / 2;
+        FrameLayout.LayoutParams params =
+                (FrameLayout.LayoutParams) modeSwitchThumb.getLayoutParams();
+        if (params.width != thumbWidth) {
+            params.width = thumbWidth;
+            modeSwitchThumb.setLayoutParams(params);
+        }
+        modeSwitchThumb.setTranslationX((thumbWidth + dp(4)) * modeSwitchProgress);
+        overviewModeButton.setAlpha(1f - 0.25f * modeSwitchProgress);
+        precipitationModeButton.setAlpha(0.75f + 0.25f * modeSwitchProgress);
+    }
+
+    void animateModeSwitchProgress(float target, long duration) {
+        if (modeSwitchAnimator != null) modeSwitchAnimator.cancel();
+        if (duration <= 0L) {
+            setModeSwitchProgress(target);
+            return;
+        }
+        modeSwitchAnimator = ValueAnimator.ofFloat(modeSwitchProgress, target);
+        modeSwitchAnimator.setDuration(duration);
+        modeSwitchAnimator.addUpdateListener(animator ->
+                setModeSwitchProgress((Float) animator.getAnimatedValue()));
+        modeSwitchAnimator.start();
     }
 
     void switchForecastMode(boolean precipitation) {
@@ -344,18 +796,37 @@ public class MainActivity extends WeatherSettingsFlowActivity implements DeviceL
         }
         forecastPreview.restore(false);
         precipitationMode = precipitation;
+        activePageContent = precipitation ? precipitationPageContent : overviewPageContent;
         updateForecastModeButtons();
-        renderCurrentMode();
         int targetScroll = precipitation ? precipitationScrollY : overviewScrollY;
         if (mainScroll != null) {
+            mainScroll.scrollTo(0, targetScroll);
             mainScroll.post(() -> {
-                mainScroll.scrollTo(0, Math.max(0, targetScroll));
+                View child = mainScroll.getChildCount() == 0 ? null : mainScroll.getChildAt(0);
+                int viewportHeight = Math.max(0,
+                        mainScroll.getHeight() - mainScroll.getPaddingTop()
+                                - mainScroll.getPaddingBottom());
+                int maxScroll = child == null
+                        ? 0 : Math.max(0, child.getHeight() - viewportHeight);
+                mainScroll.scrollTo(0, Math.min(Math.max(0, targetScroll), maxScroll));
                 if (precipitationMode && precipitation) ensureMinuteForecast(false);
             });
         } else if (precipitation) {
             ensureMinuteForecast(false);
         }
         if (!precipitation) forecastPreview.restore(false);
+    }
+
+    @Override
+    void finishWeatherLoadSuccess(
+            JSONObject current,
+            JSONObject hourly,
+            JSONObject daily,
+            HourlyPageState pageState,
+            int generation) {
+        super.finishWeatherLoadSuccess(current, hourly, daily, pageState, generation);
+        if (generation != weatherRequestGeneration || weatherLoadActive) return;
+        if (RainAlertManager.isEnabled(this)) ensureMinuteForecast(false);
     }
 
     void continueStartupAfterApiKey() {
@@ -998,6 +1469,9 @@ public class MainActivity extends WeatherSettingsFlowActivity implements DeviceL
     }
 
     void resolvePlaceName(double lat, double lon) {
+        final int expectedSelectionGeneration = locationSelectionGeneration;
+        final String expectedLocationId = selectedLocationId == null ? "" : selectedLocationId;
+        final boolean expectedDeviceLocation = usingDeviceLocation;
         executor.execute(() -> {
             try {
                 List<Address> results = new Geocoder(this, Locale.getDefault()).getFromLocation(lat, lon, 1);
@@ -1009,19 +1483,29 @@ public class MainActivity extends WeatherSettingsFlowActivity implements DeviceL
                 if (name == null || name.isEmpty()) return;
 
                 final String resolved = name;
-                locationName = resolved;
-                getPreferences(MODE_PRIVATE).edit().putString("name", resolved).apply();
-                selectedLocationId = CityManagerActivity.updateSelectedLocationSnapshot(
-                        this, resolved, lat, lon, usingDeviceLocation, "", "");
-                android.content.SharedPreferences widgetPrefs = getSharedPreferences(
-                        WeatherWidgetProvider.PREFS_NAME, MODE_PRIVATE);
-                if (widgetPrefs.getBoolean(WeatherWidgetProvider.KEY_HAS_SNAPSHOT, false)) {
-                    widgetPrefs.edit()
-                            .putString(WeatherWidgetProvider.KEY_CITY, resolved)
-                            .apply();
-                    WeatherWidgetProvider.requestRefresh(this);
-                }
                 runOnUiThread(() -> {
+                    if (isFinishing()
+                            || (Build.VERSION.SDK_INT >= 17 && isDestroyed())
+                            || expectedSelectionGeneration != locationSelectionGeneration
+                            || Math.abs(latitude - lat) > WEATHER_CACHE_COORDINATE_TOLERANCE
+                            || Math.abs(longitude - lon) > WEATHER_CACHE_COORDINATE_TOLERANCE
+                            || !(selectedLocationId == null ? "" : selectedLocationId)
+                                    .equals(expectedLocationId)
+                            || usingDeviceLocation != expectedDeviceLocation) {
+                        return;
+                    }
+                    locationName = resolved;
+                    getPreferences(MODE_PRIVATE).edit().putString("name", resolved).apply();
+                    selectedLocationId = CityManagerActivity.updateSelectedLocationSnapshot(
+                            this, resolved, lat, lon, expectedDeviceLocation, "", "");
+                    android.content.SharedPreferences widgetPrefs = getSharedPreferences(
+                            WeatherWidgetProvider.PREFS_NAME, MODE_PRIVATE);
+                    if (widgetPrefs.getBoolean(WeatherWidgetProvider.KEY_HAS_SNAPSHOT, false)) {
+                        widgetPrefs.edit()
+                                .putString(WeatherWidgetProvider.KEY_CITY, resolved)
+                                .apply();
+                        WeatherWidgetProvider.requestRefresh(this);
+                    }
                     locationTitle.setText(resolved);
                     updatePreviewSubtitle();
                 });
@@ -1109,7 +1593,9 @@ public class MainActivity extends WeatherSettingsFlowActivity implements DeviceL
         glassDrawables.clear();
         sunTrackViews.clear();
         releaseTrackMarkerBitmaps();
+        cancelMinuteExpiration();
         optionalExecutor.shutdownNow();
+        cacheExecutor.shutdownNow();
         executor.shutdownNow();
         super.onDestroy();
     }
