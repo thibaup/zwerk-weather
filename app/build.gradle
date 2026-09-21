@@ -2,6 +2,8 @@ plugins {
     id "com.android.application"
 }
 
+def forceGenericHeaderBlur = project.findProperty("forceGenericHeaderBlur") == "true"
+
 android {
     namespace "com.zwerk.weather"
     compileSdk 36
@@ -10,8 +12,13 @@ android {
         applicationId "com.zwerk.weather"
         minSdk 28
         targetSdk 36
-        versionCode 19
-        versionName "1.1.0"
+        versionCode 20
+        versionName "1.2.0"
+        buildConfigField "boolean", "FORCE_GENERIC_HEADER_BLUR", forceGenericHeaderBlur.toString()
+    }
+
+    buildFeatures {
+        buildConfig true
     }
 
     buildTypes {

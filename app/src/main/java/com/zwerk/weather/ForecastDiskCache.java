@@ -29,11 +29,13 @@ final class ForecastDiskCache {
         final JSONObject current;
         final JSONObject hourly;
         final JSONObject daily;
+        final long fetchedAtMillis;
 
-        Snapshot(JSONObject current, JSONObject hourly, JSONObject daily) {
+        Snapshot(JSONObject current, JSONObject hourly, JSONObject daily, long fetchedAtMillis) {
             this.current = current;
             this.hourly = hourly;
             this.daily = daily;
+            this.fetchedAtMillis = fetchedAtMillis;
         }
     }
 
@@ -97,7 +99,7 @@ final class ForecastDiskCache {
             JSONObject hourly = root.optJSONObject("hourly");
             JSONObject daily = root.optJSONObject("daily");
             if (current == null || hourly == null || daily == null) return null;
-            return new Snapshot(current, hourly, daily);
+            return new Snapshot(current, hourly, daily, updatedAt);
         } catch (Exception ignored) {
             return null;
         }

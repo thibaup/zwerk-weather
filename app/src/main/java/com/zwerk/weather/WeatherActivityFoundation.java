@@ -288,6 +288,25 @@ abstract class WeatherActivityFoundation extends Activity {
     final ArrayList<WeakReference<HourlyCoverageCoordinator>> hourlyCoverageCoordinators = new ArrayList<>();
 
     abstract void performPullRefresh();
+
+    /**
+     * Lets the concrete screen keep the shared status line in sync with the
+     * forecast tab that is currently visible. Background data flows call this
+     * hook after their state changes; the base implementation intentionally does
+     * nothing for other activities that reuse the weather foundation.
+     */
+    void notifyActiveForecastStatusChanged() { }
+
+    static String fetchedDataAgeLabel(String prefix, long fetchedAtMillis) {
+        if (prefix == null || prefix.trim().isEmpty()) prefix = "Data";
+        if (fetchedAtMillis <= 0L) return prefix + " not loaded";
+        long age = System.currentTimeMillis() - fetchedAtMillis;
+        if (age < 0L) age = 0L;
+        long minutes = age / 60_000L;
+        if (minutes == 0L) return prefix + " published just now";
+        if (minutes == 1L) return prefix + " published 1 minute ago";
+        return prefix + " published " + minutes + " minutes ago";
+    }
     abstract void render(JSONObject current, JSONObject hourly, JSONObject daily, String responseUnit);
     abstract void showError(Exception error);
     abstract void requestEnabledOptionalDataForCurrentScope();

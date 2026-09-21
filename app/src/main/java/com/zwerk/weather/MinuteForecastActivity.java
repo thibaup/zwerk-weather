@@ -237,6 +237,7 @@ abstract class MinuteForecastActivity extends OptionalWeatherDataActivity {
             pollenState = null;
         }
         minuteSelectedTimeMillis = Long.MIN_VALUE;
+        notifyActiveForecastStatusChanged();
     }
 
     void rebindFreshMinuteStateToGeneration(
@@ -289,6 +290,7 @@ abstract class MinuteForecastActivity extends OptionalWeatherDataActivity {
         // synchronize the prepared precipitation page with that state. This prevents a
         // stale pre-rendered "Load precipitation" card from surviving a mode switch.
         rerenderPrecipitationPreservingScroll();
+        notifyActiveForecastStatusChanged();
         if (pendingRequestState == null) return;
         final MinuteForecastState requestState = pendingRequestState;
 
@@ -371,6 +373,7 @@ abstract class MinuteForecastActivity extends OptionalWeatherDataActivity {
         }
         scheduleMinuteExpiration(resultState);
         rerenderPrecipitationPreservingScroll();
+        notifyActiveForecastStatusChanged();
     }
 
     void scheduleMinuteExpiration(MinuteForecastState state) {
@@ -394,6 +397,7 @@ abstract class MinuteForecastActivity extends OptionalWeatherDataActivity {
             if (expired) {
                 cleanupMinuteForecastCaches();
                 rerenderPrecipitationPreservingScroll();
+                notifyActiveForecastStatusChanged();
             }
             minuteExpirationRunnable = null;
         };
@@ -513,6 +517,14 @@ abstract class MinuteForecastActivity extends OptionalWeatherDataActivity {
         }
         if (stale) cleanupMinuteForecastCaches();
         return null;
+    }
+
+    String minuteForecastStatusLabel() {
+        MinuteForecastState state = minuteForecastStateForCurrentScope();
+        if (state == null) return "Precipitation data not loaded";
+        if (state.loading) return "Loading precipitation data…";
+        if (state.response == null) return "Precipitation data unavailable";
+        return fetchedDataAgeLabel("Precipitation data", state.fetchedAtMillis);
     }
 
     void rerenderPrecipitationPreservingScroll() {

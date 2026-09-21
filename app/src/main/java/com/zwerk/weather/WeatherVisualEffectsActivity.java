@@ -96,6 +96,11 @@ abstract class WeatherVisualEffectsActivity extends WeatherActivityFoundation {
         private final Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG | Paint.DITHER_FLAG);
         private final Paint edgePaint = new Paint(Paint.ANTI_ALIAS_FLAG);
         private final Paint blurMaskPaint = new Paint(Paint.ANTI_ALIAS_FLAG | Paint.DITHER_FLAG);
+        private final Paint portableBlurPaint = new Paint(
+                Paint.ANTI_ALIAS_FLAG | Paint.DITHER_FLAG | Paint.FILTER_BITMAP_FLAG);
+        private final RectF portableBlurDestination = new RectF();
+        private final android.graphics.PorterDuffXfermode portableBlurMaskMode =
+                new android.graphics.PorterDuffXfermode(android.graphics.PorterDuff.Mode.DST_IN);
         private Shader topHighlightShader;
         private Shader sideSheenShader;
         private Shader depthShader;
@@ -111,6 +116,9 @@ abstract class WeatherVisualEffectsActivity extends WeatherActivityFoundation {
         private Object blurNode;
         private Object blurEffect;
         private Object blurCoverEffect;
+        private Bitmap portableBlurBitmap;
+        private Canvas portableBlurCanvas;
+        private boolean genericBlurLogged;
 
         HeaderGlassView(Context context, View source) {
             super(context);
@@ -118,7 +126,6 @@ abstract class WeatherVisualEffectsActivity extends WeatherActivityFoundation {
             this.sourceLayoutListener = (v, left, top, right, bottom,
                     oldLeft, oldTop, oldRight, oldBottom) -> requestBlurRefresh();
             if (source != null) source.addOnLayoutChangeListener(sourceLayoutListener);
-            blurPermanentlyDisabled = Build.VERSION.SDK_INT < 31;
             setWillNotDraw(false);
             setClickable(false);
             setFocusable(false);
@@ -150,6 +157,12 @@ abstract class WeatherVisualEffectsActivity extends WeatherActivityFoundation {
             invalidate();
         }
 
+        void requestAnimatedBackdropRefresh() {
+            if (oemBackdropBlurActive || scrollDepth <= 0.002f) return;
+            blurDirty = true;
+            postInvalidateOnAnimation();
+        }
+
         void release() {
             if (source != null) source.removeOnLayoutChangeListener(sourceLayoutListener);
             if (oemBackdropBlurActive) Api31OplusHeaderBlur.clear(this);
@@ -158,6 +171,7 @@ abstract class WeatherVisualEffectsActivity extends WeatherActivityFoundation {
             blurNode = null;
             blurEffect = null;
             blurCoverEffect = null;
+            releasePortableBlurBuffer();
             topHighlightShader = null;
             sideSheenShader = null;
             depthShader = null;
@@ -167,7 +181,9 @@ abstract class WeatherVisualEffectsActivity extends WeatherActivityFoundation {
         @Override
         protected void onAttachedToWindow() {
             super.onAttachedToWindow();
-            if (Build.VERSION.SDK_INT >= 31 && !oemBackdropBlurActive) {
+            if (BuildConfig.FORCE_GENERIC_HEADER_BLUR) {
+                Log.d(LOG_TAG, "header blur=oem-bypassed-for-test");
+            } else if (Build.VERSION.SDK_INT >= 31 && !oemBackdropBlurActive) {
                 oemBackdropBlurActive = Api31OplusHeaderBlur.apply(this);
                 if (oemBackdropBlurActive) Log.d(LOG_TAG, "header blur=oem-gradient");
             }
@@ -216,6 +232,7 @@ abstract class WeatherVisualEffectsActivity extends WeatherActivityFoundation {
         protected void onSizeChanged(int w, int h, int oldw, int oldh) {
             super.onSizeChanged(w, h, oldw, oldh);
             blurDirty = true;
+            if (w != oldw || h != oldh) releasePortableBlurBuffer();
             if (w <= 0 || h <= 0) {
                 topHighlightShader = null;
                 sideSheenShader = null;
@@ -244,8 +261,9 @@ abstract class WeatherVisualEffectsActivity extends WeatherActivityFoundation {
                     Shader.TileMode.CLAMP);
             blurMaskShader = new LinearGradient(
                     0, 0, 0, h,
-                    new int[]{Color.WHITE, Color.argb(246, 255, 255, 255),
-                            Color.argb(178, 255, 255, 255), Color.TRANSPARENT},
+                    new int[]{Color.argb(224, 255, 255, 255),
+                            Color.argb(216, 255, 255, 255),
+                            Color.argb(154, 255, 255, 255), Color.TRANSPARENT},
                     new float[]{0f, 0.46f, 0.82f, 1f},
                     Shader.TileMode.CLAMP);
         }
@@ -254,6 +272,7 @@ abstract class WeatherVisualEffectsActivity extends WeatherActivityFoundation {
         protected void onDraw(Canvas canvas) {
             super.onDraw(canvas);
             int tint = currentTint(SystemClock.uptimeMillis());
+            boolean blurDrawn = false;
             if (!oemBackdropBlurActive
                     && !blurPermanentlyDisabled
                     && Build.VERSION.SDK_INT >= 31) {
@@ -263,8 +282,8 @@ abstract class WeatherVisualEffectsActivity extends WeatherActivityFoundation {
                     blurEffect = null;
                 } else if (source != null && getWidth() > 0 && getHeight() > 0) {
                     try {
-                        Api31HeaderBlur.draw(
-                                this, canvas, source, blurDirty, scrollDepth);
+                        blurDrawn = Api31HeaderBlur.draw(
+                                this, canvas, blurDirty, scrollDepth);
                         blurDirty = false;
                     } catch (Throwable ignored) {
                         blurPermanentlyDisabled = true;
@@ -272,6 +291,15 @@ abstract class WeatherVisualEffectsActivity extends WeatherActivityFoundation {
                         blurEffect = null;
                     }
                 }
+            }
+            if (!oemBackdropBlurActive && !blurDrawn && scrollDepth > 0.002f) {
+                blurDrawn = drawPortableHeaderBlur(canvas);
+            }
+            if (blurDrawn && !genericBlurLogged) {
+                genericBlurLogged = true;
+                Log.d(LOG_TAG, Build.VERSION.SDK_INT >= 31 && !blurPermanentlyDisabled
+                        ? "header blur=platform-gradient"
+                        : "header blur=portable-gradient");
             }
 
             int tintAlpha = 14;
@@ -311,6 +339,84 @@ abstract class WeatherVisualEffectsActivity extends WeatherActivityFoundation {
             canvas.drawLine(0, bottom, getWidth(), bottom, edgePaint);
 
             if (tintAnimating) postInvalidateOnAnimation();
+        }
+
+        private void drawBackdropSource(Canvas target) {
+            if (skyLayout != null) skyLayout.drawBackdropForHeader(target);
+            if (source != null) source.draw(target);
+        }
+
+        private boolean drawPortableHeaderBlur(Canvas canvas) {
+            if (blurMaskShader == null || getWidth() <= 0 || getHeight() <= 0) return false;
+            if (!ensurePortableBlurBuffer()) return false;
+
+            portableBlurBitmap.eraseColor(Color.TRANSPARENT);
+            int offscreenSave = portableBlurCanvas.save();
+            portableBlurCanvas.scale(
+                    portableBlurBitmap.getWidth() / (float) getWidth(),
+                    portableBlurBitmap.getHeight() / (float) getHeight());
+            drawBackdropSource(portableBlurCanvas);
+            portableBlurCanvas.restoreToCount(offscreenSave);
+
+            int layer = canvas.saveLayer(0, 0, getWidth(), getHeight(), null);
+            portableBlurDestination.set(0, 0, getWidth(), getHeight());
+            portableBlurPaint.setAlpha(255);
+            canvas.drawBitmap(
+                    portableBlurBitmap, null, portableBlurDestination, portableBlurPaint);
+
+            float horizontalShift = Math.max(1f,
+                    getResources().getDisplayMetrics().density * 6f);
+            portableBlurPaint.setAlpha(64);
+            portableBlurDestination.set(
+                    -horizontalShift, 0, getWidth() - horizontalShift, getHeight());
+            canvas.drawBitmap(
+                    portableBlurBitmap, null, portableBlurDestination, portableBlurPaint);
+            portableBlurDestination.set(
+                    horizontalShift, 0, getWidth() + horizontalShift, getHeight());
+            canvas.drawBitmap(
+                    portableBlurBitmap, null, portableBlurDestination, portableBlurPaint);
+            portableBlurPaint.setAlpha(255);
+
+            float strength = Math.max(0f, Math.min(1f, scrollDepth));
+            strength = strength * strength * (3f - 2f * strength);
+            blurMaskPaint.setShader(blurMaskShader);
+            blurMaskPaint.setAlpha(Math.round(255f * strength));
+            blurMaskPaint.setXfermode(portableBlurMaskMode);
+            canvas.drawRect(0, 0, getWidth(), getHeight(), blurMaskPaint);
+            blurMaskPaint.setXfermode(null);
+            blurMaskPaint.setShader(null);
+            blurMaskPaint.setAlpha(255);
+            canvas.restoreToCount(layer);
+            return true;
+        }
+
+        private boolean ensurePortableBlurBuffer() {
+            int width = Math.max(1, (getWidth() + 9) / 10);
+            int height = Math.max(1, (getHeight() + 2) / 3);
+            if (portableBlurBitmap != null
+                    && !portableBlurBitmap.isRecycled()
+                    && portableBlurBitmap.getWidth() == width
+                    && portableBlurBitmap.getHeight() == height
+                    && portableBlurCanvas != null) {
+                return true;
+            }
+            releasePortableBlurBuffer();
+            try {
+                portableBlurBitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888);
+                portableBlurCanvas = new Canvas(portableBlurBitmap);
+                return true;
+            } catch (Throwable ignored) {
+                releasePortableBlurBuffer();
+                return false;
+            }
+        }
+
+        private void releasePortableBlurBuffer() {
+            portableBlurCanvas = null;
+            if (portableBlurBitmap != null) {
+                try { portableBlurBitmap.recycle(); } catch (Exception ignored) { }
+                portableBlurBitmap = null;
+            }
         }
     }
 
@@ -364,7 +470,6 @@ abstract class WeatherVisualEffectsActivity extends WeatherActivityFoundation {
         static boolean draw(
                 HeaderGlassView owner,
                 Canvas canvas,
-                View source,
                 boolean refresh,
                 float scrollDepth) {
             if (Build.VERSION.SDK_INT < 31) return false;
@@ -385,15 +490,18 @@ abstract class WeatherVisualEffectsActivity extends WeatherActivityFoundation {
                             ? (android.graphics.RenderEffect) owner.blurEffect
                             : null;
             if (effect == null) {
-                float radius = 60f;
+                float density = owner.getResources().getDisplayMetrics().density;
+                // Keep vertical detail readable while spreading edges farther sideways.
+                float radiusX = Math.min(96f, density * 26f);
+                float radiusY = Math.min(22f, density * 5.5f);
                 android.graphics.RenderEffect blur = android.graphics.RenderEffect.createBlurEffect(
-                        radius, radius, Shader.TileMode.CLAMP);
+                        radiusX, radiusY, Shader.TileMode.CLAMP);
                 android.graphics.ColorMatrix matrix = new android.graphics.ColorMatrix();
-                matrix.setSaturation(1.14f);
+                matrix.setSaturation(1.06f);
                 float[] values = matrix.getArray();
-                values[4] += 6f;
-                values[9] += 6f;
-                values[14] += 6f;
+                values[4] += 4f;
+                values[9] += 4f;
+                values[14] += 4f;
                 android.graphics.ColorMatrixColorFilter filter =
                         new android.graphics.ColorMatrixColorFilter(matrix);
                 effect = android.graphics.RenderEffect.createColorFilterEffect(filter, blur);
@@ -411,7 +519,7 @@ abstract class WeatherVisualEffectsActivity extends WeatherActivityFoundation {
                                 0f, 0f, 0f, 0f, Color.red(cover),
                                 0f, 0f, 0f, 0f, Color.green(cover),
                                 0f, 0f, 0f, 0f, Color.blue(cover),
-                                0f, 0f, 0f, 1f, 0f});
+                                0f, 0f, 0f, 0.10f, 0f});
                 coverEffect = android.graphics.RenderEffect.createColorFilterEffect(
                         new android.graphics.ColorMatrixColorFilter(coverMatrix));
                 owner.blurCoverEffect = coverEffect;
@@ -425,7 +533,7 @@ abstract class WeatherVisualEffectsActivity extends WeatherActivityFoundation {
                 android.graphics.RecordingCanvas recording = node.beginRecording(width, height);
                 int save = recording.save();
                 recording.clipRect(0, 0, width, height);
-                source.draw(recording);
+                owner.drawBackdropSource(recording);
                 recording.restoreToCount(save);
                 node.endRecording();
             }
@@ -436,16 +544,14 @@ abstract class WeatherVisualEffectsActivity extends WeatherActivityFoundation {
             canvas.drawRenderNode(node);
 
             float density = owner.getResources().getDisplayMetrics().density;
-            float shift = Math.max(0.65f, density * 0.85f);
-            int save = canvas.save();
-            canvas.clipRect(0, height * 0.12f, width, height * 0.28f);
-            canvas.translate(shift, 0f);
+            float shift = Math.max(2f, density * 6f);
+            int save = canvas.saveLayerAlpha(0, 0, width, height, 64);
+            canvas.translate(-shift, 0f);
             canvas.drawRenderNode(node);
             canvas.restoreToCount(save);
 
-            save = canvas.save();
-            canvas.clipRect(0, height * 0.63f, width, height * 0.78f);
-            canvas.translate(-shift * 0.70f, 0f);
+            save = canvas.saveLayerAlpha(0, 0, width, height, 64);
+            canvas.translate(shift, 0f);
             canvas.drawRenderNode(node);
             canvas.restoreToCount(save);
 
@@ -469,6 +575,8 @@ abstract class WeatherVisualEffectsActivity extends WeatherActivityFoundation {
 
     final class SkyLayout extends FrameLayout {
         private final Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG | Paint.DITHER_FLAG);
+        private final Paint portableBlurPaint = new Paint(
+                Paint.ANTI_ALIAS_FLAG | Paint.DITHER_FLAG | Paint.FILTER_BITMAP_FLAG);
         private final Rect sourceRect = new Rect();
         private final RectF destinationRect = new RectF();
         private final Path fogPath = new Path();
@@ -497,6 +605,13 @@ abstract class WeatherVisualEffectsActivity extends WeatherActivityFoundation {
         private Shader stormDepthShader;
         private Shader fogWashShader;
         private Shader nightWeatherOverlay;
+        private float backgroundBlurDepth;
+        private Bitmap portableBlurBitmap;
+        private Canvas portableBlurCanvas;
+        private Object backgroundBlurNode;
+        private Object backgroundBlurEffect;
+        private float backgroundBlurEffectRadius = -1f;
+        private boolean platformBackgroundBlurDisabled;
 
         SkyLayout(Context context) {
             super(context);
@@ -511,6 +626,13 @@ abstract class WeatherVisualEffectsActivity extends WeatherActivityFoundation {
                 particleSpeed[i] = 0.24f + (((i * 29) % 41) / 80f);
                 particleSize[i] = 0.65f + (((i * 17) % 23) / 18f);
             }
+        }
+
+        void setBackgroundBlurDepth(float depth) {
+            float next = Math.max(0f, Math.min(1f, depth));
+            if (Math.abs(next - backgroundBlurDepth) < 0.004f) return;
+            backgroundBlurDepth = next;
+            invalidate();
         }
 
         String setScene(SceneSpec target) {
@@ -618,11 +740,21 @@ abstract class WeatherVisualEffectsActivity extends WeatherActivityFoundation {
             outgoingSpec = null;
             transitionStarted = 0L;
             clearOutgoingSnapshot();
+            releasePortableBackgroundBlurBuffer();
+            backgroundBlurNode = null;
+            backgroundBlurEffect = null;
+            backgroundBlurEffectRadius = -1f;
         }
 
         @Override
         protected void onSizeChanged(int w, int h, int oldw, int oldh) {
             super.onSizeChanged(w, h, oldw, oldh);
+            if (w != oldw || h != oldh) {
+                releasePortableBackgroundBlurBuffer();
+                backgroundBlurNode = null;
+                backgroundBlurEffect = null;
+                backgroundBlurEffectRadius = -1f;
+            }
             if (w <= 0 || h <= 0) return;
             fallbackShader = new LinearGradient(
                     0, 0, 0, h,
@@ -691,9 +823,92 @@ abstract class WeatherVisualEffectsActivity extends WeatherActivityFoundation {
                 setAnimationRunning(false);
             }
             long now = visualNow();
-            drawComposite(canvas, now, true);
+            boolean backgroundDrawn = false;
+            if (backgroundBlurDepth > 0.002f
+                    && Build.VERSION.SDK_INT >= 31
+                    && !platformBackgroundBlurDisabled
+                    && canvas.isHardwareAccelerated()) {
+                try {
+                    backgroundDrawn = Api31BackgroundBlur.draw(this, canvas, now);
+                } catch (Throwable ignored) {
+                    platformBackgroundBlurDisabled = true;
+                    backgroundBlurNode = null;
+                    backgroundBlurEffect = null;
+                    backgroundBlurEffectRadius = -1f;
+                }
+            }
+            if (!backgroundDrawn) {
+                if (backgroundBlurDepth > 0.002f) {
+                    drawPortableBlurredComposite(canvas, now);
+                } else {
+                    drawComposite(canvas, now, true);
+                }
+            }
             if (animationRunning && (transitionActive(now) || !"none".equals(currentSpec.effect))) {
+                if (headerGlass != null) headerGlass.requestAnimatedBackdropRefresh();
                 postInvalidateOnAnimation();
+            }
+        }
+
+        void drawBackdropForHeader(Canvas canvas) {
+            if (canvas == null || getWidth() <= 0 || getHeight() <= 0) return;
+            drawComposite(canvas, visualNow(), false);
+        }
+
+        private void drawPortableBlurredComposite(Canvas canvas, long now) {
+            float strength = easedBackgroundBlurDepth();
+            if (!ensurePortableBackgroundBlurBuffer()) {
+                drawComposite(canvas, now, true);
+                return;
+            }
+
+            portableBlurBitmap.eraseColor(Color.TRANSPARENT);
+            int offscreenSave = portableBlurCanvas.save();
+            portableBlurCanvas.scale(
+                    portableBlurBitmap.getWidth() / (float) getWidth(),
+                    portableBlurBitmap.getHeight() / (float) getHeight());
+            boolean drawSharpLayer = strength < 0.995f;
+            drawComposite(portableBlurCanvas, now, !drawSharpLayer);
+            portableBlurCanvas.restoreToCount(offscreenSave);
+
+            if (drawSharpLayer) drawComposite(canvas, now, true);
+            destinationRect.set(0, 0, getWidth(), getHeight());
+            portableBlurPaint.setAlpha(Math.round(255f * strength));
+            canvas.drawBitmap(portableBlurBitmap, null, destinationRect, portableBlurPaint);
+            portableBlurPaint.setAlpha(255);
+        }
+
+        private float easedBackgroundBlurDepth() {
+            float t = Math.max(0f, Math.min(1f, backgroundBlurDepth));
+            return t * t * (3f - 2f * t);
+        }
+
+        private boolean ensurePortableBackgroundBlurBuffer() {
+            int width = Math.max(1, (getWidth() + 7) / 8);
+            int height = Math.max(1, (getHeight() + 7) / 8);
+            if (portableBlurBitmap != null
+                    && !portableBlurBitmap.isRecycled()
+                    && portableBlurBitmap.getWidth() == width
+                    && portableBlurBitmap.getHeight() == height
+                    && portableBlurCanvas != null) {
+                return true;
+            }
+            releasePortableBackgroundBlurBuffer();
+            try {
+                portableBlurBitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888);
+                portableBlurCanvas = new Canvas(portableBlurBitmap);
+                return true;
+            } catch (Throwable ignored) {
+                releasePortableBackgroundBlurBuffer();
+                return false;
+            }
+        }
+
+        private void releasePortableBackgroundBlurBuffer() {
+            portableBlurCanvas = null;
+            if (portableBlurBitmap != null) {
+                try { portableBlurBitmap.recycle(); } catch (Exception ignored) { }
+                portableBlurBitmap = null;
             }
         }
 
@@ -727,12 +942,14 @@ abstract class WeatherVisualEffectsActivity extends WeatherActivityFoundation {
                 drawSceneLayer(canvas, currentSpec, 255, now, true);
             } else {
                 drawSceneLayer(canvas, currentSpec, Math.round(progress * 255f), now, progress >= 0.88f);
-                if (cleanupFinished && progress >= 1f) {
-                    outgoingSpec = null;
-                    clearOutgoingSnapshot();
-                    transitionStarted = 0L;
-                }
+                if (cleanupFinished && progress >= 1f) finishCompositeTransition();
             }
+        }
+
+        private void finishCompositeTransition() {
+            outgoingSpec = null;
+            clearOutgoingSnapshot();
+            transitionStarted = 0L;
         }
 
         private void drawSceneLayer(
@@ -967,6 +1184,58 @@ abstract class WeatherVisualEffectsActivity extends WeatherActivityFoundation {
             paint.setStyle(Paint.Style.FILL);
             paint.setColor(Color.argb(Math.round(92 * strength), 225, 238, 255));
             canvas.drawRect(0, 0, w, h, paint);
+        }
+    }
+
+    static final class Api31BackgroundBlur {
+        private Api31BackgroundBlur() { }
+
+        static boolean draw(SkyLayout owner, Canvas canvas, long now) {
+            if (Build.VERSION.SDK_INT < 31 || owner == null || !canvas.isHardwareAccelerated()) {
+                return false;
+            }
+            int width = owner.getWidth();
+            int height = owner.getHeight();
+            if (width <= 0 || height <= 0) return false;
+
+            android.graphics.RenderNode node =
+                    owner.backgroundBlurNode instanceof android.graphics.RenderNode
+                            ? (android.graphics.RenderNode) owner.backgroundBlurNode
+                            : null;
+            if (node == null) {
+                node = new android.graphics.RenderNode("ZwerkWeatherBackground");
+                owner.backgroundBlurNode = node;
+            }
+            node.setPosition(0, 0, width, height);
+            android.graphics.RecordingCanvas recording = node.beginRecording(width, height);
+            // RenderNode recording defers the bitmap reads until drawRenderNode(). Keep any
+            // outgoing transition snapshot alive until after that draw has been submitted.
+            owner.drawComposite(recording, now, false);
+            node.endRecording();
+
+            float density = owner.getResources().getDisplayMetrics().density;
+            float radius = Math.max(0.1f,
+                    Math.round(owner.easedBackgroundBlurDepth() * density * 24f * 2f) / 2f);
+            android.graphics.RenderEffect effect =
+                    owner.backgroundBlurEffect instanceof android.graphics.RenderEffect
+                            ? (android.graphics.RenderEffect) owner.backgroundBlurEffect
+                            : null;
+            if (effect == null || Math.abs(radius - owner.backgroundBlurEffectRadius) >= 0.5f) {
+                effect = android.graphics.RenderEffect.createBlurEffect(
+                        radius, radius, Shader.TileMode.CLAMP);
+                owner.backgroundBlurEffect = effect;
+                owner.backgroundBlurEffectRadius = radius;
+            }
+            node.setRenderEffect(effect);
+            int save = canvas.save();
+            canvas.clipRect(0, 0, width, height);
+            canvas.drawRenderNode(node);
+            canvas.restoreToCount(save);
+            if (owner.transitionProgress(now) >= 1f
+                    && (owner.outgoingSpec != null || owner.outgoingSnapshot != null)) {
+                owner.finishCompositeTransition();
+            }
+            return true;
         }
     }
 

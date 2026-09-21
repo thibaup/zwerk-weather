@@ -28,6 +28,8 @@ import android.location.Location;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
+import android.os.Handler;
+import android.os.Looper;
 import android.os.SystemClock;
 import android.util.Log;
 import android.text.InputType;
@@ -99,7 +101,8 @@ abstract class WeatherApiActivity extends MinuteForecastViewsActivity {
 
     ForecastCacheSnapshot readFreshForecastCache(double lat, double lon, String language, String requestLocationId) {
         ForecastDiskCache.Snapshot cached = forecastDiskCache.readFresh(lat, lon, language, requestLocationId);
-        return cached == null ? null : new ForecastCacheSnapshot(cached.current, cached.hourly, cached.daily);
+        return cached == null ? null : new ForecastCacheSnapshot(
+                cached.current, cached.hourly, cached.daily, cached.fetchedAtMillis);
     }
 
     void persistForecastCacheQuietly(double lat, double lon, String language, String requestLocationId,
@@ -113,7 +116,8 @@ abstract class WeatherApiActivity extends MinuteForecastViewsActivity {
         synchronized (inMemoryForecastLock) {
             InMemoryForecast cached = inMemoryForecasts.get(key);
             if (cached == null) return null;
-            if (System.currentTimeMillis() - cached.updatedAtMillis >= IN_MEMORY_FORECAST_MAX_AGE_MILLIS) {
+            long age = System.currentTimeMillis() - cached.updatedAtMillis;
+            if (age < 0L || age >= IN_MEMORY_FORECAST_MAX_AGE_MILLIS) {
                 inMemoryForecasts.remove(key);
                 return null;
             }
@@ -123,12 +127,14 @@ abstract class WeatherApiActivity extends MinuteForecastViewsActivity {
 
     private void rememberInMemoryForecast(
             double lat, double lon, String language, String requestLocationId,
-            JSONObject current, JSONObject hourly, JSONObject daily) {
+            JSONObject current, JSONObject hourly, JSONObject daily, long fetchedAtMillis) {
         ForecastCacheSnapshot snapshot = copyForecastSnapshot(
-                new ForecastCacheSnapshot(current, hourly, daily));
+                new ForecastCacheSnapshot(current, hourly, daily, fetchedAtMillis));
         if (snapshot == null) return;
         synchronized (inMemoryForecastLock) {
-            if (inMemoryForecasts.size() >= MAX_IN_MEMORY_FORECASTS) {
+            String scopeKey = forecastCacheScopeKey(lat, lon, language, requestLocationId);
+            if (!inMemoryForecasts.containsKey(scopeKey)
+                    && inMemoryForecasts.size() >= MAX_IN_MEMORY_FORECASTS) {
                 String oldestKey = null;
                 long oldestTime = Long.MAX_VALUE;
                 for (java.util.Map.Entry<String, InMemoryForecast> entry : inMemoryForecasts.entrySet()) {
@@ -139,9 +145,7 @@ abstract class WeatherApiActivity extends MinuteForecastViewsActivity {
                 }
                 if (oldestKey != null) inMemoryForecasts.remove(oldestKey);
             }
-            inMemoryForecasts.put(
-                    forecastCacheScopeKey(lat, lon, language, requestLocationId),
-                    new InMemoryForecast(snapshot, System.currentTimeMillis()));
+            inMemoryForecasts.put(scopeKey, new InMemoryForecast(snapshot, fetchedAtMillis));
         }
     }
 
@@ -153,7 +157,8 @@ abstract class WeatherApiActivity extends MinuteForecastViewsActivity {
             return new ForecastCacheSnapshot(
                     new JSONObject(source.current.toString()),
                     new JSONObject(source.hourly.toString()),
-                    new JSONObject(source.daily.toString()));
+                    new JSONObject(source.daily.toString()),
+                    source.fetchedAtMillis);
         } catch (Exception ignored) {
             return null;
         }
@@ -207,6 +212,7 @@ abstract class WeatherApiActivity extends MinuteForecastViewsActivity {
         activeLoadLocationId = requestLocationId;
         progress.setVisibility(View.VISIBLE);
         status.setText("Loading Google Weather data…");
+        notifyActiveForecastStatusChanged();
         final int generation = ++weatherRequestGeneration;
         synchronized (hourlyCoverageLock) {
             pendingHourlyCoverageTarget = null;
@@ -223,7 +229,8 @@ abstract class WeatherApiActivity extends MinuteForecastViewsActivity {
                         generation, lat, lon, language, requestLocationId,
                         cached.hourly, "", false, true);
                 finishWeatherLoadSuccess(
-                        cached.current, cached.hourly, cached.daily, cachedState, generation);
+                        cached.current, cached.hourly, cached.daily, cachedState, generation,
+                        cached.fetchedAtMillis);
                 return;
             }
         }
@@ -267,11 +274,12 @@ abstract class WeatherApiActivity extends MinuteForecastViewsActivity {
                         hourlyLoad.nextPageToken.isEmpty(),
                         !hourlyLoad.success);
 
+                long fetchedAtMillis = System.currentTimeMillis();
                 persistForecastCacheQuietly(
                         lat, lon, language, requestLocationId, current, hourly, daily);
 
                 runOnUiThread(() -> finishWeatherLoadSuccess(
-                        current, hourly, daily, pageState, generation));
+                        current, hourly, daily, pageState, generation, fetchedAtMillis));
             } catch (Exception e) {
                 runOnUiThread(() -> finishWeatherLoadFailure(e, generation));
             }
@@ -290,10 +298,17 @@ abstract class WeatherApiActivity extends MinuteForecastViewsActivity {
                             cached.hourly, "", false, true);
                     runOnUiThread(() -> finishWeatherLoadSuccess(
                             cached.current, cached.hourly, cached.daily,
-                            cachedState, generation));
+                            cachedState, generation, cached.fetchedAtMillis));
                     return;
                 }
-                executor.execute(networkLoad);
+                // A quick location swipe can supersede a cold cache miss before any paid
+                // Weather call starts. A deliberate refresh still starts immediately.
+                new Handler(Looper.getMainLooper()).postDelayed(() -> {
+                    if (baseRequestScopeCurrent(generation, lat, lon, language,
+                            requestLocationId)) {
+                        executor.execute(networkLoad);
+                    }
+                }, 220L);
             });
         } else {
             executor.execute(networkLoad);
@@ -381,7 +396,8 @@ abstract class WeatherApiActivity extends MinuteForecastViewsActivity {
             JSONObject hourly,
             JSONObject daily,
             HourlyPageState pageState,
-            int generation) {
+            int generation,
+            long fetchedAtMillis) {
         if (generation != weatherRequestGeneration) return;
         weatherLoadActive = false;
         finishRefreshIndicator();
@@ -398,11 +414,13 @@ abstract class WeatherApiActivity extends MinuteForecastViewsActivity {
                 cachedLocationId,
                 current,
                 hourly,
-                daily);
+                daily,
+                fetchedAtMillis);
         if (startPendingWeatherReloadIfNeeded()) return;
         hourlyPageState = pageState;
         render(current, hourly, daily, temperatureUnitPreference());
         requestEnabledOptionalDataForCurrentScope();
+        notifyActiveForecastStatusChanged();
     }
 
     void finishWeatherLoadFailure(Exception error, int generation) {
@@ -427,11 +445,14 @@ abstract class WeatherApiActivity extends MinuteForecastViewsActivity {
         final JSONObject current;
         final JSONObject hourly;
         final JSONObject daily;
+        final long fetchedAtMillis;
 
-        ForecastCacheSnapshot(JSONObject current, JSONObject hourly, JSONObject daily) {
+        ForecastCacheSnapshot(JSONObject current, JSONObject hourly, JSONObject daily,
+                long fetchedAtMillis) {
             this.current = current;
             this.hourly = hourly;
             this.daily = daily;
+            this.fetchedAtMillis = fetchedAtMillis;
         }
     }
 

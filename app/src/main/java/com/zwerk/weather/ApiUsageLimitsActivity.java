@@ -109,8 +109,17 @@ public final class ApiUsageLimitsActivity extends Activity {
             addCategory(page, category);
         }
 
+        addHeading(page, "RADAR & MAP TILES");
+        addExternalUsage(page, "RainViewer radar",
+                "On-demand frames · app paced below 100 requests/IP/minute",
+                true);
+        addExternalUsage(page, "OpenStreetMap basemap",
+                "Visible map tiles only · locally cached for 14 days",
+                false);
+
         TextView note = text(
-                "Alerts use Weather. Current and forecast AQI share Air Quality; the 5-day outlook shares Pollen. The Google free-tier profile keeps the published monthly caps as hard stops and paces local daily use in Pacific time; its daily and monthly counters follow Pacific time. Custom limits are local. Counters cover only this app on this device, not other clients using the same Google Cloud project or billing account.",
+                "Alerts and minute data use Weather. Caps follow Pacific time. "
+                        + "Counts cover this device only.",
                 12.5f, SECONDARY);
         note.setLineSpacing(dp(2), 1f);
         note.setPadding(dp(5), dp(12), dp(5), dp(8));
@@ -199,6 +208,29 @@ public final class ApiUsageLimitsActivity extends Activity {
         counters.setPadding(0, dp(11), 0, 0);
         card.addView(counters);
         card.setOnClickListener(v -> editLimits(category, usage.limits));
+        page.addView(card, cardParams());
+    }
+
+    private void addExternalUsage(LinearLayout page, String title,
+            String description, boolean rainViewer) {
+        LinearLayout card = card(false);
+        card.setOrientation(LinearLayout.VERTICAL);
+        card.setPadding(dp(16), dp(14), dp(16), dp(14));
+        card.addView(text(title, 18f, PRIMARY));
+        TextView detail = text(description, 12.5f, SECONDARY);
+        detail.setPadding(0, dp(3), 0, 0);
+        card.addView(detail);
+        String counts = String.format(Locale.getDefault(),
+                "Today  %,d\nThis month  %,d",
+                RadarUsageCounter.today(this, rainViewer),
+                RadarUsageCounter.month(this, rainViewer));
+        TextView usage = text(counts, 14f, PRIMARY);
+        usage.setLineSpacing(dp(5), 1f);
+        usage.setPadding(0, dp(11), 0, 0);
+        card.addView(usage);
+        card.setOnClickListener(v -> startActivity(new Intent(Intent.ACTION_VIEW,
+                Uri.parse(rainViewer ? "https://www.rainviewer.com/api.html"
+                        : "https://operations.osmfoundation.org/policies/tiles/"))));
         page.addView(card, cardParams());
     }
 
@@ -357,10 +389,11 @@ public final class ApiUsageLimitsActivity extends Activity {
     private void confirmReset() {
         new AlertDialog.Builder(this)
                 .setTitle("Reset usage counters?")
-                .setMessage("This only clears Zwerk Weather's local counters. It does not reset Google Cloud billing usage.")
+                .setMessage("This clears local counters only. Provider usage and billing are unaffected.")
                 .setNegativeButton("Cancel", null)
                 .setPositiveButton("Reset", (dialog, which) -> {
-                    ApiRequestBudgetManager.resetUsage(this);
+                     ApiRequestBudgetManager.resetUsage(this);
+                     RadarUsageCounter.reset(this);
                     buildUi();
                 })
                 .show();

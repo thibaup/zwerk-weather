@@ -119,8 +119,9 @@ abstract class MinuteForecastRenderingActivity extends MinuteForecastActivity {
             renderPrecipitationContent();
         } finally {
             renderingAllForecastPages = false;
-            activePageContent = precipitationMode
-                    ? precipitationPageContent : overviewPageContent;
+            activePageContent = this instanceof MainActivity
+                    ? ((MainActivity) this).activeForecastPageContent()
+                    : (precipitationMode ? precipitationPageContent : overviewPageContent);
         }
         if (forecastPageHost != null) forecastPageHost.requestLayout();
     }

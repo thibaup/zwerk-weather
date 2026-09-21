@@ -26,8 +26,8 @@ Zwerk Weather uses Google's Weather API for its weather data. As of September 20
 - Current conditions, a horizontally scrollable hourly forecast, and a 10-day line/list forecast.
 - Expandable day cards with detailed hourly temperature, precipitation, wind, pressure, and visibility.
 - Minute precipitation graph with 2-hour and 6-hour views, using two-minute selection steps when returned coverage permits it.
+- Optional swipeable precipitation and radar pages. RainViewer radar includes a past-2-hour timeline; Google Weather maps show current precipitation where supported.
 - Smooth day, night, rain, snow, fog, and thunder scenes.
-- Scene-aware glass surfaces and a progressive top gradient blur. Supported OnePlus devices use the OEM gradient-blur path; other devices use the portable fallback.
 - Android widget with a compact layout at small sizes and a five-hour strip at normal 4×2 sizes.
 - Per-API daily and monthly request caps default to Google's free tier to help avoid unexpected Weather, Air Quality, and Pollen billing.
 
@@ -45,6 +45,12 @@ Zwerk Weather uses Google's Weather API for its weather data. As of September 20
 - Optional: [Air Quality API](https://developers.google.com/maps/documentation/air-quality/get-api-key) and [Pollen API](https://developers.google.com/maps/documentation/pollen/get-api-key).
 
 The minute forecast is an [experimental Weather API feature](https://developers.google.com/maps/documentation/weather/minute-forecast). Availability and returned coverage can vary by location and project access.
+
+## Radar sources
+
+Choose the source in the Radar tab itself. RainViewer is the recommended default; it needs no API key and loads historical radar tiles only while the page is open. Downloaded OpenStreetMap tiles are cached for 14 days; radar frames are cached for up to 3 hours.
+
+Google Weather maps use the app's existing user-provided Google API key. They currently provide a **current** precipitation layer for supported US and European areas, without a playback timeline. The app counts their tile requests against the Weather API limit and caches them for 10 minutes. Google's [experimental weather-map documentation and terms](https://developers.google.com/maps/documentation/weather/weather-map) restrict using this content in an app whose primary purpose is weather information; review those terms before selecting Google. The app does not include a shared provider key.
 
 ## API key setup
 
@@ -69,7 +75,7 @@ If an Air Quality or Pollen tile reports that the key is blocked, tap the tile f
 Download the APK from this repository's Releases page and allow installation from your browser or file manager, or use ADB:
 
 ```powershell
-adb install -r .\Zwerk-Weather-1.1.0.apk
+adb install -r .\Zwerk-Weather-1.2.0.apk
 ```
 
 ## App updates

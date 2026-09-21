@@ -71,6 +71,7 @@ public class SettingsActivity extends Activity {
     static final String EXTRA_POLLEN_CHANGED = "com.zwerk.weather.extra.POLLEN_CHANGED";
     static final String EXTRA_SEVERE_ALERTS_CHANGED = "com.zwerk.weather.extra.SEVERE_ALERTS_CHANGED";
     static final String EXTRA_WEATHER_DETAILS_CHANGED = "com.zwerk.weather.extra.WEATHER_DETAILS_CHANGED";
+    static final String EXTRA_FORECAST_PAGES_CHANGED = "com.zwerk.weather.extra.FORECAST_PAGES_CHANGED";
     public static final String ACTION_REFRESH = "refresh";
     public static final String ACTION_DEVICE_LOCATION = "device_location";
     public static final String ACTION_ADVANCED_COORDINATES = "advanced_coordinates";
@@ -94,6 +95,8 @@ public class SettingsActivity extends Activity {
     private static final String PREF_VISIBILITY_UNIT = "visibility_unit";
     private static final String PREF_AIR_QUALITY = "google_air_quality_enabled";
     private static final String PREF_POLLEN = "google_pollen_enabled";
+    static final String PREF_PRECIPITATION_PAGE = "precipitation_page_enabled";
+    static final String PREF_RADAR_PAGE = "radar_page_enabled";
     private static final String PREF_SETTINGS_SCENE = "settings_scene";
     private static final String PREF_SETTINGS_DAYTIME = "settings_daytime";
     private static final String PREF_SETTINGS_CARD_TOP = "settings_card_top";
@@ -105,6 +108,8 @@ public class SettingsActivity extends Activity {
     private static final String STATE_INITIAL_POLLEN = "state_initial_pollen";
     private static final String STATE_INITIAL_ALERTS = "state_initial_alerts";
     private static final String STATE_INITIAL_DETAILS = "state_initial_details";
+    private static final String STATE_INITIAL_PRECIPITATION_PAGE = "state_initial_precipitation_page";
+    private static final String STATE_INITIAL_RADAR_PAGE = "state_initial_radar_page";
     private static final String STATE_TEMPERATURE_CHANGED = "state_temperature_changed";
     private static final String STATE_DISPLAY_CHANGED = "state_display_changed";
     private static final String TEMP_CELSIUS = "C";
@@ -137,6 +142,8 @@ public class SettingsActivity extends Activity {
     private boolean initialAirQualityEnabled;
     private boolean initialPollenEnabled;
     private boolean initialSevereAlertsEnabled;
+    private boolean initialPrecipitationPageEnabled;
+    private boolean initialRadarPageEnabled;
     private String initialWeatherDetailsSignature;
     private String displayedBudgetProfile;
     private boolean displayedNotificationsBlocked;
@@ -152,6 +159,8 @@ public class SettingsActivity extends Activity {
             initialAirQualityEnabled = prefs.getBoolean(PREF_AIR_QUALITY, false);
             initialPollenEnabled = prefs.getBoolean(PREF_POLLEN, false);
             initialSevereAlertsEnabled = prefs.getBoolean(PREF_SEVERE_ALERTS, false);
+            initialPrecipitationPageEnabled = prefs.getBoolean(PREF_PRECIPITATION_PAGE, true);
+            initialRadarPageEnabled = prefs.getBoolean(PREF_RADAR_PAGE, true);
             initialWeatherDetailsSignature = weatherDetailsSignature(prefs);
         } else {
             initialAirQualityEnabled = savedInstanceState.getBoolean(
@@ -160,6 +169,11 @@ public class SettingsActivity extends Activity {
                     STATE_INITIAL_POLLEN, prefs.getBoolean(PREF_POLLEN, false));
             initialSevereAlertsEnabled = savedInstanceState.getBoolean(
                     STATE_INITIAL_ALERTS, prefs.getBoolean(PREF_SEVERE_ALERTS, false));
+            initialPrecipitationPageEnabled = savedInstanceState.getBoolean(
+                    STATE_INITIAL_PRECIPITATION_PAGE,
+                    prefs.getBoolean(PREF_PRECIPITATION_PAGE, true));
+            initialRadarPageEnabled = savedInstanceState.getBoolean(
+                    STATE_INITIAL_RADAR_PAGE, prefs.getBoolean(PREF_RADAR_PAGE, true));
             initialWeatherDetailsSignature = savedInstanceState.getString(
                     STATE_INITIAL_DETAILS, weatherDetailsSignature(prefs));
             temperatureUnitChanged = savedInstanceState.getBoolean(
@@ -425,6 +439,16 @@ public class SettingsActivity extends Activity {
                 false);
 
         addSectionHeading("Display");
+        addSwitchRow(
+                "Precipitation page",
+                "Show the minute-by-minute rain view in the forecast tabs.",
+                PREF_PRECIPITATION_PAGE,
+                true);
+        addSwitchRow(
+                "Radar page",
+                "Show the radar map in the forecast tabs.",
+                PREF_RADAR_PAGE,
+                true);
         addActionRow(
                 "Weather details",
                 "Choose the measurements shown on the overview.",
@@ -2022,6 +2046,7 @@ public class SettingsActivity extends Activity {
         if (pollenPreferenceChanged()) result.putExtra(EXTRA_POLLEN_CHANGED, true);
         if (severeAlertsPreferenceChanged()) result.putExtra(EXTRA_SEVERE_ALERTS_CHANGED, true);
         if (weatherDetailsPreferenceChanged()) result.putExtra(EXTRA_WEATHER_DETAILS_CHANGED, true);
+        if (forecastPagesPreferenceChanged()) result.putExtra(EXTRA_FORECAST_PAGES_CHANGED, true);
         setResult(RESULT_OK, result);
         finishAfterTransition();
     }
@@ -2055,6 +2080,13 @@ public class SettingsActivity extends Activity {
     private boolean weatherDetailsPreferenceChanged() {
         return !weatherDetailsSignature(getSharedPreferences(UI_PREFS, MODE_PRIVATE))
                 .equals(initialWeatherDetailsSignature);
+    }
+
+    private boolean forecastPagesPreferenceChanged() {
+        SharedPreferences prefs = getSharedPreferences(UI_PREFS, MODE_PRIVATE);
+        return prefs.getBoolean(PREF_PRECIPITATION_PAGE, true)
+                        != initialPrecipitationPageEnabled
+                || prefs.getBoolean(PREF_RADAR_PAGE, true) != initialRadarPageEnabled;
     }
 
     private static String weatherDetailsSignature(SharedPreferences prefs) {
@@ -2097,6 +2129,9 @@ public class SettingsActivity extends Activity {
         outState.putBoolean(STATE_INITIAL_AIR, initialAirQualityEnabled);
         outState.putBoolean(STATE_INITIAL_POLLEN, initialPollenEnabled);
         outState.putBoolean(STATE_INITIAL_ALERTS, initialSevereAlertsEnabled);
+        outState.putBoolean(STATE_INITIAL_PRECIPITATION_PAGE,
+                initialPrecipitationPageEnabled);
+        outState.putBoolean(STATE_INITIAL_RADAR_PAGE, initialRadarPageEnabled);
         outState.putString(STATE_INITIAL_DETAILS, initialWeatherDetailsSignature);
         outState.putBoolean(STATE_TEMPERATURE_CHANGED, temperatureUnitChanged);
         outState.putBoolean(STATE_DISPLAY_CHANGED, displayUnitChanged);
@@ -2127,8 +2162,9 @@ public class SettingsActivity extends Activity {
         boolean pollenChanged = pollenPreferenceChanged();
         boolean severeAlertsChanged = severeAlertsPreferenceChanged();
         boolean weatherDetailsChanged = weatherDetailsPreferenceChanged();
+        boolean forecastPagesChanged = forecastPagesPreferenceChanged();
         if (temperatureUnitChanged || displayUnitChanged || airQualityChanged || pollenChanged
-                || severeAlertsChanged || weatherDetailsChanged) {
+                || severeAlertsChanged || weatherDetailsChanged || forecastPagesChanged) {
             Intent result = new Intent().putExtra(EXTRA_ACTION, ACTION_PREFERENCES_CHANGED);
             if (temperatureUnitChanged) result.putExtra(EXTRA_UNIT_CHANGED, true);
             if (displayUnitChanged) result.putExtra(EXTRA_DISPLAY_UNIT_CHANGED, true);
@@ -2136,6 +2172,7 @@ public class SettingsActivity extends Activity {
             if (pollenChanged) result.putExtra(EXTRA_POLLEN_CHANGED, true);
             if (severeAlertsChanged) result.putExtra(EXTRA_SEVERE_ALERTS_CHANGED, true);
             if (weatherDetailsChanged) result.putExtra(EXTRA_WEATHER_DETAILS_CHANGED, true);
+            if (forecastPagesChanged) result.putExtra(EXTRA_FORECAST_PAGES_CHANGED, true);
             setResult(RESULT_OK, result);
         }
         finishAfterTransition();

@@ -109,8 +109,10 @@ abstract class WeatherSettingsFlowActivity extends WeatherOverviewRenderingActiv
                 SettingsActivity.EXTRA_SEVERE_ALERTS_CHANGED, false);
         boolean weatherDetailsChanged = data.getBooleanExtra(
                 SettingsActivity.EXTRA_WEATHER_DETAILS_CHANGED, false);
+        boolean forecastPagesChanged = data.getBooleanExtra(
+                SettingsActivity.EXTRA_FORECAST_PAGES_CHANGED, false);
         if (unitChanged || displayUnitChanged || airQualityChanged || pollenChanged
-                || severeAlertsChanged || weatherDetailsChanged) {
+                || severeAlertsChanged || weatherDetailsChanged || forecastPagesChanged) {
             suppressNextResumeWeatherLoad = true;
         }
         boolean actionReloadsBaseWeather = SettingsActivity.ACTION_API_KEY_CHANGED.equals(action)
@@ -124,6 +126,9 @@ abstract class WeatherSettingsFlowActivity extends WeatherOverviewRenderingActiv
             applyOptionalPreferenceChanges(
                     airQualityChanged, pollenChanged, severeAlertsChanged,
                     !actionReloadsBaseWeather);
+        }
+        if (forecastPagesChanged && this instanceof MainActivity) {
+            ((MainActivity) this).applyForecastPagePreferences();
         }
         if (SettingsActivity.ACTION_API_KEY_CHANGED.equals(action)) {
             refreshWeather(true);
@@ -181,8 +186,12 @@ abstract class WeatherSettingsFlowActivity extends WeatherOverviewRenderingActiv
                 .putBoolean(PREF_EXPLICIT_NON_DEVICE_LOCATION, !usingDeviceLocation)
                 .apply();
         locationSelectionGeneration++;
+        onForecastLocationChanged(lat, lon, locationName);
         refreshWeather();
     }
+
+    /** Lets forecast-page hosts update map-backed views when a saved city is selected. */
+    void onForecastLocationChanged(double lat, double lon, String name) { }
 
 
     void persistSettingsSceneSnapshot() {

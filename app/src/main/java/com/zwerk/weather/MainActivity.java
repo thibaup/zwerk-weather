@@ -28,6 +28,8 @@ import android.location.Location;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
+import android.os.Handler;
+import android.os.Looper;
 import android.os.SystemClock;
 import android.util.Log;
 import android.text.InputType;
@@ -87,20 +89,48 @@ import java.util.concurrent.Executors;
 
 
 public class MainActivity extends WeatherSettingsFlowActivity implements DeviceLocationRefreshCoordinator.Callback {
+    private static final int PAGE_OVERVIEW = 0;
+    private static final int PAGE_PRECIPITATION = 1;
+    private static final int PAGE_RADAR = 2;
     private ForecastSwipeLayout forecastSwipeLayout;
+    private LinearLayout radarPageContent;
+    private RadarPageView radarPageView;
+    private TextView radarModeButton;
+    private boolean precipitationPageEnabled;
+    private boolean radarPageEnabled;
+    private int selectedForecastPage = PAGE_OVERVIEW;
+    private int transitionTargetPage = PAGE_OVERVIEW;
+    private int radarScrollY;
+    private boolean radarRefreshIndicatorActive;
+    private boolean precipitationRefreshIndicatorActive;
     private FrameLayout modeSwitchHolder;
+    private LinearLayout modeSwitchLabels;
     private View modeSwitchThumb;
     private ValueAnimator modeSwitchAnimator;
     private float modeSwitchProgress;
     private float locationGestureStartX;
     private float locationGestureStartY;
     private boolean locationGestureActive;
+    private static final long STATUS_AGE_REFRESH_INTERVAL_MILLIS = 15_000L;
+    private final Handler statusAgeHandler = new Handler(Looper.getMainLooper());
+    private boolean statusAgeRefreshRunning;
+    private final Runnable statusAgeRefresh = new Runnable() {
+        @Override public void run() {
+            if (!statusAgeRefreshRunning) return;
+            if (statusShowsDataAge()) notifyActiveForecastStatusChanged();
+            statusAgeHandler.postDelayed(this, STATUS_AGE_REFRESH_INTERVAL_MILLIS);
+        }
+    };
 
     protected void onCreate(Bundle state) {
         super.onCreate(state);
         RainAlertManager.reconcile(this);
         weatherPreferences = new WeatherPreferences(this);
         forecastDiskCache = new ForecastDiskCache(this);
+        precipitationPageEnabled = getSharedPreferences(UI_PREFS, MODE_PRIVATE)
+                .getBoolean(SettingsActivity.PREF_PRECIPITATION_PAGE, true);
+        radarPageEnabled = getSharedPreferences(UI_PREFS, MODE_PRIVATE)
+                .getBoolean(SettingsActivity.PREF_RADAR_PAGE, true);
         configureWindow();
         locationRefreshCoordinator = new DeviceLocationRefreshCoordinator(this, LOCATION_REQUEST, this);
 
@@ -182,6 +212,7 @@ public class MainActivity extends WeatherSettingsFlowActivity implements DeviceL
                 headerGlass.setScrollDepth(depth);
                 headerGlass.requestBlurRefresh();
             }
+            updateOverviewBackgroundBlur(scrollY);
         });
 
         content = new LinearLayout(this);
@@ -219,7 +250,13 @@ public class MainActivity extends WeatherSettingsFlowActivity implements DeviceL
         locationArea.setClickable(true);
         locationArea.setFocusable(true);
         locationArea.setOnClickListener(v -> {
-            if (forecastPreview.isPreviewing()) forecastPreview.restore(true);
+            if (forecastPreview.isPreviewing()) {
+                forecastPreview.restore(true);
+                if (expandedDayIndex >= 0) {
+                    expandedDayIndex = -1;
+                    rerenderOverviewPage();
+                }
+            }
         });
         locationArea.setOnTouchListener((view, event) -> {
             switch (event.getActionMasked()) {
@@ -338,15 +375,34 @@ public class MainActivity extends WeatherSettingsFlowActivity implements DeviceL
 
         overviewPageContent = forecastPage();
         precipitationPageContent = forecastPage();
+        radarPageContent = forecastPage();
+        radarPageView = new RadarPageView(this);
+        radarPageView.setStatusChangedListener(this::notifyActiveForecastStatusChanged);
+        radarPageView.setLocation(latitude, longitude, locationName);
+        radarPageContent.addView(radarPageView,
+                new LinearLayout.LayoutParams(-1, -2));
         activePageContent = overviewPageContent;
         forecastPageHost.addView(overviewPageContent,
                 new FrameLayout.LayoutParams(-1, -2, Gravity.TOP));
         forecastPageHost.addView(precipitationPageContent,
                 new FrameLayout.LayoutParams(-1, -2, Gravity.TOP));
+        forecastPageHost.addView(radarPageContent,
+                new FrameLayout.LayoutParams(-1, -2, Gravity.TOP));
         precipitationPageContent.setVisibility(View.INVISIBLE);
+        radarPageContent.setVisibility(View.INVISIBLE);
         content.addView(forecastPageHost, new LinearLayout.LayoutParams(-1, -2));
         dynamicStartIndex = content.indexOfChild(forecastPageHost);
         updatePreviewSubtitle();
+    }
+
+    private void updateOverviewBackgroundBlur(int scrollY) {
+        if (skyLayout == null) return;
+        float depth = 0f;
+        if (selectedForecastPage == PAGE_OVERVIEW
+                && transitionTargetPage == PAGE_OVERVIEW) {
+            depth = Math.min(1f, Math.max(0, scrollY) / (float) dp(360));
+        }
+        skyLayout.setBackgroundBlurDepth(depth);
     }
 
     /** Selects the next or previous saved city when the location header is swiped. */
@@ -412,6 +468,38 @@ public class MainActivity extends WeatherSettingsFlowActivity implements DeviceL
         if (forecastSwipeLayout != null) forecastSwipeLayout.cancelAndSnap();
     }
 
+    private View forecastPage(int page) {
+        if (page == PAGE_PRECIPITATION) return precipitationPageContent;
+        if (page == PAGE_RADAR) return radarPageContent;
+        return overviewPageContent;
+    }
+
+    private boolean forecastPageEnabled(int page) {
+        return page == PAGE_OVERVIEW
+                || page == PAGE_PRECIPITATION && precipitationPageEnabled
+                || page == PAGE_RADAR && radarPageEnabled;
+    }
+
+    private int adjacentForecastPage(int direction) {
+        for (int page = selectedForecastPage + direction;
+                page >= PAGE_OVERVIEW && page <= PAGE_RADAR; page += direction) {
+            if (forecastPageEnabled(page)) return page;
+        }
+        return -1;
+    }
+
+    private int forecastPagePosition(int page) {
+        int index = 0;
+        for (int candidate = PAGE_OVERVIEW; candidate < page; candidate++) {
+            if (forecastPageEnabled(candidate)) index++;
+        }
+        return index;
+    }
+
+    private int enabledForecastPageCount() {
+        return 1 + (precipitationPageEnabled ? 1 : 0) + (radarPageEnabled ? 1 : 0);
+    }
+
     /** Measures both prepared pages but gives the scroll view only the selected page's height. */
     private final class ForecastPageHost extends FrameLayout {
         private boolean transitioning;
@@ -433,12 +521,11 @@ public class MainActivity extends WeatherSettingsFlowActivity implements DeviceL
             int childHeight = View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED);
             overviewPageContent.measure(childWidth, childHeight);
             precipitationPageContent.measure(childWidth, childHeight);
-            int activeHeight = (precipitationMode
-                    ? precipitationPageContent : overviewPageContent).getMeasuredHeight();
+            radarPageContent.measure(childWidth, childHeight);
+            int activeHeight = forecastPage(selectedForecastPage).getMeasuredHeight();
             int height = activeHeight;
             if (transitioning) {
-                View incoming = precipitationMode
-                        ? overviewPageContent : precipitationPageContent;
+                View incoming = forecastPage(transitionTargetPage);
                 height = Math.max(height, incoming.getMeasuredHeight()
                         + Math.max(0, Math.round(incoming.getTranslationY())));
             }
@@ -452,6 +539,7 @@ public class MainActivity extends WeatherSettingsFlowActivity implements DeviceL
             overviewPageContent.layout(0, 0, width, overviewPageContent.getMeasuredHeight());
             precipitationPageContent.layout(0, 0, width,
                     precipitationPageContent.getMeasuredHeight());
+            radarPageContent.layout(0, 0, width, radarPageContent.getMeasuredHeight());
         }
     }
 
@@ -472,6 +560,7 @@ public class MainActivity extends WeatherSettingsFlowActivity implements DeviceL
             settling = false;
             if (overviewPageContent != null) overviewPageContent.animate().cancel();
             if (precipitationPageContent != null) precipitationPageContent.animate().cancel();
+            if (radarPageContent != null) radarPageContent.animate().cancel();
             if (forecastPageHost instanceof ForecastPageHost) {
                 ((ForecastPageHost) forecastPageHost).setTransitioning(false);
             }
@@ -503,7 +592,7 @@ public class MainActivity extends WeatherSettingsFlowActivity implements DeviceL
                     // must never turn into a page change later in the same gesture.
                     candidate = false;
                     swiping = Math.abs(dx) > Math.abs(dy) * 1.5f
-                            && (precipitationMode ? dx > 0 : dx < 0);
+                            && adjacentForecastPage(dx < 0f ? 1 : -1) >= 0;
                     return swiping;
                 case MotionEvent.ACTION_POINTER_DOWN:
                 case MotionEvent.ACTION_UP:
@@ -534,8 +623,8 @@ public class MainActivity extends WeatherSettingsFlowActivity implements DeviceL
                     float dy = event.getY() - startY;
                     if (Math.abs(dx) >= Math.max(dp(64), touchSlop * 2)
                             && Math.abs(dx) > Math.abs(dy) * 1.5f
-                            && (precipitationMode ? dx > 0 : dx < 0)) {
-                        animateModeChange(dx < 0);
+                            && adjacentForecastPage(dx < 0f ? 1 : -1) >= 0) {
+                        animateModeChange(adjacentForecastPage(dx < 0f ? 1 : -1));
                     } else {
                         settleBack();
                     }
@@ -544,24 +633,27 @@ public class MainActivity extends WeatherSettingsFlowActivity implements DeviceL
             return true;
         }
 
-        void animateModeChange(boolean precipitation) {
-            if (settling || precipitationMode == precipitation
-                    || overviewPageContent == null || precipitationPageContent == null) return;
+        void animateModeChange(int targetPage) {
+            if (settling || selectedForecastPage == targetPage
+                    || !forecastPageEnabled(targetPage)
+                    || overviewPageContent == null || precipitationPageContent == null
+                    || radarPageContent == null) return;
             settling = true;
             final int generation = ++animationGeneration;
             candidate = false;
             swiping = false;
             float width = Math.max(1, getWidth());
-            View outgoing = precipitationMode ? precipitationPageContent : overviewPageContent;
-            View incoming = precipitationMode ? overviewPageContent : precipitationPageContent;
-            if (incoming.getVisibility() != View.VISIBLE) preparePageDrag();
-            float outgoingTarget = precipitation ? -width : width;
-            float incomingStart = precipitation ? width : -width;
+            View outgoing = forecastPage(selectedForecastPage);
+            View incoming = forecastPage(targetPage);
+            if (incoming.getVisibility() != View.VISIBLE
+                    || transitionTargetPage != targetPage) preparePageDrag(targetPage);
+            float outgoingTarget = targetPage > selectedForecastPage ? -width : width;
+            float incomingStart = -outgoingTarget;
             if (Math.abs(incoming.getTranslationX()) < 1f) incoming.setTranslationX(incomingStart);
             float remaining = Math.abs(outgoingTarget - outgoing.getTranslationX()) / width;
             long duration = animationsAllowed()
                     ? Math.max(110L, Math.round(240L * Math.min(1f, remaining))) : 0L;
-            animateModeSwitchProgress(precipitation ? 1f : 0f, duration);
+            animateModeSwitchProgress(forecastPagePosition(targetPage), duration);
             outgoing.animate().cancel();
             incoming.animate().cancel();
             outgoing.animate()
@@ -569,7 +661,7 @@ public class MainActivity extends WeatherSettingsFlowActivity implements DeviceL
                     .alpha(0.88f)
                     .setDuration(duration)
                     .withEndAction(() -> {
-                        if (generation == animationGeneration) finishModeChange(precipitation);
+                        if (generation == animationGeneration) finishModeChange(targetPage);
                     })
                     .start();
             incoming.animate()
@@ -580,19 +672,23 @@ public class MainActivity extends WeatherSettingsFlowActivity implements DeviceL
         }
 
         private float directionalTranslation(float dx) {
-            return precipitationMode ? Math.max(0f, dx) : Math.min(0f, dx);
+            if (dx < 0f) return adjacentForecastPage(1) >= 0 ? dx : 0f;
+            return adjacentForecastPage(-1) >= 0 ? dx : 0f;
         }
 
         private void settleBack() {
-            if (overviewPageContent == null || precipitationPageContent == null) return;
+            if (overviewPageContent == null || transitionTargetPage == selectedForecastPage) {
+                resetPagePositions();
+                return;
+            }
             settling = true;
             final int generation = ++animationGeneration;
             long duration = animationsAllowed() ? 170L : 0L;
-            animateModeSwitchProgress(precipitationMode ? 1f : 0f, duration);
+            animateModeSwitchProgress(forecastPagePosition(selectedForecastPage), duration);
             float width = Math.max(1, getWidth());
-            View current = precipitationMode ? precipitationPageContent : overviewPageContent;
-            View adjacent = precipitationMode ? overviewPageContent : precipitationPageContent;
-            float adjacentTarget = precipitationMode ? -width : width;
+            View current = forecastPage(selectedForecastPage);
+            View adjacent = forecastPage(transitionTargetPage);
+            float adjacentTarget = transitionTargetPage > selectedForecastPage ? width : -width;
             current.animate().cancel();
             adjacent.animate().cancel();
             current.animate()
@@ -606,6 +702,9 @@ public class MainActivity extends WeatherSettingsFlowActivity implements DeviceL
                         adjacent.setTranslationY(0f);
                         adjacent.setVisibility(View.INVISIBLE);
                         ((ForecastPageHost) forecastPageHost).setTransitioning(false);
+                        transitionTargetPage = selectedForecastPage;
+                        updateOverviewBackgroundBlur(
+                                mainScroll == null ? 0 : mainScroll.getScrollY());
                         settling = false;
                     })
                     .start();
@@ -613,71 +712,91 @@ public class MainActivity extends WeatherSettingsFlowActivity implements DeviceL
                     .setDuration(duration).start();
         }
 
-        private void preparePageDrag() {
+        private void preparePageDrag(int targetPage) {
             float width = Math.max(1, getWidth());
-            View current = precipitationMode ? precipitationPageContent : overviewPageContent;
-            View adjacent = precipitationMode ? overviewPageContent : precipitationPageContent;
+            if (transitionTargetPage != selectedForecastPage
+                    && transitionTargetPage != targetPage) {
+                View oldAdjacent = forecastPage(transitionTargetPage);
+                oldAdjacent.setVisibility(View.INVISIBLE);
+                oldAdjacent.setTranslationX(0f);
+                oldAdjacent.setTranslationY(0f);
+            }
+            transitionTargetPage = targetPage;
+            updateOverviewBackgroundBlur(mainScroll == null ? 0 : mainScroll.getScrollY());
+            View current = forecastPage(selectedForecastPage);
+            View adjacent = forecastPage(targetPage);
             current.setVisibility(View.VISIBLE);
             adjacent.setVisibility(View.VISIBLE);
             adjacent.setTranslationY(mainScroll == null ? 0f : mainScroll.getScrollY());
             ((ForecastPageHost) forecastPageHost).setTransitioning(true);
             current.setTranslationX(0f);
             current.setAlpha(1f);
-            adjacent.setTranslationX(precipitationMode ? -width : width);
+            adjacent.setTranslationX(targetPage > selectedForecastPage ? width : -width);
             adjacent.setAlpha(0.88f);
         }
 
         private void applyPageDrag(float dx) {
-            if ((precipitationMode ? overviewPageContent : precipitationPageContent)
-                    .getVisibility() != View.VISIBLE) preparePageDrag();
+            int targetPage = adjacentForecastPage(dx < 0f ? 1 : -1);
+            if (targetPage < 0 || dx == 0f) return;
+            if (transitionTargetPage != targetPage
+                    || forecastPage(targetPage).getVisibility() != View.VISIBLE) {
+                preparePageDrag(targetPage);
+            }
             float width = Math.max(1, getWidth());
             float progress = Math.min(1f, Math.abs(dx) / width);
-            View current = precipitationMode ? precipitationPageContent : overviewPageContent;
-            View adjacent = precipitationMode ? overviewPageContent : precipitationPageContent;
+            View current = forecastPage(selectedForecastPage);
+            View adjacent = forecastPage(targetPage);
             current.setTranslationX(dx);
             current.setAlpha(1f - (0.12f * progress));
-            adjacent.setTranslationX(dx + (precipitationMode ? -width : width));
+            adjacent.setTranslationX(dx + (targetPage > selectedForecastPage ? width : -width));
             adjacent.setAlpha(0.88f + (0.12f * progress));
-            setModeSwitchProgress(precipitationMode ? 1f - progress : progress);
+            setModeSwitchProgress(forecastPagePosition(selectedForecastPage)
+                    + (targetPage > selectedForecastPage ? progress : -progress));
         }
 
-        private void finishModeChange(boolean precipitation) {
-            switchForecastMode(precipitation);
-            View active = precipitation ? precipitationPageContent : overviewPageContent;
-            View inactive = precipitation ? overviewPageContent : precipitationPageContent;
+        private void finishModeChange(int targetPage) {
+            switchForecastMode(targetPage);
+            View active = forecastPage(targetPage);
             active.setTranslationX(0f);
             active.setTranslationY(0f);
             active.setAlpha(1f);
             active.setVisibility(View.VISIBLE);
-            inactive.setTranslationX(0f);
-            inactive.setTranslationY(0f);
-            inactive.setAlpha(1f);
-            inactive.setVisibility(View.INVISIBLE);
+            for (int page = PAGE_OVERVIEW; page <= PAGE_RADAR; page++) {
+                if (page == targetPage) continue;
+                View inactive = forecastPage(page);
+                inactive.setTranslationX(0f);
+                inactive.setTranslationY(0f);
+                inactive.setAlpha(1f);
+                inactive.setVisibility(View.INVISIBLE);
+            }
             ((ForecastPageHost) forecastPageHost).setTransitioning(false);
-            setModeSwitchProgress(precipitation ? 1f : 0f);
+            transitionTargetPage = targetPage;
+            setModeSwitchProgress(forecastPagePosition(targetPage));
             settling = false;
         }
 
         void resetPagePositions() {
-            if (overviewPageContent == null || precipitationPageContent == null || settling) return;
-            View active = precipitationMode ? precipitationPageContent : overviewPageContent;
-            View inactive = precipitationMode ? overviewPageContent : precipitationPageContent;
-            active.setTranslationX(0f);
-            active.setTranslationY(0f);
-            active.setAlpha(1f);
-            active.setVisibility(View.VISIBLE);
-            inactive.setTranslationX(0f);
-            inactive.setTranslationY(0f);
-            inactive.setAlpha(1f);
-            inactive.setVisibility(View.INVISIBLE);
+            if (overviewPageContent == null || precipitationPageContent == null
+                    || radarPageContent == null || settling) return;
+            for (int page = PAGE_OVERVIEW; page <= PAGE_RADAR; page++) {
+                View candidate = forecastPage(page);
+                candidate.setTranslationX(0f);
+                candidate.setTranslationY(0f);
+                candidate.setAlpha(1f);
+                candidate.setVisibility(page == selectedForecastPage
+                        ? View.VISIBLE : View.INVISIBLE);
+            }
             ((ForecastPageHost) forecastPageHost).setTransitioning(false);
-            setModeSwitchProgress(precipitationMode ? 1f : 0f);
+            transitionTargetPage = selectedForecastPage;
+            updateOverviewBackgroundBlur(mainScroll == null ? 0 : mainScroll.getScrollY());
+            setModeSwitchProgress(forecastPagePosition(selectedForecastPage));
         }
 
         private boolean hitsHorizontalControl(View view, float x, float y) {
             if (view instanceof HorizontalScrollView
                     || view instanceof MinutePrecipitationGraphView
-                    || view instanceof ForecastChartView) return true;
+                    || view instanceof ForecastChartView
+                    || view instanceof RadarMapView) return true;
             if (view instanceof ViewGroup) {
                 ViewGroup group = (ViewGroup) view;
                 for (int i = group.getChildCount() - 1; i >= 0; i--) {
@@ -714,63 +833,101 @@ public class MainActivity extends WeatherSettingsFlowActivity implements DeviceL
         thumbLp.topMargin = dp(4);
         modeSwitchHolder.addView(modeSwitchThumb, thumbLp);
 
-        LinearLayout labels = new LinearLayout(this);
-        labels.setGravity(Gravity.CENTER);
-        labels.setPadding(dp(5), dp(4), dp(5), dp(4));
+        modeSwitchLabels = new LinearLayout(this);
+        modeSwitchLabels.setGravity(Gravity.CENTER);
+        modeSwitchLabels.setPadding(dp(5), dp(4), dp(5), dp(4));
 
         overviewModeButton = dailyModeButton("Overview", "Overview forecast view");
-        precipitationModeButton = dailyModeButton("Precipitation", "Minute precipitation view");
-        overviewModeButton.setTextSize(13);
-        precipitationModeButton.setTextSize(13);
+        overviewModeButton.setTextSize(12.5f);
         overviewModeButton.setBackgroundColor(Color.TRANSPARENT);
-        precipitationModeButton.setBackgroundColor(Color.TRANSPARENT);
-        overviewModeButton.setOnClickListener(v -> forecastSwipeLayout.animateModeChange(false));
-        precipitationModeButton.setOnClickListener(v -> forecastSwipeLayout.animateModeChange(true));
-        labels.addView(overviewModeButton, new LinearLayout.LayoutParams(0, dp(48), 1f));
-        LinearLayout.LayoutParams precipLp = new LinearLayout.LayoutParams(0, dp(48), 1f);
-        precipLp.leftMargin = dp(4);
-        labels.addView(precipitationModeButton, precipLp);
-        modeSwitchHolder.addView(labels, new FrameLayout.LayoutParams(-1, -1));
+        overviewModeButton.setOnClickListener(v -> forecastSwipeLayout.animateModeChange(PAGE_OVERVIEW));
+        addForecastModeLabel(overviewModeButton);
+        precipitationModeButton = null;
+        if (precipitationPageEnabled) {
+            precipitationModeButton = dailyModeButton("Precipitation", "Minute precipitation view");
+            precipitationModeButton.setTextSize(12.5f);
+            precipitationModeButton.setBackgroundColor(Color.TRANSPARENT);
+            precipitationModeButton.setOnClickListener(v ->
+                    forecastSwipeLayout.animateModeChange(PAGE_PRECIPITATION));
+            addForecastModeLabel(precipitationModeButton);
+        }
+        radarModeButton = null;
+        if (radarPageEnabled) {
+            radarModeButton = dailyModeButton("Radar", "Animated precipitation radar view");
+            radarModeButton.setTextSize(12.5f);
+            radarModeButton.setBackgroundColor(Color.TRANSPARENT);
+            radarModeButton.setOnClickListener(v ->
+                    forecastSwipeLayout.animateModeChange(PAGE_RADAR));
+            addForecastModeLabel(radarModeButton);
+        }
+        modeSwitchHolder.addView(modeSwitchLabels, new FrameLayout.LayoutParams(-1, -1));
         modeSwitchHolder.addOnLayoutChangeListener((v, left, top, right, bottom,
                 oldLeft, oldTop, oldRight, oldBottom) -> setModeSwitchProgress(modeSwitchProgress));
 
         LinearLayout.LayoutParams holderLp = new LinearLayout.LayoutParams(-1, dp(56));
         holderLp.topMargin = dp(11);
         holderLp.bottomMargin = dp(8);
-        content.addView(modeSwitchHolder, holderLp);
+        content.addView(modeSwitchHolder, Math.min(2, content.getChildCount()), holderLp);
         updateForecastModeButtons();
     }
 
+    private void addForecastModeLabel(TextView button) {
+        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(0, dp(48), 1f);
+        if (modeSwitchLabels.getChildCount() > 0) params.leftMargin = dp(4);
+        modeSwitchLabels.addView(button, params);
+    }
+
     void updateForecastModeButtons() {
-        if (overviewModeButton == null || precipitationModeButton == null) return;
-        overviewModeButton.setSelected(!precipitationMode);
-        precipitationModeButton.setSelected(precipitationMode);
+        if (overviewModeButton == null) return;
+        overviewModeButton.setSelected(selectedForecastPage == PAGE_OVERVIEW);
         overviewModeButton.setContentDescription("Overview forecast view"
-                + (precipitationMode ? ", not selected" : ", selected"));
-        precipitationModeButton.setContentDescription("Minute precipitation view"
-                + (precipitationMode ? ", selected" : ", not selected"));
-        if (Build.VERSION.SDK_INT >= 30) {
-            overviewModeButton.setStateDescription(precipitationMode ? "Not selected" : "Selected");
-            precipitationModeButton.setStateDescription(precipitationMode ? "Selected" : "Not selected");
+                + (selectedForecastPage == PAGE_OVERVIEW ? ", selected" : ", not selected"));
+        if (precipitationModeButton != null) {
+            precipitationModeButton.setSelected(selectedForecastPage == PAGE_PRECIPITATION);
+            precipitationModeButton.setContentDescription("Minute precipitation view"
+                    + (selectedForecastPage == PAGE_PRECIPITATION
+                    ? ", selected" : ", not selected"));
         }
-        setModeSwitchProgress(precipitationMode ? 1f : 0f);
+        if (radarModeButton != null) {
+            radarModeButton.setSelected(selectedForecastPage == PAGE_RADAR);
+            radarModeButton.setContentDescription("Animated precipitation radar view"
+                    + (selectedForecastPage == PAGE_RADAR ? ", selected" : ", not selected"));
+        }
+        if (Build.VERSION.SDK_INT >= 30) {
+            overviewModeButton.setStateDescription(
+                    selectedForecastPage == PAGE_OVERVIEW ? "Selected" : "Not selected");
+            if (precipitationModeButton != null) precipitationModeButton.setStateDescription(
+                    selectedForecastPage == PAGE_PRECIPITATION ? "Selected" : "Not selected");
+            if (radarModeButton != null) radarModeButton.setStateDescription(
+                    selectedForecastPage == PAGE_RADAR ? "Selected" : "Not selected");
+        }
+        setModeSwitchProgress(forecastPagePosition(selectedForecastPage));
     }
 
     void setModeSwitchProgress(float value) {
-        modeSwitchProgress = Math.max(0f, Math.min(1f, value));
+        modeSwitchProgress = Math.max(0f,
+                Math.min(enabledForecastPageCount() - 1f, value));
         if (modeSwitchHolder == null || modeSwitchThumb == null) return;
-        int innerWidth = modeSwitchHolder.getWidth() - dp(10) - dp(4);
+        int gap = dp(4);
+        int count = enabledForecastPageCount();
+        int innerWidth = modeSwitchHolder.getWidth() - dp(10);
         if (innerWidth <= 0) return;
-        int thumbWidth = innerWidth / 2;
+        int thumbWidth = (innerWidth - gap * (count - 1)) / count;
         FrameLayout.LayoutParams params =
                 (FrameLayout.LayoutParams) modeSwitchThumb.getLayoutParams();
         if (params.width != thumbWidth) {
             params.width = thumbWidth;
             modeSwitchThumb.setLayoutParams(params);
         }
-        modeSwitchThumb.setTranslationX((thumbWidth + dp(4)) * modeSwitchProgress);
-        overviewModeButton.setAlpha(1f - 0.25f * modeSwitchProgress);
-        precipitationModeButton.setAlpha(0.75f + 0.25f * modeSwitchProgress);
+        modeSwitchThumb.setTranslationX((thumbWidth + gap) * modeSwitchProgress);
+        overviewModeButton.setAlpha(1f - 0.25f * Math.min(1f,
+                Math.abs(modeSwitchProgress - forecastPagePosition(PAGE_OVERVIEW))));
+        if (precipitationModeButton != null) precipitationModeButton.setAlpha(
+                1f - 0.25f * Math.min(1f,
+                        Math.abs(modeSwitchProgress - forecastPagePosition(PAGE_PRECIPITATION))));
+        if (radarModeButton != null) radarModeButton.setAlpha(
+                1f - 0.25f * Math.min(1f,
+                        Math.abs(modeSwitchProgress - forecastPagePosition(PAGE_RADAR))));
     }
 
     void animateModeSwitchProgress(float target, long duration) {
@@ -786,19 +943,37 @@ public class MainActivity extends WeatherSettingsFlowActivity implements DeviceL
         modeSwitchAnimator.start();
     }
 
-    void switchForecastMode(boolean precipitation) {
-        if (precipitationMode == precipitation) return;
-        int currentScroll = mainScroll == null ? 0 : mainScroll.getScrollY();
-        if (precipitation) {
-            overviewScrollY = currentScroll;
-        } else {
-            precipitationScrollY = currentScroll;
+    LinearLayout activeForecastPageContent() {
+        if (selectedForecastPage == PAGE_PRECIPITATION) return precipitationPageContent;
+        if (selectedForecastPage == PAGE_RADAR) return radarPageContent;
+        return overviewPageContent;
+    }
+
+    void switchForecastMode(int targetPage) {
+        if (selectedForecastPage == targetPage) return;
+        // Each top-level tab starts at its own top when selected. The page swipe is a
+        // navigation gesture, so do not restore the previous tab's scroll offset when
+        // returning to it later.
+        overviewScrollY = 0;
+        precipitationScrollY = 0;
+        radarScrollY = 0;
+        if (targetPage != PAGE_RADAR && radarRefreshIndicatorActive) {
+            radarRefreshIndicatorActive = false;
+            finishRefreshIndicator();
+        }
+        if (targetPage != PAGE_PRECIPITATION && precipitationRefreshIndicatorActive) {
+            precipitationRefreshIndicatorActive = false;
+            finishRefreshIndicator();
         }
         forecastPreview.restore(false);
-        precipitationMode = precipitation;
-        activePageContent = precipitation ? precipitationPageContent : overviewPageContent;
+        selectedForecastPage = targetPage;
+        precipitationMode = targetPage == PAGE_PRECIPITATION;
+        activePageContent = activeForecastPageContent();
+        updateOverviewBackgroundBlur(mainScroll == null ? 0 : mainScroll.getScrollY());
+        if (radarPageView != null) radarPageView.setActive(targetPage == PAGE_RADAR);
+        notifyActiveForecastStatusChanged();
         updateForecastModeButtons();
-        int targetScroll = precipitation ? precipitationScrollY : overviewScrollY;
+        int targetScroll = 0;
         if (mainScroll != null) {
             mainScroll.scrollTo(0, targetScroll);
             mainScroll.post(() -> {
@@ -809,12 +984,83 @@ public class MainActivity extends WeatherSettingsFlowActivity implements DeviceL
                 int maxScroll = child == null
                         ? 0 : Math.max(0, child.getHeight() - viewportHeight);
                 mainScroll.scrollTo(0, Math.min(Math.max(0, targetScroll), maxScroll));
-                if (precipitationMode && precipitation) ensureMinuteForecast(false);
+                if (selectedForecastPage == PAGE_PRECIPITATION) ensureMinuteForecast(false);
             });
-        } else if (precipitation) {
+        } else if (targetPage == PAGE_PRECIPITATION) {
             ensureMinuteForecast(false);
         }
-        if (!precipitation) forecastPreview.restore(false);
+        if (targetPage != PAGE_PRECIPITATION) forecastPreview.restore(false);
+    }
+
+    void applyForecastPagePreferences() {
+        if (radarPageView != null) radarPageView.reloadSource();
+        precipitationPageEnabled = getSharedPreferences(UI_PREFS, MODE_PRIVATE)
+                .getBoolean(SettingsActivity.PREF_PRECIPITATION_PAGE, true);
+        radarPageEnabled = getSharedPreferences(UI_PREFS, MODE_PRIVATE)
+                .getBoolean(SettingsActivity.PREF_RADAR_PAGE, true);
+        cancelForecastSwipe();
+        if (!forecastPageEnabled(selectedForecastPage)) {
+            switchForecastMode(PAGE_OVERVIEW);
+            forecastSwipeLayout.resetPagePositions();
+        }
+        if (modeSwitchHolder != null) {
+            content.removeView(modeSwitchHolder);
+            glassDrawables.remove(modeSwitchGlass);
+            addForecastModeSwitch();
+        }
+        if (forecastPageHost != null) forecastPageHost.requestLayout();
+    }
+
+    @Override
+    void performPullRefresh() {
+        if (selectedForecastPage == PAGE_RADAR && radarPageView != null) {
+            radarPageView.refresh();
+            radarRefreshIndicatorActive = true;
+            notifyActiveForecastStatusChanged();
+            return;
+        }
+        if (selectedForecastPage == PAGE_PRECIPITATION) {
+            forecastPreview.restore(false);
+            if (refreshIndicator != null) refreshIndicator.setRefreshing(true);
+            precipitationRefreshIndicatorActive = true;
+            ensureMinuteForecast(true);
+            notifyActiveForecastStatusChanged();
+            return;
+        }
+        super.performPullRefresh();
+    }
+
+    @Override
+    void notifyActiveForecastStatusChanged() {
+        if (status == null) return;
+        if (selectedForecastPage == PAGE_RADAR) {
+            status.setText(radarPageView == null
+                    ? "Radar data not loaded" : radarPageView.statusText());
+            if (radarRefreshIndicatorActive
+                    && (radarPageView == null || !radarPageView.isLoading())) {
+                radarRefreshIndicatorActive = false;
+                finishRefreshIndicator();
+            }
+            return;
+        }
+        if (selectedForecastPage == PAGE_PRECIPITATION) {
+            status.setText(minuteForecastStatusLabel());
+            if (precipitationRefreshIndicatorActive) {
+                MinuteForecastState state = minuteForecastStateForCurrentScope();
+                if (state == null || !state.loading) {
+                    precipitationRefreshIndicatorActive = false;
+                    finishRefreshIndicator();
+                }
+            }
+            return;
+        }
+        if (lastCurrentWeather != null) {
+            status.setText(dataAgeLabel(lastCurrentWeather));
+        } else if (weatherLoadActive) {
+            status.setText("Loading Google Weather data…");
+        } else {
+            status.setText("Weather data not loaded");
+        }
     }
 
     @Override
@@ -823,10 +1069,40 @@ public class MainActivity extends WeatherSettingsFlowActivity implements DeviceL
             JSONObject hourly,
             JSONObject daily,
             HourlyPageState pageState,
-            int generation) {
-        super.finishWeatherLoadSuccess(current, hourly, daily, pageState, generation);
+            int generation,
+            long fetchedAtMillis) {
+        super.finishWeatherLoadSuccess(
+                current, hourly, daily, pageState, generation, fetchedAtMillis);
+        notifyActiveForecastStatusChanged();
+        if (radarPageView != null) radarPageView.setPalette(glassCardTop, glassCardBottom);
         if (generation != weatherRequestGeneration || weatherLoadActive) return;
         if (RainAlertManager.isEnabled(this)) ensureMinuteForecast(false);
+    }
+
+    @Override
+    void finishWeatherLoadFailure(Exception error, int generation) {
+        super.finishWeatherLoadFailure(error, generation);
+        if (selectedForecastPage != PAGE_OVERVIEW) {
+            notifyActiveForecastStatusChanged();
+        }
+    }
+
+    private void startStatusAgeRefresh() {
+        statusAgeRefreshRunning = true;
+        statusAgeHandler.removeCallbacks(statusAgeRefresh);
+        if (statusShowsDataAge()) notifyActiveForecastStatusChanged();
+        statusAgeHandler.postDelayed(statusAgeRefresh, STATUS_AGE_REFRESH_INTERVAL_MILLIS);
+    }
+
+    private boolean statusShowsDataAge() {
+        if (status == null || status.getText() == null) return false;
+        String value = status.getText().toString().toLowerCase(Locale.ROOT);
+        return value.contains("published") || value.contains("updated");
+    }
+
+    private void stopStatusAgeRefresh() {
+        statusAgeRefreshRunning = false;
+        statusAgeHandler.removeCallbacks(statusAgeRefresh);
     }
 
     void continueStartupAfterApiKey() {
@@ -1466,13 +1742,21 @@ public class MainActivity extends WeatherSettingsFlowActivity implements DeviceL
                         this, locationName, lat, lon, "", "", true)
                 : CityManagerActivity.upsertLocation(
                         this, null, locationName, lat, lon, false, "", "", true);
+        if (radarPageView != null) radarPageView.setLocation(lat, lon, locationName);
+    }
+
+    @Override
+    void onForecastLocationChanged(double lat, double lon, String name) {
+        if (radarPageView != null) radarPageView.setLocation(lat, lon, name);
     }
 
     void resolvePlaceName(double lat, double lon) {
         final int expectedSelectionGeneration = locationSelectionGeneration;
         final String expectedLocationId = selectedLocationId == null ? "" : selectedLocationId;
         final boolean expectedDeviceLocation = usingDeviceLocation;
-        executor.execute(() -> {
+        // Reverse geocoding can block independently of the Weather API. Keep it off the
+        // serialized forecast executor so a slow platform Geocoder cannot hold weather loading.
+        optionalExecutor.execute(() -> {
             try {
                 List<Address> results = new Geocoder(this, Locale.getDefault()).getFromLocation(lat, lon, 1);
                 if (results == null || results.isEmpty()) return;
@@ -1537,6 +1821,10 @@ public class MainActivity extends WeatherSettingsFlowActivity implements DeviceL
 
     protected void onResume() {
         super.onResume();
+        if (radarPageView != null && selectedForecastPage == PAGE_RADAR) {
+            radarPageView.setActive(true);
+        }
+        startStatusAgeRefresh();
         boolean enabled = animationsAllowed();
         if (skyLayout != null) {
             skyLayout.setAnimationRunning(enabled);
@@ -1559,7 +1847,9 @@ public class MainActivity extends WeatherSettingsFlowActivity implements DeviceL
 
     @Override
     protected void onPause() {
+        stopStatusAgeRefresh();
         forecastPreview.restore(false);
+        if (radarPageView != null) radarPageView.setActive(false);
         if (skyLayout != null) skyLayout.setAnimationRunning(false);
         for (SunTrackView track : sunTrackViews) {
             if (track != null) track.setAnimationRunning(false);
@@ -1569,6 +1859,8 @@ public class MainActivity extends WeatherSettingsFlowActivity implements DeviceL
 
     @Override
     protected void onDestroy() {
+        stopStatusAgeRefresh();
+        if (radarPageView != null) radarPageView.dispose();
         if (locationRefreshCoordinator != null) locationRefreshCoordinator.destroy();
         weatherRequestGeneration++;
         hourlyPageState = null;

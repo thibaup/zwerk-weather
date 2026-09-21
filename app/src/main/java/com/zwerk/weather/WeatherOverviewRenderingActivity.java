@@ -136,6 +136,13 @@ abstract class WeatherOverviewRenderingActivity extends MinuteForecastRenderingA
     static final int OVERVIEW_ID_MOON = 0x6f710007;
     static final int OVERVIEW_ID_ATTRIBUTION = 0x6f710008;
 
+    // Overview information tiles are content-sized rather than locked to a fixed height.
+    // Keep a compact floor for visual consistency while allowing larger text/wrapped values
+    // to increase the row height without clipping.
+    static final int OVERVIEW_TILE_MIN_WIDTH_DP = 112;
+    static final int OVERVIEW_TILE_MIN_HEIGHT_DP = 112;
+    static final int OVERVIEW_TILE_GAP_DP = 8;
+
     static final class OverviewTileSpec {
         final String id;
         final View view;
@@ -143,6 +150,47 @@ abstract class WeatherOverviewRenderingActivity extends MinuteForecastRenderingA
         OverviewTileSpec(String id, View view) {
             this.id = id;
             this.view = view;
+        }
+    }
+
+    static final class EqualHeightOverviewTileRow extends LinearLayout {
+        EqualHeightOverviewTileRow(Context context) {
+            super(context);
+            setOrientation(LinearLayout.HORIZONTAL);
+            setBaselineAligned(false);
+            setClipChildren(false);
+            setClipToPadding(false);
+        }
+
+        @Override
+        protected void onMeasure(int widthMeasureSpec, int heightMeasureSpec) {
+            super.onMeasure(widthMeasureSpec, heightMeasureSpec);
+
+            // LinearLayout already makes this row as tall as its tallest WRAP_CONTENT child.
+            // Stretch the remaining tiles to that measured height so cards stay aligned, while
+            // retaining the tallest child's natural (font-scale-aware) height.
+            int contentHeight = Math.max(0, getMeasuredHeight()
+                    - getPaddingTop() - getPaddingBottom());
+            for (int i = 0; i < getChildCount(); i++) {
+                View child = getChildAt(i);
+                if (child.getVisibility() == View.GONE) continue;
+                ViewGroup.LayoutParams raw = child.getLayoutParams();
+                int topMargin = 0;
+                int bottomMargin = 0;
+                if (raw instanceof ViewGroup.MarginLayoutParams) {
+                    ViewGroup.MarginLayoutParams margins = (ViewGroup.MarginLayoutParams) raw;
+                    topMargin = margins.topMargin;
+                    bottomMargin = margins.bottomMargin;
+                }
+                int targetHeight = Math.max(0, contentHeight - topMargin - bottomMargin);
+                if (targetHeight > 0 && child.getMeasuredHeight() != targetHeight) {
+                    child.measure(
+                            View.MeasureSpec.makeMeasureSpec(
+                                    Math.max(0, child.getMeasuredWidth()),
+                                    View.MeasureSpec.EXACTLY),
+                            View.MeasureSpec.makeMeasureSpec(targetHeight, View.MeasureSpec.EXACTLY));
+                }
+            }
         }
     }
 
@@ -722,11 +770,7 @@ abstract class WeatherOverviewRenderingActivity extends MinuteForecastRenderingA
             int runEnd = index;
             while (runEnd < views.size() && tiles.get(runEnd)) runEnd++;
             for (int rowStart = index; rowStart < runEnd; rowStart += columns) {
-                LinearLayout row = new LinearLayout(this);
-                row.setOrientation(LinearLayout.HORIZONTAL);
-                row.setBaselineAligned(false);
-                row.setClipChildren(false);
-                row.setClipToPadding(false);
+                LinearLayout row = new EqualHeightOverviewTileRow(this);
                 int count = Math.min(columns, runEnd - rowStart);
                 for (int column = 0; column < count; column++) {
                     int left = column == 0 ? 0 : dp(4);
@@ -756,6 +800,10 @@ abstract class WeatherOverviewRenderingActivity extends MinuteForecastRenderingA
         ghost.setStroke(dp(2), Color.argb(190,
                 Color.red(ACCENT_BLUE), Color.green(ACCENT_BLUE), Color.blue(ACCENT_BLUE)));
         placeholder.setBackground(ghost);
+        if (tile) {
+            int sourceHeight = Math.max(source.getHeight(), source.getMeasuredHeight());
+            placeholder.setMinimumHeight(Math.max(dp(OVERVIEW_TILE_MIN_HEIGHT_DP), sourceHeight));
+        }
         if (!tile) {
             int height = Math.max(dp(48), Math.max(source.getHeight(), source.getMeasuredHeight()));
             LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-1, height);
@@ -1810,11 +1858,6 @@ abstract class WeatherOverviewRenderingActivity extends MinuteForecastRenderingA
         TextView title = text(dayName + (date.isEmpty() ? "" : "  " + date) + "  •  Hourly", 13, true, WHITE);
         detail.addView(title);
 
-        TextView collapseHint = text("Tap the day again to collapse", 10, false, FAINT_WHITE);
-        LinearLayout.LayoutParams hintLp = new LinearLayout.LayoutParams(-1, -2);
-        hintLp.topMargin = dp(2);
-        detail.addView(collapseHint, hintLp);
-
         LocalDate targetDate = displayDate(day, zone);
         HourlyPageState state = hourlyPageState;
         boolean covered = state != null
@@ -2069,8 +2112,12 @@ abstract class WeatherOverviewRenderingActivity extends MinuteForecastRenderingA
 
         ArrayList<OverviewTileSpec> tiles = new ArrayList<>();
         if (detailEnabled(WeatherDetailSettingsActivity.PREF_UV_INDEX, true)) {
-            addOverviewTile(tiles, "uv",
-                    detailTile("UV", uv < 0 ? "—" : uv + "\n" + uvHint(uv).trim(), "uv"));
+            String uvCategory = uv < 0 ? "" : uvHint(uv);
+            if (uvCategory == null) uvCategory = "";
+            uvCategory = uvCategory.trim();
+            String uvValue = uv < 0 ? "—"
+                    : Integer.toString(uv) + (uvCategory.isEmpty() ? "" : " · " + uvCategory);
+            addOverviewTile(tiles, "uv", detailTile("UV", uvValue, "uv"));
         }
         if (detailEnabled(WeatherDetailSettingsActivity.PREF_FEELS_LIKE, true)) {
             addOverviewTile(tiles, "feels_like", detailTile("Feels like",
@@ -2226,8 +2273,19 @@ abstract class WeatherOverviewRenderingActivity extends MinuteForecastRenderingA
         if (width <= 0) {
             width = Math.max(1, getResources().getDisplayMetrics().widthPixels - dp(36));
         }
-        int minimumTileWidth = Math.max(1, dp(96));
-        return Math.max(1, Math.min(3, width / minimumTileWidth));
+
+        // Include the real inter-tile gap in the fit calculation. The old width / 96dp
+        // rule could choose three columns even when the resulting content width was too
+        // narrow for multi-word values on compact dp widths or larger font scales.
+        int minimumTileWidth = Math.max(1, dp(OVERVIEW_TILE_MIN_WIDTH_DP));
+        int gap = Math.max(0, dp(OVERVIEW_TILE_GAP_DP));
+        for (int columns = 3; columns >= 2; columns--) {
+            int usableWidth = width - gap * (columns - 1);
+            if (usableWidth > 0 && usableWidth / columns >= minimumTileWidth) {
+                return columns;
+            }
+        }
+        return 1;
     }
 
     OverviewTileSpec findOverviewTileSpec(ArrayList<OverviewTileSpec> tiles, String id) {
@@ -2319,7 +2377,7 @@ abstract class WeatherOverviewRenderingActivity extends MinuteForecastRenderingA
         LinearLayout panel = new LinearLayout(this);
         panel.setOrientation(LinearLayout.VERTICAL);
         panel.setPadding(horizontalPadding, dp(17), horizontalPadding, dp(16));
-        panel.setBackground(newGlassDrawable(dp(26), false));
+        panel.setBackground(newEnvironmentalGlassDrawable(dp(26), false));
         scroller.addView(panel, new ScrollView.LayoutParams(-1, -2));
 
         TextView title = text(label, 22, true, WHITE);
@@ -2416,9 +2474,6 @@ abstract class WeatherOverviewRenderingActivity extends MinuteForecastRenderingA
         }
 
         panel.addView(sectionHeading("NEXT 24 HOURS"));
-        TextView forecastHint = text("Swipe sideways for later hours", 10, false, FAINT_WHITE);
-        forecastHint.setPadding(dp(2), 0, 0, dp(6));
-        panel.addView(forecastHint);
 
         ZoneId zone = responseZone(lastCurrentWeather, lastHourlyWeather, lastDailyWeather);
         GestureHorizontalScrollView scroller = new GestureHorizontalScrollView(this);
@@ -2457,7 +2512,7 @@ abstract class WeatherOverviewRenderingActivity extends MinuteForecastRenderingA
         LinearLayout card = new LinearLayout(this);
         card.setOrientation(LinearLayout.VERTICAL);
         card.setPadding(dp(13), dp(11), dp(13), dp(11));
-        card.setBackground(newGlassDrawable(dp(17), true));
+        card.setBackground(newEnvironmentalGlassDrawable(dp(17), true));
         StringBuilder accessibility = new StringBuilder("Health guidance. ");
         boolean added = false;
         for (String[] row : guidance) {
@@ -2564,7 +2619,7 @@ abstract class WeatherOverviewRenderingActivity extends MinuteForecastRenderingA
             LinearLayout dayCard = new LinearLayout(this);
             dayCard.setOrientation(LinearLayout.VERTICAL);
             dayCard.setPadding(dp(13), dp(12), dp(13), dp(12));
-            dayCard.setBackground(newGlassDrawable(dp(19), false));
+            dayCard.setBackground(newEnvironmentalGlassDrawable(dp(19), false));
 
             LinearLayout dayHeader = new LinearLayout(this);
             dayHeader.setGravity(Gravity.CENTER_VERTICAL);
@@ -2681,7 +2736,7 @@ abstract class WeatherOverviewRenderingActivity extends MinuteForecastRenderingA
         hero.setOrientation(LinearLayout.HORIZONTAL);
         hero.setGravity(Gravity.CENTER_VERTICAL);
         hero.setPadding(dp(13), dp(13), dp(13), dp(13));
-        hero.setBackground(newGlassDrawable(dp(19), false));
+        hero.setBackground(newEnvironmentalGlassDrawable(dp(19), false));
 
         int accent = airQualityColor(index);
         LinearLayout score = new LinearLayout(this);
@@ -2745,7 +2800,7 @@ abstract class WeatherOverviewRenderingActivity extends MinuteForecastRenderingA
         cell.setOrientation(LinearLayout.VERTICAL);
         cell.setGravity(Gravity.CENTER_HORIZONTAL);
         cell.setPadding(dp(7), dp(7), dp(7), dp(7));
-        cell.setBackground(newGlassDrawable(dp(15), true));
+        cell.setBackground(newEnvironmentalGlassDrawable(dp(15), true));
         int accent = airQualityColor(index);
 
         View accentBar = new View(this);
@@ -2798,7 +2853,7 @@ abstract class WeatherOverviewRenderingActivity extends MinuteForecastRenderingA
         LinearLayout row = new LinearLayout(this);
         row.setOrientation(LinearLayout.VERTICAL);
         row.setPadding(dp(12), dp(10), dp(12), dp(10));
-        row.setBackground(newGlassDrawable(dp(15), true));
+        row.setBackground(newEnvironmentalGlassDrawable(dp(15), true));
         TextView metricLabel = text(label, 10, true, SOFT_WHITE);
         metricLabel.setMaxLines(2);
         metricLabel.setEllipsize(android.text.TextUtils.TruncateAt.END);
@@ -3002,7 +3057,7 @@ abstract class WeatherOverviewRenderingActivity extends MinuteForecastRenderingA
         LinearLayout block = new LinearLayout(this);
         block.setOrientation(LinearLayout.VERTICAL);
         block.setPadding(dp(12), dp(10), dp(12), dp(10));
-        block.setBackground(newGlassDrawable(dp(15), true));
+        block.setBackground(newEnvironmentalGlassDrawable(dp(15), true));
         block.addView(text(titleValue, 12, true, WHITE));
         TextView body = text(bodyValue, 11, false, SOFT_WHITE);
         body.setLineSpacing(0f, 1.08f);
@@ -3133,8 +3188,7 @@ abstract class WeatherOverviewRenderingActivity extends MinuteForecastRenderingA
     }
 
     LinearLayout tileRow(View a, View b, View c) {
-        LinearLayout row = new LinearLayout(this);
-        row.setOrientation(LinearLayout.HORIZONTAL);
+        LinearLayout row = new EqualHeightOverviewTileRow(this);
 
         addWeightedTile(row, a, 0, dp(4));
         addWeightedTile(row, b, dp(4), dp(4));
@@ -3143,7 +3197,8 @@ abstract class WeatherOverviewRenderingActivity extends MinuteForecastRenderingA
     }
 
     void addWeightedTile(LinearLayout row, View tile, int left, int right) {
-        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(0, dp(138), 1);
+        tile.setMinimumHeight(dp(OVERVIEW_TILE_MIN_HEIGHT_DP));
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(0, -2, 1);
         lp.leftMargin = left;
         lp.rightMargin = right;
         row.addView(tile, lp);
@@ -3154,6 +3209,7 @@ abstract class WeatherOverviewRenderingActivity extends MinuteForecastRenderingA
         box.setOrientation(LinearLayout.VERTICAL);
         box.setGravity(Gravity.START);
         box.setPadding(dp(14), dp(15), dp(10), dp(12));
+        box.setMinimumHeight(dp(OVERVIEW_TILE_MIN_HEIGHT_DP));
         box.setBackground(newGlassDrawable(dp(20), true));
 
         DetailGlyphView icon = new DetailGlyphView(this, glyphName);
@@ -3165,7 +3221,8 @@ abstract class WeatherOverviewRenderingActivity extends MinuteForecastRenderingA
         box.addView(l, lLp);
 
         TextView v = text(value, 17, false, WHITE);
-        v.setMaxLines(2);
+        v.setSingleLine(false);
+        v.setHorizontallyScrolling(false);
         v.setIncludeFontPadding(false);
         LinearLayout.LayoutParams vLp = new LinearLayout.LayoutParams(-1, -2);
         vLp.topMargin = dp(3);
@@ -3609,7 +3666,9 @@ abstract class WeatherOverviewRenderingActivity extends MinuteForecastRenderingA
         }
         if (overviewPageContent != null) overviewPageContent.removeAllViews();
         if (precipitationPageContent != null) precipitationPageContent.removeAllViews();
-        activePageContent = precipitationMode ? precipitationPageContent : overviewPageContent;
+        activePageContent = this instanceof MainActivity
+                ? ((MainActivity) this).activeForecastPageContent()
+                : (precipitationMode ? precipitationPageContent : overviewPageContent);
         glassDrawables.clear();
         if (modeSwitchGlass != null) {
             applyGlassPalette(modeSwitchGlass);
@@ -3635,6 +3694,23 @@ abstract class WeatherOverviewRenderingActivity extends MinuteForecastRenderingA
         applyGlassPalette(drawable);
         glassDrawables.add(drawable);
         return drawable;
+    }
+
+    GlassDrawable newEnvironmentalGlassDrawable(int radiusPx, boolean tile) {
+        GlassDrawable drawable = newGlassDrawable(radiusPx, tile);
+        int top = tile ? glassTileTop : glassCardTop;
+        int bottom = tile ? glassTileBottom : glassCardBottom;
+        drawable.setColors(
+                increaseGlassOpacity(top, 14),
+                increaseGlassOpacity(bottom, 14),
+                glassEdge);
+        return drawable;
+    }
+
+    static int increaseGlassOpacity(int color, int amount) {
+        return Color.argb(
+                Math.min(255, Color.alpha(color) + Math.max(0, amount)),
+                Color.red(color), Color.green(color), Color.blue(color));
     }
 
     LinearLayout.LayoutParams defaultCardParams() {
