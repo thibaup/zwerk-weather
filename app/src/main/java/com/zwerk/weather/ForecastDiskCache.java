@@ -99,6 +99,12 @@ final class ForecastDiskCache {
             JSONObject hourly = root.optJSONObject("hourly");
             JSONObject daily = root.optJSONObject("daily");
             if (current == null || hourly == null || daily == null) return null;
+            if (requestLocationId.contains("|" + OpenMeteoConfig.OPEN_METEO + ":")
+                    && !hourly.has("_openMeteo")) {
+                // Older cache copies discarded Open-Meteo metadata and all but 24 hours.
+                cacheFile.delete();
+                return null;
+            }
             return new Snapshot(current, hourly, daily, updatedAt);
         } catch (Exception ignored) {
             return null;
@@ -144,6 +150,11 @@ final class ForecastDiskCache {
     }
 
     private JSONObject hourlyCacheCopy(JSONObject hourly) {
+        if (hourly != null && hourly.has("_openMeteo")) {
+            try {
+                return new JSONObject(hourly.toString());
+            } catch (Exception ignored) { }
+        }
         JSONObject copy = new JSONObject();
         try {
             JSONObject zone = firstJSONObject(hourly, "timeZone", "time_zone", "timezone");

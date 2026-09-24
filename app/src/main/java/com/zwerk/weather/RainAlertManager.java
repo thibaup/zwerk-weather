@@ -105,8 +105,25 @@ public final class RainAlertManager {
         LocationTarget location = resolveLocation(app);
         if (location == null) return;
 
+        if (OpenMeteoConfig.isOpenMeteo(app)) {
+            try {
+                JSONObject response = OpenMeteoForecastClient.loadMinute(
+                        app, location.lat, location.lon, OpenMeteoConfig.model(app),
+                        OpenMeteoConfig.readCustomerKey(app));
+                if (!Thread.currentThread().isInterrupted()
+                        && OpenMeteoConfig.isOpenMeteo(app)) {
+                    evaluateMinuteForecast(app, response, location.lat, location.lon, location.name);
+                }
+            } catch (Exception ignored) {
+                // Rain checks are best-effort.
+            }
+            return;
+        }
+
         String key = readApiKey(app);
         if (key.isEmpty() || Thread.currentThread().isInterrupted()) return;
+
+        if (OpenMeteoConfig.isOpenMeteo(app)) return;
 
         ApiRequestBudgetManager.Decision budget = ApiRequestBudgetManager.tryAcquire(
                 app, ApiRequestBudgetManager.Category.WEATHER);
@@ -115,6 +132,7 @@ public final class RainAlertManager {
         HttpURLConnection connection = null;
         try {
             String address = minuteForecastAddress(key, location.lat, location.lon);
+            if (OpenMeteoConfig.isOpenMeteo(app)) return;
             connection = (HttpURLConnection) new URL(address).openConnection();
             connection.setRequestMethod("GET");
             connection.setConnectTimeout(12000);

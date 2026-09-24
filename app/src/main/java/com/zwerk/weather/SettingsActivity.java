@@ -1,6 +1,7 @@
 package com.zwerk.weather;
 
 import android.Manifest;
+import android.animation.ValueAnimator;
 import android.annotation.SuppressLint;
 import android.annotation.TargetApi;
 import android.app.Activity;
@@ -72,12 +73,14 @@ public class SettingsActivity extends Activity {
     static final String EXTRA_SEVERE_ALERTS_CHANGED = "com.zwerk.weather.extra.SEVERE_ALERTS_CHANGED";
     static final String EXTRA_WEATHER_DETAILS_CHANGED = "com.zwerk.weather.extra.WEATHER_DETAILS_CHANGED";
     static final String EXTRA_FORECAST_PAGES_CHANGED = "com.zwerk.weather.extra.FORECAST_PAGES_CHANGED";
+    static final String EXTRA_PROVIDER_CHANGED = "com.zwerk.weather.extra.PROVIDER_CHANGED";
     public static final String ACTION_REFRESH = "refresh";
     public static final String ACTION_DEVICE_LOCATION = "device_location";
     public static final String ACTION_ADVANCED_COORDINATES = "advanced_coordinates";
     public static final String ACTION_SELECTED_CITY = "selected_city";
     public static final String ACTION_PREFERENCES_CHANGED = "preferences_changed";
     public static final String ACTION_API_KEY_CHANGED = "api_key_changed";
+    public static final String ACTION_OPEN_METEO_KEY_CHANGED = "open_meteo_key_changed";
 
     private static final String UI_PREFS = "WEATHER_UI";
     private static final String API_KEY_FILE = "weather_api_key";
@@ -112,6 +115,8 @@ public class SettingsActivity extends Activity {
     private static final String STATE_INITIAL_RADAR_PAGE = "state_initial_radar_page";
     private static final String STATE_TEMPERATURE_CHANGED = "state_temperature_changed";
     private static final String STATE_DISPLAY_CHANGED = "state_display_changed";
+    private static final String EXTRA_UNITS_PAGE = "com.zwerk.weather.extra.UNITS_PAGE";
+    private static final int REQUEST_UNITS_PAGE = 91;
     private static final String TEMP_CELSIUS = "C";
     private static final String TEMP_FAHRENHEIT = "F";
     private static final String WIND_KMH = "km/h";
@@ -139,11 +144,15 @@ public class SettingsActivity extends Activity {
     private int scrimBase = Color.rgb(8, 55, 120);
     private boolean temperatureUnitChanged;
     private boolean displayUnitChanged;
+    private boolean unitsPage;
     private boolean initialAirQualityEnabled;
     private boolean initialPollenEnabled;
     private boolean initialSevereAlertsEnabled;
     private boolean initialPrecipitationPageEnabled;
     private boolean initialRadarPageEnabled;
+    private String initialProvider;
+    private String initialModel;
+    private boolean openMeteoKeyChanged;
     private String initialWeatherDetailsSignature;
     private String displayedBudgetProfile;
     private boolean displayedNotificationsBlocked;
@@ -151,9 +160,18 @@ public class SettingsActivity extends Activity {
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+        unitsPage = getIntent().getBooleanExtra(EXTRA_UNITS_PAGE, false);
         readSceneStyle();
         normalizeUnitPreferences();
         SharedPreferences prefs = getSharedPreferences(UI_PREFS, MODE_PRIVATE);
+        initialProvider = savedInstanceState == null
+                ? OpenMeteoConfig.provider(this)
+                : savedInstanceState.getString("initial_provider", OpenMeteoConfig.provider(this));
+        initialModel = savedInstanceState == null
+                ? OpenMeteoConfig.model(this)
+                : savedInstanceState.getString("initial_model", OpenMeteoConfig.model(this));
+        openMeteoKeyChanged = savedInstanceState != null
+                && savedInstanceState.getBoolean("open_meteo_key_changed", false);
         RainAlertManager.reconcile(this);
         if (savedInstanceState == null) {
             initialAirQualityEnabled = prefs.getBoolean(PREF_AIR_QUALITY, false);
@@ -381,123 +399,121 @@ public class SettingsActivity extends Activity {
         back.setOnClickListener(v -> handleBack());
         header.addView(back, new LinearLayout.LayoutParams(dp(48), dp(60)));
 
-        TextView title = text("Settings", 25f, PRIMARY, false);
+        TextView title = text(unitsPage ? "Units" : "Settings", 25f, PRIMARY, false);
         title.setGravity(Gravity.CENTER_VERTICAL);
         LinearLayout.LayoutParams titleLp = new LinearLayout.LayoutParams(0, dp(60), 1f);
         titleLp.leftMargin = dp(4);
         header.addView(title, titleLp);
 
-        addSectionHeading("Zwerk Weather");
-        addActionRow(
-                "Google API key",
-                hasConfiguredApiKey()
-                        ? "Configured · tap to replace"
-                        : "Not configured · tap to add",
-                this::showApiKeyDialog);
-        addActionRow(
-                "API request limits",
-                ApiRequestBudgetManager.profileLabel(this) + " profile",
-                () -> startActivity(new Intent(this, ApiUsageLimitsActivity.class)));
-        addActionRow(
-                "Refresh forecast",
-                "",
-                () -> returnAction(ACTION_REFRESH));
-        addActionRow(
-                "Check for updates",
-                "Checks GitHub Releases for a newer APK.",
-                () -> UpdateChecker.checkForUpdates(this, true));
-        addSectionHeading("Alerts");
-        addSwitchRow(
-                "Rain alerts",
-                "",
-                PREF_RAIN_ALERTS,
-                false);
-        addSwitchRow(
-                "Severe weather alerts",
-                "",
-                PREF_SEVERE_ALERTS,
-                false);
-        if (displayedNotificationsBlocked) {
-            addActionRow("Enable alert notifications", "", () -> {
-                Intent notificationSettings = new Intent(
-                        android.provider.Settings.ACTION_APP_NOTIFICATION_SETTINGS)
-                        .putExtra(android.provider.Settings.EXTRA_APP_PACKAGE, getPackageName());
-                startActivity(notificationSettings);
-            });
+        if (unitsPage) {
+            addSectionHeading("Measurement units");
+            addUnitRows(page);
+        } else {
+            addSectionHeading("Zwerk Weather");
+            addActionRow("Weather source",
+                    OpenMeteoConfig.isOpenMeteo(this) ? "Open-Meteo" : "Google Weather",
+                    this::showWeatherSourceDialog);
+            if (OpenMeteoConfig.isOpenMeteo(this)) {
+                addActionRow("Open-Meteo forecast model",
+                        OpenMeteoConfig.modelLabel(OpenMeteoConfig.model(this)),
+                        this::showOpenMeteoModelDialog);
+                addActionRow("Open-Meteo customer key",
+                        OpenMeteoConfig.hasCustomerKey(this)
+                                ? "Configured"
+                                : "Optional for paid plans",
+                        this::showOpenMeteoKeyDialog);
+            }
+            addActionRow(
+                    "Google API key",
+                    hasConfiguredApiKey()
+                            ? "Configured · tap to replace"
+                            : "Not configured · tap to add",
+                    this::showApiKeyDialog);
+            addActionRow(
+                    "API request limits",
+                    "Google · Open-Meteo · radar",
+                    () -> startActivity(new Intent(this, ApiUsageLimitsActivity.class)));
+            addActionRow(
+                    "Refresh forecast",
+                    "",
+                    () -> returnAction(ACTION_REFRESH));
+            addActionRow(
+                    "Check for updates",
+                    "Checks GitHub Releases for a newer APK.",
+                    () -> UpdateChecker.checkForUpdates(this, true));
+            addSectionHeading("Alerts");
+            addSwitchRow(
+                    "Rain alerts",
+                    "",
+                    PREF_RAIN_ALERTS,
+                    false);
+            if (!OpenMeteoConfig.isOpenMeteo(this)) {
+                addSwitchRow("Severe weather alerts", "", PREF_SEVERE_ALERTS, false);
+            }
+            if (displayedNotificationsBlocked) {
+                addActionRow("Enable alert notifications", "", () -> {
+                    Intent notificationSettings = new Intent(
+                            android.provider.Settings.ACTION_APP_NOTIFICATION_SETTINGS)
+                            .putExtra(android.provider.Settings.EXTRA_APP_PACKAGE, getPackageName());
+                    startActivity(notificationSettings);
+                });
+            }
+
+            addSectionHeading(OpenMeteoConfig.isOpenMeteo(this)
+                    ? "Optional Open-Meteo data" : "Optional Google data");
+            addSwitchRow(
+                    "Air Quality",
+                    "",
+                    PREF_AIR_QUALITY,
+                    false);
+            addSwitchRow(
+                    "Pollen",
+                    "",
+                    PREF_POLLEN,
+                    false);
+
+            addSectionHeading("Display");
+            addSwitchRow(
+                    "Precipitation page",
+                    "Show the minute-by-minute rain view in the forecast tabs.",
+                    PREF_PRECIPITATION_PAGE,
+                    true);
+            addSwitchRow(
+                    "Radar page",
+                    "Show the radar map in the forecast tabs.",
+                    PREF_RADAR_PAGE,
+                    true);
+            addActionRow(
+                    "Weather details",
+                    "Choose the measurements shown on the overview.",
+                    () -> startActivity(new Intent(this, WeatherDetailSettingsActivity.class)));
+            addActionRow("Units", "Temperature, wind, pressure, and visibility",
+                    () -> startActivityForResult(new Intent(this, SettingsActivity.class)
+                            .putExtra(EXTRA_UNITS_PAGE, true), REQUEST_UNITS_PAGE));
+            addSwitchRow(
+                    "Weather animations",
+                    "",
+                    PREF_ANIMATIONS,
+                    true);
+
+            addActionRow(
+                    "Preview weather scenes",
+                    "",
+                    this::showScenePreview);
+
+            String versionName = "";
+            try {
+                versionName = getPackageManager()
+                        .getPackageInfo(getPackageName(), 0).versionName;
+            } catch (Exception ignored) {
+                // Keep the footer usable if package metadata is unavailable.
+            }
+            TextView footer = text("Zwerk Weather " + (versionName == null ? "" : versionName),
+                    12f, Color.argb(170, 210, 222, 236), false);
+            footer.setGravity(Gravity.CENTER);
+            footer.setPadding(dp(4), dp(28), dp(4), dp(8));
+            page.addView(footer);
         }
-
-        addSectionHeading("Optional Google data");
-        addSwitchRow(
-                "Air Quality",
-                "",
-                PREF_AIR_QUALITY,
-                false);
-        addSwitchRow(
-                "Pollen",
-                "",
-                PREF_POLLEN,
-                false);
-
-        addSectionHeading("Display");
-        addSwitchRow(
-                "Precipitation page",
-                "Show the minute-by-minute rain view in the forecast tabs.",
-                PREF_PRECIPITATION_PAGE,
-                true);
-        addSwitchRow(
-                "Radar page",
-                "Show the radar map in the forecast tabs.",
-                PREF_RADAR_PAGE,
-                true);
-        addActionRow(
-                "Weather details",
-                "Choose the measurements shown on the overview.",
-                () -> startActivity(new Intent(this, WeatherDetailSettingsActivity.class)));
-        addTemperatureUnitRow();
-        addChoiceUnitRow(
-                "Wind speed",
-                "",
-                PREF_WIND_UNIT,
-                new String[]{WIND_KMH, WIND_MPH, WIND_MS, WIND_KNOTS},
-                new String[]{"km/h", "mph", "m/s", "knots"},
-                WIND_KMH);
-        addChoiceUnitRow(
-                "Air pressure",
-                "",
-                PREF_PRESSURE_UNIT,
-                new String[]{PRESSURE_HPA, PRESSURE_INHG, PRESSURE_MMHG},
-                new String[]{"hPa", "inHg", "mmHg"},
-                PRESSURE_HPA);
-        addChoiceUnitRow(
-                "Visibility",
-                "",
-                PREF_VISIBILITY_UNIT,
-                new String[]{VISIBILITY_KM, VISIBILITY_MI},
-                new String[]{"km", "mi"},
-                VISIBILITY_KM);
-        addSwitchRow(
-                "Weather animations",
-                "",
-                PREF_ANIMATIONS,
-                true);
-
-        addActionRow(
-                "Preview weather scenes",
-                "",
-                this::showScenePreview);
-
-        String versionName = "";
-        try {
-            versionName = getPackageManager()
-                    .getPackageInfo(getPackageName(), 0).versionName;
-        } catch (Exception ignored) {
-            // Keep the footer usable if package metadata is unavailable.
-        }
-        TextView footer = text("Zwerk Weather " + (versionName == null ? "" : versionName),
-                12f, Color.argb(170, 210, 222, 236), false);
-        footer.setGravity(Gravity.CENTER);
-        footer.setPadding(dp(4), dp(28), dp(4), dp(8));
-        page.addView(footer);
 
         setContentView(root);
         root.setOnApplyWindowInsetsListener((v, insets) -> {
@@ -516,6 +532,240 @@ public class SettingsActivity extends Activity {
             return insets;
         });
         root.requestApplyInsets();
+    }
+
+    private void showWeatherSourceDialog() {
+        showGlassChoiceDialog("Weather source",
+                new String[]{"Google Weather", "Open-Meteo"},
+                new String[]{"Uses your Google key", "No key needed"},
+                OpenMeteoConfig.isOpenMeteo(this) ? 1 : 0,
+                false,
+                index -> OpenMeteoConfig.setProvider(this,
+                        index == 1 ? OpenMeteoConfig.OPEN_METEO : OpenMeteoConfig.GOOGLE));
+    }
+
+    private void showOpenMeteoModelDialog() {
+        String selectedModel = OpenMeteoConfig.model(this);
+        int selected = 0;
+        for (int i = 0; i < OpenMeteoConfig.MODEL_IDS.length; i++) {
+            if (OpenMeteoConfig.MODEL_IDS[i].equals(selectedModel)) selected = i;
+        }
+        showGlassChoiceDialog("Forecast model", OpenMeteoConfig.MODEL_LABELS,
+                new String[]{"Recommended"}, selected, true,
+                index -> OpenMeteoConfig.setModel(this, OpenMeteoConfig.MODEL_IDS[index]));
+    }
+
+    private void showOpenMeteoKeyDialog() {
+        final Dialog dialog = glassSettingsDialog();
+        dialog.setCanceledOnTouchOutside(false);
+        ScrollView scroller = new ScrollView(this);
+        LinearLayout panel = glassDialogPanel(scroller);
+        TextView title = text("Open-Meteo key", 22f, PRIMARY, false);
+        title.setTypeface(Typeface.create("sans-serif-medium", Typeface.NORMAL));
+        panel.addView(title);
+
+        TextView subtitle = text("Optional for paid plans", 13f, SECONDARY, false);
+        LinearLayout.LayoutParams subtitleLp = new LinearLayout.LayoutParams(-1, -2);
+        subtitleLp.topMargin = dp(4);
+        panel.addView(subtitle, subtitleLp);
+
+        EditText field = apiKeyEditText();
+        field.setHint("Customer key");
+        LinearLayout.LayoutParams fieldLp = new LinearLayout.LayoutParams(-1, dp(52));
+        fieldLp.topMargin = dp(16);
+        panel.addView(field, fieldLp);
+
+        TextView error = text("", 12f, Color.rgb(255, 207, 207), false);
+        error.setVisibility(View.GONE);
+        LinearLayout.LayoutParams errorLp = new LinearLayout.LayoutParams(-1, -2);
+        errorLp.topMargin = dp(8);
+        panel.addView(error, errorLp);
+
+        if (OpenMeteoConfig.hasCustomerKey(this)) {
+            Button remove = sceneChip("Remove saved key");
+            remove.setBackground(sceneChipBackground(false));
+            LinearLayout.LayoutParams removeLp = new LinearLayout.LayoutParams(-1, dp(46));
+            removeLp.topMargin = dp(12);
+            panel.addView(remove, removeLp);
+            remove.setOnClickListener(v -> {
+                try {
+                    OpenMeteoConfig.writeCustomerKey(this, "");
+                    openMeteoKeyChanged = true;
+                    dialog.dismiss();
+                    buildUi();
+                } catch (Exception ignored) {
+                    error.setText("Could not remove the key.");
+                    error.setVisibility(View.VISIBLE);
+                }
+            });
+        }
+
+        LinearLayout actions = new LinearLayout(this);
+        actions.setOrientation(LinearLayout.HORIZONTAL);
+        LinearLayout.LayoutParams actionsLp = new LinearLayout.LayoutParams(-1, dp(48));
+        actionsLp.topMargin = dp(16);
+        panel.addView(actions, actionsLp);
+
+        Button cancel = sceneChip("Cancel");
+        cancel.setTextSize(14f);
+        cancel.setBackground(sceneChipBackground(false));
+        actions.addView(cancel, new LinearLayout.LayoutParams(0, dp(48), 1f));
+        cancel.setOnClickListener(v -> dialog.dismiss());
+
+        Button save = previewActionButton("Save");
+        LinearLayout.LayoutParams saveLp = new LinearLayout.LayoutParams(0, dp(48), 1f);
+        saveLp.leftMargin = dp(10);
+        actions.addView(save, saveLp);
+        save.setOnClickListener(v -> {
+            String candidate = field.getText().toString().trim();
+            if (candidate.isEmpty() || candidate.length() > 512
+                    || candidate.matches(".*\\s.*")) {
+                error.setText("Enter a valid key.");
+                error.setVisibility(View.VISIBLE);
+                return;
+            }
+            try {
+                OpenMeteoConfig.writeCustomerKey(this, candidate);
+                openMeteoKeyChanged = true;
+                dialog.dismiss();
+                buildUi();
+            } catch (Exception ignored) {
+                error.setText("Could not save the key.");
+                error.setVisibility(View.VISIBLE);
+            }
+        });
+        field.setOnEditorActionListener((view, actionId, event) -> {
+            if (actionId == android.view.inputmethod.EditorInfo.IME_ACTION_DONE) {
+                save.performClick();
+                return true;
+            }
+            return false;
+        });
+        dialog.setOnDismissListener(ignored -> field.getText().clear());
+        showGlassSettingsDialog(dialog, scroller, false, true);
+        field.requestFocus();
+    }
+
+    private void showGlassChoiceDialog(String titleText, String[] labels, String[] subtitles,
+            int selectedIndex, boolean tall, java.util.function.IntConsumer onSelect) {
+        final Dialog dialog = glassSettingsDialog();
+        LinearLayout panel = new LinearLayout(this);
+        panel.setOrientation(LinearLayout.VERTICAL);
+        panel.setPadding(dp(18), dp(18), dp(18), dp(16));
+        panel.setBackground(glassDialogBackground());
+
+        TextView title = text(titleText, 22f, PRIMARY, false);
+        title.setTypeface(Typeface.create("sans-serif-medium", Typeface.NORMAL));
+        panel.addView(title);
+
+        ScrollView optionsScroll = new ScrollView(this);
+        optionsScroll.setVerticalScrollBarEnabled(false);
+        LinearLayout options = new LinearLayout(this);
+        options.setOrientation(LinearLayout.VERTICAL);
+        optionsScroll.addView(options, new ScrollView.LayoutParams(-1, -2));
+        LinearLayout.LayoutParams scrollLp = tall
+                ? new LinearLayout.LayoutParams(-1, 0, 1f)
+                : new LinearLayout.LayoutParams(-1, -2);
+        panel.addView(optionsScroll, scrollLp);
+
+        for (int i = 0; i < labels.length; i++) {
+            final int index = i;
+            boolean selected = i == selectedIndex;
+            String helper = subtitles != null && i < subtitles.length ? subtitles[i] : "";
+            LinearLayout option = new LinearLayout(this);
+            option.setGravity(Gravity.CENTER_VERTICAL);
+            option.setPadding(dp(16), dp(8), dp(14), dp(8));
+            option.setBackground(sceneChipBackground(selected));
+            option.setClickable(true);
+            option.setFocusable(true);
+            option.setSelected(selected);
+            option.setContentDescription(labels[i] + (selected ? ", selected" : ", not selected"));
+            if (Build.VERSION.SDK_INT >= 30) {
+                option.setStateDescription(selected ? "Selected" : "Not selected");
+            }
+
+            LinearLayout labelColumn = new LinearLayout(this);
+            labelColumn.setOrientation(LinearLayout.VERTICAL);
+            labelColumn.addView(text(labels[i], 16f, PRIMARY, selected));
+            if (!helper.isEmpty()) {
+                TextView subtitle = text(helper, 12f, SECONDARY, false);
+                LinearLayout.LayoutParams subtitleLp = new LinearLayout.LayoutParams(-1, -2);
+                subtitleLp.topMargin = dp(2);
+                labelColumn.addView(subtitle, subtitleLp);
+            }
+            option.addView(labelColumn, new LinearLayout.LayoutParams(0, -2, 1f));
+            TextView check = text(selected ? "✓" : "", 22f, PRIMARY, true);
+            check.setGravity(Gravity.CENTER);
+            check.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
+            option.addView(check, new LinearLayout.LayoutParams(dp(28), dp(40)));
+            option.setOnClickListener(v -> {
+                onSelect.accept(index);
+                dialog.dismiss();
+                buildUi();
+            });
+            LinearLayout.LayoutParams optionLp = new LinearLayout.LayoutParams(-1,
+                    dp(helper.isEmpty() ? 52 : 64));
+            optionLp.topMargin = dp(i == 0 ? 14 : 7);
+            options.addView(option, optionLp);
+        }
+
+        Button cancel = sceneChip("Cancel");
+        cancel.setTextSize(14f);
+        cancel.setBackground(sceneChipBackground(false));
+        LinearLayout.LayoutParams cancelLp = new LinearLayout.LayoutParams(-1, dp(48));
+        cancelLp.topMargin = dp(16);
+        panel.addView(cancel, cancelLp);
+        cancel.setOnClickListener(v -> dialog.dismiss());
+        showGlassSettingsDialog(dialog, panel, tall, false);
+    }
+
+    private Dialog glassSettingsDialog() {
+        Dialog dialog = new Dialog(this);
+        dialog.requestWindowFeature(Window.FEATURE_NO_TITLE);
+        dialog.setCancelable(true);
+        dialog.setCanceledOnTouchOutside(true);
+        return dialog;
+    }
+
+    private LinearLayout glassDialogPanel(ScrollView scroller) {
+        scroller.setVerticalScrollBarEnabled(false);
+        scroller.setClipToPadding(false);
+        LinearLayout panel = new LinearLayout(this);
+        panel.setOrientation(LinearLayout.VERTICAL);
+        panel.setPadding(dp(18), dp(18), dp(18), dp(16));
+        panel.setBackground(glassDialogBackground());
+        scroller.addView(panel, new ScrollView.LayoutParams(-1, -2));
+        return panel;
+    }
+
+    private GradientDrawable glassDialogBackground() {
+        GradientDrawable background = new GradientDrawable(
+                GradientDrawable.Orientation.TOP_BOTTOM,
+                new int[]{opaqueEnough(surfaceTop, 248), opaqueEnough(surfaceBottom, 251)});
+        background.setCornerRadius(dp(24));
+        background.setStroke(dp(1), Color.argb(80, 255, 255, 255));
+        return background;
+    }
+
+    private void showGlassSettingsDialog(Dialog dialog, View content,
+            boolean tall, boolean keyboard) {
+        dialog.setContentView(content);
+        dialog.show();
+        Window window = dialog.getWindow();
+        if (window == null) return;
+        window.setBackgroundDrawable(new ColorDrawable(Color.TRANSPARENT));
+        window.addFlags(WindowManager.LayoutParams.FLAG_DIM_BEHIND);
+        WindowManager.LayoutParams attributes = window.getAttributes();
+        attributes.dimAmount = 0.72f;
+        window.setAttributes(attributes);
+        window.setGravity(Gravity.CENTER);
+        window.getDecorView().setPadding(0, 0, 0, 0);
+        if (keyboard) window.setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE);
+        int width = Math.max(1, Math.min(getResources().getDisplayMetrics().widthPixels - dp(28), dp(440)));
+        int height = tall
+                ? Math.max(dp(240), Math.min(getResources().getDisplayMetrics().heightPixels - dp(90), dp(690)))
+                : ViewGroup.LayoutParams.WRAP_CONTENT;
+        window.setLayout(width, height);
     }
 
     private void showApiKeyDialog() {
@@ -787,8 +1037,9 @@ public class SettingsActivity extends Activity {
         selectedLp.topMargin = dp(9);
         panel.addView(selectedLabel, selectedLp);
 
-        String[] sceneKeys = {"day", "night", "rain", "thunder", "fog", "snow"};
-        String[] sceneLabels = {"Clear day", "Night", "Rain", "Thunder", "Fog", "Snow"};
+        String[] sceneKeys = {"day", "partly", "cloud", "night", "rain", "thunder", "fog", "snow"};
+        String[] sceneLabels = {"Clear day", "Partly cloudy", "Cloudy", "Night",
+                "Rain", "Thunder", "Fog", "Snow"};
         Button[] sceneButtons = new Button[sceneKeys.length];
 
         LinearLayout sceneGrid = new LinearLayout(this);
@@ -797,7 +1048,7 @@ public class SettingsActivity extends Activity {
         gridLp.topMargin = dp(10);
         panel.addView(sceneGrid, gridLp);
 
-        for (int rowIndex = 0; rowIndex < 2; rowIndex++) {
+        for (int rowIndex = 0; rowIndex < (sceneKeys.length + 2) / 3; rowIndex++) {
             LinearLayout row = new LinearLayout(this);
             row.setOrientation(LinearLayout.HORIZONTAL);
             row.setGravity(Gravity.CENTER_VERTICAL);
@@ -811,6 +1062,7 @@ public class SettingsActivity extends Activity {
 
             for (int column = 0; column < 3; column++) {
                 final int index = rowIndex * 3 + column;
+                if (index >= sceneKeys.length) break;
                 Button chip = sceneChip(sceneLabels[index]);
                 sceneButtons[index] = chip;
                 LinearLayout.LayoutParams chipLp = new LinearLayout.LayoutParams(0, dp(46), 1f);
@@ -950,13 +1202,13 @@ public class SettingsActivity extends Activity {
     }
 
     private final class ScenePreviewView extends View {
+        private final WeatherAtmosphereRenderer atmosphere = new WeatherAtmosphereRenderer(
+                getResources().getDisplayMetrics().density);
         private final Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG);
         private final Rect sourceRect = new Rect();
         private final RectF destinationRect = new RectF();
         private final Path clipPath = new Path();
         private final Path fogPath = new Path();
-        private final Path stormPath = new Path();
-        private final Path lightningPath = new Path();
         private final Bitmap daySky = BitmapFactory.decodeResource(
                 getResources(), R.drawable.weather_sky_day);
         private final Bitmap nightSky = BitmapFactory.decodeResource(
@@ -975,7 +1227,6 @@ public class SettingsActivity extends Activity {
         private boolean animationRunning = true;
         private long frozenTime = SystemClock.uptimeMillis();
         private long thunderStarted = frozenTime;
-        private Shader stormDepthShader;
         private Shader fogWashShader;
 
         ScenePreviewView(Context context) {
@@ -1003,6 +1254,8 @@ public class SettingsActivity extends Activity {
         }
 
         void setAnimationRunning(boolean running) {
+            running = running && (Build.VERSION.SDK_INT < 26
+                    || ValueAnimator.areAnimatorsEnabled());
             if (animationRunning == running) {
                 if (running && hasAnimatedOverlay()) postInvalidateOnAnimation();
                 return;
@@ -1017,10 +1270,7 @@ public class SettingsActivity extends Activity {
         }
 
         private boolean hasAnimatedOverlay() {
-            return "rain".equals(scene)
-                    || "thunder".equals(scene)
-                    || "fog".equals(scene)
-                    || "snow".equals(scene);
+            return true;
         }
 
         private long visualNow() {
@@ -1031,11 +1281,7 @@ public class SettingsActivity extends Activity {
         protected void onSizeChanged(int w, int h, int oldw, int oldh) {
             super.onSizeChanged(w, h, oldw, oldh);
             if (w <= 0 || h <= 0) return;
-            stormDepthShader = new LinearGradient(
-                    0, 0, 0, h,
-                    new int[]{Color.argb(82, 4, 10, 24), Color.argb(44, 8, 20, 42), Color.argb(70, 3, 9, 22)},
-                    new float[]{0f, 0.52f, 1f},
-                    Shader.TileMode.CLAMP);
+            atmosphere.onSizeChanged(w, h);
             fogWashShader = new LinearGradient(
                     0, 0, 0, h,
                     new int[]{Color.argb(8, 232, 241, 248), Color.argb(27, 232, 241, 248), Color.argb(13, 224, 236, 246)},
@@ -1125,15 +1371,19 @@ public class SettingsActivity extends Activity {
             canvas.drawRect(0, 0, w, h, paint);
 
             long now = visualNow();
+            boolean daytime = !"night".equals(scene);
+            String effect = "day".equals(scene) || "night".equals(scene)
+                    ? "none" : scene;
+            SceneSpec previewSpec = new SceneSpec(
+                    "night".equals(scene) ? "night" : "day", effect, daytime, scene);
+            atmosphere.drawAmbient(canvas, w, h, now, previewSpec);
             if ("thunder".equals(scene)) {
-                drawThunderAtmosphere(canvas, w, h, now);
-                drawRain(canvas, w, h, now);
+                atmosphere.drawRain(canvas, w, h, now, previewSpec);
                 if (animationRunning) {
-                    drawLightningBolt(canvas, w, h, now);
-                    drawLightningFlash(canvas, w, h, now);
+                    atmosphere.drawLightning(canvas, w, h, now, thunderStarted);
                 }
             } else if ("rain".equals(scene)) {
-                drawRain(canvas, w, h, now);
+                atmosphere.drawRain(canvas, w, h, now, previewSpec);
             } else if ("snow".equals(scene)) {
                 drawSnow(canvas, w, h, now);
             } else if ("fog".equals(scene)) {
@@ -1142,7 +1392,8 @@ public class SettingsActivity extends Activity {
 
             canvas.restoreToCount(save);
             if (animationRunning && hasAnimatedOverlay()) {
-                postInvalidateOnAnimation();
+                postInvalidateDelayed("rain".equals(scene) || "thunder".equals(scene)
+                        || "snow".equals(scene) ? 33L : 55L);
             }
         }
 
@@ -1166,22 +1417,6 @@ public class SettingsActivity extends Activity {
             canvas.drawBitmap(bitmap, sourceRect, destinationRect, paint);
         }
 
-        private void drawRain(Canvas canvas, float w, float h, long now) {
-            paint.setShader(null);
-            paint.setStyle(Paint.Style.STROKE);
-            paint.setStrokeWidth(dp(1.1f));
-            paint.setStrokeCap(Paint.Cap.ROUND);
-            paint.setStrokeJoin(Paint.Join.ROUND);
-            paint.setColor(Color.argb(118, 208, 231, 255));
-            float seconds = now / 1000f;
-            for (int i = 0; i < particleX.length; i++) {
-                float x = particleX[i] * w;
-                float y = ((particleY[i] + seconds * particleSpeed[i]) % 1.12f) * h - h * 0.08f;
-                float length = dp(8f + particleSize[i] * 7f);
-                canvas.drawLine(x, y, x - length * 0.27f, y + length, paint);
-            }
-        }
-
         private void drawSnow(Canvas canvas, float w, float h, long now) {
             paint.setShader(null);
             paint.setStyle(Paint.Style.FILL);
@@ -1193,49 +1428,6 @@ public class SettingsActivity extends Activity {
                 float y = ((particleY[i] + seconds * particleSpeed[i] * 0.16f) % 1.08f) * h
                         - h * 0.04f;
                 canvas.drawCircle(x, y, dp(particleSize[i] * 1.2f), paint);
-            }
-        }
-
-        private void drawThunderAtmosphere(Canvas canvas, float w, float h, long now) {
-            paint.setStyle(Paint.Style.FILL);
-            paint.setShader(stormDepthShader);
-            canvas.drawRect(0, 0, w, h, paint);
-            paint.setShader(null);
-
-            float seconds = now / 1000f;
-            for (int i = 0; i < 3; i++) {
-                float drift = (float) Math.sin(seconds * (0.12f + i * 0.020f) + i * 1.8f)
-                        * w * (0.058f + i * 0.012f);
-                float y = h * (0.12f + i * 0.24f)
-                        + (float) Math.sin(seconds * (0.08f + i * 0.012f) + i)
-                        * h * 0.020f;
-                float bandHeight = h * (0.15f + i * 0.018f);
-                float left = -w * 0.38f + drift;
-                float right = w * 1.38f + drift;
-
-                stormPath.reset();
-                stormPath.moveTo(left, y + bandHeight * 0.30f);
-                stormPath.cubicTo(
-                        left + w * 0.38f, y - bandHeight * 0.10f,
-                        left + w * 0.72f, y + bandHeight * 0.10f,
-                        left + w, y + bandHeight * 0.20f);
-                stormPath.cubicTo(
-                        left + w * 1.24f, y + bandHeight * 0.30f,
-                        left + w * 1.50f, y - bandHeight * 0.05f,
-                        right, y + bandHeight * 0.24f);
-                stormPath.lineTo(right, y + bandHeight * 0.86f);
-                stormPath.cubicTo(
-                        left + w * 1.50f, y + bandHeight * 1.05f,
-                        left + w * 1.18f, y + bandHeight * 0.74f,
-                        left + w, y + bandHeight * 0.80f);
-                stormPath.cubicTo(
-                        left + w * 0.66f, y + bandHeight * 0.96f,
-                        left + w * 0.34f, y + bandHeight * 0.70f,
-                        left, y + bandHeight * 0.84f);
-                stormPath.close();
-
-                paint.setColor(Color.argb(22 + i * 7, 4, 12 + i * 4, 28 + i * 7));
-                canvas.drawPath(stormPath, paint);
             }
         }
 
@@ -1304,66 +1496,6 @@ public class SettingsActivity extends Activity {
             paint.setAlpha(255);
         }
 
-        private float lightningStrength(long now) {
-            long elapsed = Math.max(0L, now - thunderStarted);
-            long phase = elapsed % 5200L;
-            if (phase < 82L) {
-                return 1f - phase / 100f;
-            }
-            if (phase >= 118L && phase < 192L) {
-                return 0.54f * (1f - (phase - 118L) / 74f);
-            }
-            return 0f;
-        }
-
-        private void buildLightningPath(float w, float h, long now) {
-            long eventIndex = Math.max(0L, now - thunderStarted) / 5200L;
-            float anchor = 0.40f + ((eventIndex * 31L) % 19L) / 100f;
-            float x0 = w * anchor;
-
-            lightningPath.reset();
-            lightningPath.moveTo(x0, h * 0.06f);
-            lightningPath.lineTo(x0 - w * 0.035f, h * 0.24f);
-            lightningPath.lineTo(x0 + w * 0.012f, h * 0.36f);
-            lightningPath.lineTo(x0 - w * 0.050f, h * 0.52f);
-            lightningPath.lineTo(x0 - w * 0.018f, h * 0.68f);
-            lightningPath.lineTo(x0 - w * 0.072f, h * 0.87f);
-
-            lightningPath.moveTo(x0 + w * 0.002f, h * 0.35f);
-            lightningPath.lineTo(x0 + w * 0.105f, h * 0.43f);
-            lightningPath.lineTo(x0 + w * 0.145f, h * 0.55f);
-
-            lightningPath.moveTo(x0 - w * 0.045f, h * 0.52f);
-            lightningPath.lineTo(x0 - w * 0.145f, h * 0.61f);
-            lightningPath.lineTo(x0 - w * 0.188f, h * 0.73f);
-        }
-
-        private void drawLightningBolt(Canvas canvas, float w, float h, long now) {
-            float strength = lightningStrength(now);
-            if (strength <= 0f) return;
-            buildLightningPath(w, h, now);
-
-            paint.setShader(null);
-            paint.setStyle(Paint.Style.STROKE);
-            paint.setStrokeCap(Paint.Cap.ROUND);
-            paint.setStrokeJoin(Paint.Join.ROUND);
-            paint.setStrokeWidth(dp(6f));
-            paint.setColor(Color.argb(Math.round(62 * strength), 188, 220, 255));
-            canvas.drawPath(lightningPath, paint);
-
-            paint.setStrokeWidth(dp(1.5f));
-            paint.setColor(Color.argb(Math.round(225 * strength), 238, 248, 255));
-            canvas.drawPath(lightningPath, paint);
-        }
-
-        private void drawLightningFlash(Canvas canvas, float w, float h, long now) {
-            float strength = lightningStrength(now);
-            if (strength <= 0f) return;
-            paint.setShader(null);
-            paint.setStyle(Paint.Style.FILL);
-            paint.setColor(Color.argb(Math.round(105 * strength), 230, 240, 255));
-            canvas.drawRect(0, 0, w, h, paint);
-        }
     }
 
     private final class SettingsBackButton extends View {
@@ -1405,6 +1537,8 @@ public class SettingsActivity extends Activity {
     }
 
     private final class SettingsBackdropView extends View {
+        private final WeatherAtmosphereRenderer atmosphere = new WeatherAtmosphereRenderer(
+                getResources().getDisplayMetrics().density);
         private final Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG);
         private final Rect source = new Rect();
         private final RectF destination = new RectF();
@@ -1420,6 +1554,7 @@ public class SettingsActivity extends Activity {
         private final float[] particleX = new float[78];
         private final float[] particleY = new float[78];
         private final float[] particleSpeed = new float[78];
+        private Shader backdropShade;
         private boolean animationRunning = true;
         private long frozenTime = SystemClock.uptimeMillis();
         private long thunderStarted = frozenTime;
@@ -1439,6 +1574,8 @@ public class SettingsActivity extends Activity {
         }
 
         void setAnimationRunning(boolean running) {
+            running = running && (Build.VERSION.SDK_INT < 26
+                    || ValueAnimator.areAnimatorsEnabled());
             if (animationRunning == running) {
                 if (running && isAnimatedScene()) postInvalidateOnAnimation();
                 return;
@@ -1454,14 +1591,22 @@ public class SettingsActivity extends Activity {
         }
 
         private boolean isAnimatedScene() {
-            return "rain".equals(sceneKey)
-                    || "thunder".equals(sceneKey)
-                    || "fog".equals(sceneKey)
-                    || "snow".equals(sceneKey);
+            return true;
         }
 
         private long visualNow() {
             return animationRunning ? SystemClock.uptimeMillis() : frozenTime;
+        }
+
+        @Override
+        protected void onSizeChanged(int w, int h, int oldw, int oldh) {
+            super.onSizeChanged(w, h, oldw, oldh);
+            if (w <= 0 || h <= 0) return;
+            atmosphere.onSizeChanged(w, h);
+            backdropShade = new LinearGradient(0, 0, 0, h,
+                    new int[]{Color.argb(34, 0, 24, 65), Color.argb(50, 3, 20, 48),
+                            Color.argb(88, 3, 10, 24)},
+                    new float[]{0f, 0.52f, 1f}, Shader.TileMode.CLAMP);
         }
 
         @Override
@@ -1490,26 +1635,25 @@ public class SettingsActivity extends Activity {
                 canvas.drawColor(scrimBase);
             }
 
-            paint.setShader(new LinearGradient(
-                    0, 0, 0, h,
-                    new int[]{
-                            Color.argb(34, 0, 24, 65),
-                            Color.argb(50, 3, 20, 48),
-                            Color.argb(88, 3, 10, 24)
-                    },
-                    new float[]{0f, 0.52f, 1f},
-                    Shader.TileMode.CLAMP));
+            paint.setShader(backdropShade);
             paint.setStyle(Paint.Style.FILL);
             canvas.drawRect(0, 0, w, h, paint);
             paint.setShader(null);
 
             long now = visualNow();
+            String effect = "day".equals(sceneKey) || "night".equals(sceneKey)
+                    ? "none" : sceneKey;
+            SceneSpec backdropSpec = new SceneSpec(
+                    "night".equals(sceneKey) ? "night" : "day",
+                    effect, sceneDaytime, sceneKey);
+            atmosphere.drawAmbient(canvas, w, h, now, backdropSpec);
             if ("thunder".equals(sceneKey)) {
-                drawStormDepth(canvas, w, h, now);
-                drawRain(canvas, w, h, now);
-                if (animationRunning) drawLightning(canvas, w, h, now);
+                atmosphere.drawRain(canvas, w, h, now, backdropSpec);
+                if (animationRunning) {
+                    atmosphere.drawLightning(canvas, w, h, now, thunderStarted);
+                }
             } else if ("rain".equals(sceneKey)) {
-                drawRain(canvas, w, h, now);
+                atmosphere.drawRain(canvas, w, h, now, backdropSpec);
             } else if ("snow".equals(sceneKey)) {
                 drawSnow(canvas, w, h, now);
             } else if ("fog".equals(sceneKey)) {
@@ -1517,7 +1661,8 @@ public class SettingsActivity extends Activity {
             }
 
             if (animationRunning && isAnimatedScene()) {
-                postInvalidateOnAnimation();
+                postInvalidateDelayed("rain".equals(sceneKey) || "thunder".equals(sceneKey)
+                        || "snow".equals(sceneKey) ? 33L : 55L);
             }
         }
 
@@ -1537,20 +1682,6 @@ public class SettingsActivity extends Activity {
             paint.setShader(null);
             paint.setAlpha(255);
             canvas.drawBitmap(bitmap, source, destination, paint);
-        }
-
-        private void drawRain(Canvas canvas, float w, float h, long now) {
-            paint.setShader(null);
-            paint.setStyle(Paint.Style.STROKE);
-            paint.setStrokeWidth(dp(1.05f));
-            paint.setStrokeCap(Paint.Cap.ROUND);
-            paint.setColor(Color.argb(86, 208, 231, 255));
-            float seconds = now / 1000f;
-            for (int i = 0; i < particleX.length; i++) {
-                float x = particleX[i] * w;
-                float y = ((particleY[i] + seconds * particleSpeed[i]) % 1.10f) * h - h * 0.05f;
-                canvas.drawLine(x, y, x - dp(2.5f), y + dp(12f), paint);
-            }
         }
 
         private void drawSnow(Canvas canvas, float w, float h, long now) {
@@ -1593,69 +1724,6 @@ public class SettingsActivity extends Activity {
             canvas.drawRect(0, h * 0.10f, w, h * 0.92f, paint);
         }
 
-        private void drawStormDepth(Canvas canvas, float w, float h, long now) {
-            paint.setShader(new LinearGradient(
-                    0, 0, 0, h,
-                    new int[]{
-                            Color.argb(96, 4, 10, 24),
-                            Color.argb(52, 8, 20, 42),
-                            Color.argb(84, 3, 9, 22)
-                    },
-                    null,
-                    Shader.TileMode.CLAMP));
-            canvas.drawRect(0, 0, w, h, paint);
-            paint.setShader(null);
-
-            float seconds = now / 1000f;
-            for (int i = 0; i < 3; i++) {
-                float y = h * (0.14f + i * 0.25f)
-                        + (float) Math.sin(seconds * 0.08f + i) * h * 0.018f;
-                path.reset();
-                path.moveTo(-w * 0.2f, y);
-                path.cubicTo(w * 0.2f, y - h * 0.05f, w * 0.62f, y + h * 0.04f, w * 1.2f, y);
-                path.lineTo(w * 1.2f, y + h * 0.10f);
-                path.cubicTo(w * 0.7f, y + h * 0.16f, w * 0.2f, y + h * 0.08f, -w * 0.2f, y + h * 0.12f);
-                path.close();
-                paint.setColor(Color.argb(24 + i * 7, 4, 12 + i * 4, 30 + i * 7));
-                canvas.drawPath(path, paint);
-            }
-        }
-
-        private void drawLightning(Canvas canvas, float w, float h, long now) {
-            long phase = Math.max(0L, now - thunderStarted) % 5200L;
-            float strength = 0f;
-            if (phase < 86L) strength = 1f - phase / 100f;
-            else if (phase >= 122L && phase < 192L) {
-                strength = 0.50f * (1f - (phase - 122L) / 70f);
-            }
-            if (strength <= 0f) return;
-
-            float x = w * 0.54f;
-            path.reset();
-            path.moveTo(x, h * 0.04f);
-            path.lineTo(x - w * 0.04f, h * 0.19f);
-            path.lineTo(x + w * 0.01f, h * 0.29f);
-            path.lineTo(x - w * 0.05f, h * 0.44f);
-            path.lineTo(x - w * 0.01f, h * 0.58f);
-            path.moveTo(x + w * 0.005f, h * 0.29f);
-            path.lineTo(x + w * 0.10f, h * 0.37f);
-            path.lineTo(x + w * 0.14f, h * 0.48f);
-
-            paint.setShader(null);
-            paint.setStyle(Paint.Style.STROKE);
-            paint.setStrokeCap(Paint.Cap.ROUND);
-            paint.setStrokeJoin(Paint.Join.ROUND);
-            paint.setStrokeWidth(dp(5f));
-            paint.setColor(Color.argb(Math.round(54 * strength), 190, 222, 255));
-            canvas.drawPath(path, paint);
-            paint.setStrokeWidth(dp(1.3f));
-            paint.setColor(Color.argb(Math.round(215 * strength), 240, 248, 255));
-            canvas.drawPath(path, paint);
-
-            paint.setStyle(Paint.Style.FILL);
-            paint.setColor(Color.argb(Math.round(72 * strength), 230, 240, 255));
-            canvas.drawRect(0, 0, w, h, paint);
-        }
     }
 
     private void addSectionHeading(String value) {
@@ -1770,7 +1838,23 @@ public class SettingsActivity extends Activity {
                 }));
     }
 
-    private void addTemperatureUnitRow() {
+    private void addUnitRows(LinearLayout parent) {
+        addTemperatureUnitRow(parent);
+        addChoiceUnitRow(parent,
+                "Wind speed", "", PREF_WIND_UNIT,
+                new String[]{WIND_KMH, WIND_MPH, WIND_MS, WIND_KNOTS},
+                new String[]{"km/h", "mph", "m/s", "knots"}, WIND_KMH);
+        addChoiceUnitRow(parent,
+                "Air pressure", "", PREF_PRESSURE_UNIT,
+                new String[]{PRESSURE_HPA, PRESSURE_INHG, PRESSURE_MMHG},
+                new String[]{"hPa", "inHg", "mmHg"}, PRESSURE_HPA);
+        addChoiceUnitRow(parent,
+                "Visibility", "", PREF_VISIBILITY_UNIT,
+                new String[]{VISIBILITY_KM, VISIBILITY_MI},
+                new String[]{"km", "mi"}, VISIBILITY_KM);
+    }
+
+    private void addTemperatureUnitRow(LinearLayout parent) {
         LinearLayout row = surface();
         row.setOrientation(LinearLayout.VERTICAL);
         row.setPadding(dp(16), dp(10), dp(14), dp(11));
@@ -1799,10 +1883,11 @@ public class SettingsActivity extends Activity {
         fahrenheit.setOnClickListener(v -> selectTemperatureUnit(
                 TEMP_FAHRENHEIT, options, values, labels));
 
-        page.addView(row, surfaceParams());
+        parent.addView(row, surfaceParams());
     }
 
     private void addChoiceUnitRow(
+            LinearLayout parent,
             String titleText,
             String subtitleText,
             String preferenceKey,
@@ -1842,7 +1927,7 @@ public class SettingsActivity extends Activity {
                     labels,
                     titleText.toLowerCase(Locale.ROOT)));
         }
-        page.addView(row, surfaceParams());
+        parent.addView(row, surfaceParams());
     }
 
     private LinearLayout unitSelector() {
@@ -2047,6 +2132,9 @@ public class SettingsActivity extends Activity {
         if (severeAlertsPreferenceChanged()) result.putExtra(EXTRA_SEVERE_ALERTS_CHANGED, true);
         if (weatherDetailsPreferenceChanged()) result.putExtra(EXTRA_WEATHER_DETAILS_CHANGED, true);
         if (forecastPagesPreferenceChanged()) result.putExtra(EXTRA_FORECAST_PAGES_CHANGED, true);
+        if (providerPreferenceChanged() || openMeteoKeyChanged) {
+            result.putExtra(EXTRA_PROVIDER_CHANGED, true);
+        }
         setResult(RESULT_OK, result);
         finishAfterTransition();
     }
@@ -2089,6 +2177,11 @@ public class SettingsActivity extends Activity {
                 || prefs.getBoolean(PREF_RADAR_PAGE, true) != initialRadarPageEnabled;
     }
 
+    private boolean providerPreferenceChanged() {
+        return !OpenMeteoConfig.provider(this).equals(initialProvider)
+                || !OpenMeteoConfig.model(this).equals(initialModel);
+    }
+
     private static String weatherDetailsSignature(SharedPreferences prefs) {
         StringBuilder result = new StringBuilder();
         for (WeatherDetailSettingsActivity.DetailOption option
@@ -2125,6 +2218,14 @@ public class SettingsActivity extends Activity {
     }
 
     @Override
+    protected void onActivityResult(int requestCode, int resultCode, Intent data) {
+        super.onActivityResult(requestCode, resultCode, data);
+        if (requestCode != REQUEST_UNITS_PAGE || resultCode != RESULT_OK || data == null) return;
+        temperatureUnitChanged |= data.getBooleanExtra(EXTRA_UNIT_CHANGED, false);
+        displayUnitChanged |= data.getBooleanExtra(EXTRA_DISPLAY_UNIT_CHANGED, false);
+    }
+
+    @Override
     protected void onSaveInstanceState(Bundle outState) {
         outState.putBoolean(STATE_INITIAL_AIR, initialAirQualityEnabled);
         outState.putBoolean(STATE_INITIAL_POLLEN, initialPollenEnabled);
@@ -2135,6 +2236,9 @@ public class SettingsActivity extends Activity {
         outState.putString(STATE_INITIAL_DETAILS, initialWeatherDetailsSignature);
         outState.putBoolean(STATE_TEMPERATURE_CHANGED, temperatureUnitChanged);
         outState.putBoolean(STATE_DISPLAY_CHANGED, displayUnitChanged);
+        outState.putString("initial_provider", initialProvider);
+        outState.putString("initial_model", initialModel);
+        outState.putBoolean("open_meteo_key_changed", openMeteoKeyChanged);
         super.onSaveInstanceState(outState);
     }
 
@@ -2158,13 +2262,25 @@ public class SettingsActivity extends Activity {
     }
 
     private void handleBack() {
+        if (unitsPage) {
+            if (temperatureUnitChanged || displayUnitChanged) {
+                Intent result = new Intent();
+                result.putExtra(EXTRA_UNIT_CHANGED, temperatureUnitChanged);
+                result.putExtra(EXTRA_DISPLAY_UNIT_CHANGED, displayUnitChanged);
+                setResult(RESULT_OK, result);
+            }
+            finishAfterTransition();
+            return;
+        }
         boolean airQualityChanged = airQualityPreferenceChanged();
         boolean pollenChanged = pollenPreferenceChanged();
         boolean severeAlertsChanged = severeAlertsPreferenceChanged();
         boolean weatherDetailsChanged = weatherDetailsPreferenceChanged();
         boolean forecastPagesChanged = forecastPagesPreferenceChanged();
+        boolean providerChanged = providerPreferenceChanged() || openMeteoKeyChanged;
         if (temperatureUnitChanged || displayUnitChanged || airQualityChanged || pollenChanged
-                || severeAlertsChanged || weatherDetailsChanged || forecastPagesChanged) {
+                || severeAlertsChanged || weatherDetailsChanged || forecastPagesChanged
+                || providerChanged) {
             Intent result = new Intent().putExtra(EXTRA_ACTION, ACTION_PREFERENCES_CHANGED);
             if (temperatureUnitChanged) result.putExtra(EXTRA_UNIT_CHANGED, true);
             if (displayUnitChanged) result.putExtra(EXTRA_DISPLAY_UNIT_CHANGED, true);
@@ -2173,6 +2289,7 @@ public class SettingsActivity extends Activity {
             if (severeAlertsChanged) result.putExtra(EXTRA_SEVERE_ALERTS_CHANGED, true);
             if (weatherDetailsChanged) result.putExtra(EXTRA_WEATHER_DETAILS_CHANGED, true);
             if (forecastPagesChanged) result.putExtra(EXTRA_FORECAST_PAGES_CHANGED, true);
+            if (providerChanged) result.putExtra(EXTRA_PROVIDER_CHANGED, true);
             setResult(RESULT_OK, result);
         }
         finishAfterTransition();

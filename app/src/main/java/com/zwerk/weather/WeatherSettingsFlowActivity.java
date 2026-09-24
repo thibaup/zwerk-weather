@@ -111,11 +111,15 @@ abstract class WeatherSettingsFlowActivity extends WeatherOverviewRenderingActiv
                 SettingsActivity.EXTRA_WEATHER_DETAILS_CHANGED, false);
         boolean forecastPagesChanged = data.getBooleanExtra(
                 SettingsActivity.EXTRA_FORECAST_PAGES_CHANGED, false);
+        boolean providerChanged = data.getBooleanExtra(
+                SettingsActivity.EXTRA_PROVIDER_CHANGED, false);
         if (unitChanged || displayUnitChanged || airQualityChanged || pollenChanged
-                || severeAlertsChanged || weatherDetailsChanged || forecastPagesChanged) {
+                || severeAlertsChanged || weatherDetailsChanged || forecastPagesChanged
+                || providerChanged) {
             suppressNextResumeWeatherLoad = true;
         }
         boolean actionReloadsBaseWeather = SettingsActivity.ACTION_API_KEY_CHANGED.equals(action)
+                || providerChanged
                 || SettingsActivity.ACTION_REFRESH.equals(action)
                 || SettingsActivity.ACTION_DEVICE_LOCATION.equals(action)
                 || SettingsActivity.ACTION_SELECTED_CITY.equals(action);
@@ -130,7 +134,20 @@ abstract class WeatherSettingsFlowActivity extends WeatherOverviewRenderingActiv
         if (forecastPagesChanged && this instanceof MainActivity) {
             ((MainActivity) this).applyForecastPagePreferences();
         }
-        if (SettingsActivity.ACTION_API_KEY_CHANGED.equals(action)) {
+        if (providerChanged) {
+            invalidateMinuteForecastState();
+            hourlyPageState = null;
+            if (this instanceof MainActivity) {
+                ((MainActivity) this).reloadRadarSource();
+            }
+            if (OpenMeteoConfig.GOOGLE.equals(OpenMeteoConfig.provider(this))
+                    && this instanceof MainActivity
+                    && !((MainActivity) this).hasConfiguredApiKey()) {
+                ((MainActivity) this).showApiKeySetupDialog();
+            } else {
+                refreshWeather(true);
+            }
+        } else if (SettingsActivity.ACTION_API_KEY_CHANGED.equals(action)) {
             refreshWeather(true);
         } else if (SettingsActivity.ACTION_REFRESH.equals(action)) {
             refreshWeather(true, precipitationMode);
@@ -151,6 +168,7 @@ abstract class WeatherSettingsFlowActivity extends WeatherOverviewRenderingActiv
 
     void rerenderLastWeather() {
         if (lastCurrentWeather == null || lastDailyWeather == null) return;
+        OpenMeteoForecastClient.pruneElapsedHourly(lastHourlyWeather, Instant.now());
         activeTemperatureUnit = temperatureUnitPreference();
         final int scrollY = mainScroll == null ? 0 : mainScroll.getScrollY();
         render(lastCurrentWeather, lastHourlyWeather, lastDailyWeather, activeTemperatureUnit);

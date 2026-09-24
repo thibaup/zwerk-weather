@@ -100,14 +100,17 @@ abstract class WeatherApiActivity extends MinuteForecastViewsActivity {
     void cleanupForecastCaches() { forecastDiskCache.cleanup(); }
 
     ForecastCacheSnapshot readFreshForecastCache(double lat, double lon, String language, String requestLocationId) {
-        ForecastDiskCache.Snapshot cached = forecastDiskCache.readFresh(lat, lon, language, requestLocationId);
+        ForecastDiskCache.Snapshot cached = forecastDiskCache.readFresh(
+                lat, lon, language, scopedCacheLocationId(requestLocationId));
+        if (cached != null) OpenMeteoForecastClient.pruneElapsedHourly(cached.hourly, Instant.now());
         return cached == null ? null : new ForecastCacheSnapshot(
                 cached.current, cached.hourly, cached.daily, cached.fetchedAtMillis);
     }
 
     void persistForecastCacheQuietly(double lat, double lon, String language, String requestLocationId,
                                      JSONObject current, JSONObject hourly, JSONObject daily) {
-        forecastDiskCache.persist(lat, lon, language, requestLocationId, current, hourly, daily);
+        forecastDiskCache.persist(lat, lon, language, scopedCacheLocationId(requestLocationId),
+                current, hourly, daily);
     }
 
     private ForecastCacheSnapshot readInMemoryForecast(
@@ -121,7 +124,11 @@ abstract class WeatherApiActivity extends MinuteForecastViewsActivity {
                 inMemoryForecasts.remove(key);
                 return null;
             }
-            return copyForecastSnapshot(cached.snapshot);
+            ForecastCacheSnapshot snapshot = copyForecastSnapshot(cached.snapshot);
+            if (snapshot != null) {
+                OpenMeteoForecastClient.pruneElapsedHourly(snapshot.hourly, Instant.now());
+            }
+            return snapshot;
         }
     }
 
@@ -164,7 +171,11 @@ abstract class WeatherApiActivity extends MinuteForecastViewsActivity {
         }
     }
 
-    private static String forecastCacheScopeKey(
+    private String scopedCacheLocationId(String locationId) {
+        return (locationId == null ? "" : locationId) + "|" + OpenMeteoConfig.cacheScope(this);
+    }
+
+    private String forecastCacheScopeKey(
             double lat, double lon, String language, String requestLocationId) {
         return String.format(
                 Locale.US,
@@ -172,7 +183,7 @@ abstract class WeatherApiActivity extends MinuteForecastViewsActivity {
                 lat,
                 lon,
                 language == null ? "" : language,
-                requestLocationId == null ? "" : requestLocationId);
+                scopedCacheLocationId(requestLocationId));
     }
 
     void startWeatherLoad(boolean forceNetwork) {
@@ -181,11 +192,13 @@ abstract class WeatherApiActivity extends MinuteForecastViewsActivity {
         final double lon = longitude;
         final String language = Locale.getDefault().getLanguage();
         final String requestLocationId = selectedLocationId == null ? "" : selectedLocationId;
+        final String providerScope = OpenMeteoConfig.cacheScope(this);
         if (weatherLoadActive) {
             boolean sameScope = Math.abs(activeLoadLatitude - lat) <= WEATHER_CACHE_COORDINATE_TOLERANCE
                     && Math.abs(activeLoadLongitude - lon) <= WEATHER_CACHE_COORDINATE_TOLERANCE
                     && activeLoadLanguage.equals(language)
-                    && activeLoadLocationId.equals(requestLocationId);
+                    && activeLoadLocationId.equals(requestLocationId)
+                    && activeLoadProviderScope.equals(providerScope);
             if (sameScope) {
                 // Coalesce explicit forced refreshes behind the active request; passive duplicate
                 // callbacks still add zero requests.
@@ -210,8 +223,10 @@ abstract class WeatherApiActivity extends MinuteForecastViewsActivity {
         activeLoadLongitude = lon;
         activeLoadLanguage = language;
         activeLoadLocationId = requestLocationId;
+        activeLoadProviderScope = providerScope;
         progress.setVisibility(View.VISIBLE);
-        status.setText("Loading Google Weather data…");
+        status.setText(OpenMeteoConfig.isOpenMeteo(this)
+                ? "Loading Open-Meteo forecast…" : "Loading Google Weather data…");
         notifyActiveForecastStatusChanged();
         final int generation = ++weatherRequestGeneration;
         synchronized (hourlyCoverageLock) {
@@ -225,9 +240,10 @@ abstract class WeatherApiActivity extends MinuteForecastViewsActivity {
             ForecastCacheSnapshot cached = readInMemoryForecast(
                     lat, lon, language, requestLocationId);
             if (cached != null) {
+                boolean openMeteoCache = cached.current.has("_openMeteo");
                 HourlyPageState cachedState = new HourlyPageState(
                         generation, lat, lon, language, requestLocationId,
-                        cached.hourly, "", false, true);
+                        cached.hourly, "", openMeteoCache, !openMeteoCache);
                 finishWeatherLoadSuccess(
                         cached.current, cached.hourly, cached.daily, cachedState, generation,
                         cached.fetchedAtMillis);
@@ -239,6 +255,46 @@ abstract class WeatherApiActivity extends MinuteForecastViewsActivity {
             try {
                 if (!baseRequestScopeCurrent(generation, lat, lon, language, requestLocationId)) {
                     throw new SupersededWeatherRequestException();
+                }
+                if (!forceNetwork) {
+                    // A previous request for this location may have completed while this
+                    // request waited in the network queue after a quick location switch.
+                    ForecastCacheSnapshot cached = readFreshForecastCache(
+                            lat, lon, language, requestLocationId);
+                    if (cached != null) {
+                        boolean openMeteoCache = cached.current.has("_openMeteo");
+                        HourlyPageState cachedState = new HourlyPageState(
+                                generation, lat, lon, language, requestLocationId,
+                                cached.hourly, "", openMeteoCache, !openMeteoCache);
+                        runOnUiThread(() -> finishWeatherLoadSuccess(
+                                cached.current, cached.hourly, cached.daily,
+                                cachedState, generation, cached.fetchedAtMillis));
+                        return;
+                    }
+                }
+                if (OpenMeteoConfig.isOpenMeteo(this)) {
+                    OpenMeteoForecastClient.Forecast forecast =
+                            OpenMeteoForecastClient.loadForecast(
+                                    this, lat, lon, OpenMeteoConfig.model(this),
+                                    OpenMeteoConfig.readCustomerKey(this));
+                    // A finished response still belongs to the original location if the
+                    // user moved elsewhere while HTTP was in flight. Cache it for a return.
+                    if (providerScope.equals(OpenMeteoConfig.cacheScope(this))) {
+                        persistForecastCacheQuietly(lat, lon, language, requestLocationId,
+                                forecast.current, forecast.hourly, forecast.daily);
+                    }
+                    if (!baseRequestScopeCurrent(
+                            generation, lat, lon, language, requestLocationId)) {
+                        throw new SupersededWeatherRequestException();
+                    }
+                    HourlyPageState pageState = new HourlyPageState(
+                            generation, lat, lon, language, requestLocationId,
+                            forecast.hourly, "", true, false);
+                    long fetchedAtMillis = System.currentTimeMillis();
+                    runOnUiThread(() -> finishWeatherLoadSuccess(
+                            forecast.current, forecast.hourly, forecast.daily,
+                            pageState, generation, fetchedAtMillis));
+                    return;
                 }
                 String key = readApiKey();
                 if (key.isEmpty()) throw new IllegalStateException("API key is not configured");
@@ -293,9 +349,10 @@ abstract class WeatherApiActivity extends MinuteForecastViewsActivity {
                 ForecastCacheSnapshot cached = readFreshForecastCache(
                         lat, lon, language, requestLocationId);
                 if (cached != null) {
+                    boolean openMeteoCache = cached.current.has("_openMeteo");
                     HourlyPageState cachedState = new HourlyPageState(
                             generation, lat, lon, language, requestLocationId,
-                            cached.hourly, "", false, true);
+                            cached.hourly, "", openMeteoCache, !openMeteoCache);
                     runOnUiThread(() -> finishWeatherLoadSuccess(
                             cached.current, cached.hourly, cached.daily,
                             cachedState, generation, cached.fetchedAtMillis));
@@ -325,6 +382,7 @@ abstract class WeatherApiActivity extends MinuteForecastViewsActivity {
                 && Math.abs(latitude - lat) <= WEATHER_CACHE_COORDINATE_TOLERANCE
                 && Math.abs(longitude - lon) <= WEATHER_CACHE_COORDINATE_TOLERANCE
                 && Locale.getDefault().getLanguage().equals(language)
+                && activeLoadProviderScope.equals(OpenMeteoConfig.cacheScope(this))
                 && (selectedLocationId == null ? "" : selectedLocationId)
                         .equals(requestLocationId == null ? "" : requestLocationId);
     }
@@ -377,6 +435,7 @@ abstract class WeatherApiActivity extends MinuteForecastViewsActivity {
     }
 
     boolean requestScopeCurrent(int generation) {
+        if (OpenMeteoConfig.isOpenMeteo(this)) return false;
         if (generation != weatherRequestGeneration) return false;
         String language = Locale.getDefault().getLanguage();
         String locationId = selectedLocationId == null ? "" : selectedLocationId;
@@ -399,6 +458,7 @@ abstract class WeatherApiActivity extends MinuteForecastViewsActivity {
             int generation,
             long fetchedAtMillis) {
         if (generation != weatherRequestGeneration) return;
+        OpenMeteoForecastClient.pruneElapsedHourly(hourly, Instant.now());
         weatherLoadActive = false;
         finishRefreshIndicator();
         double cachedLatitude = pageState == null ? latitude : pageState.latitude;
@@ -634,6 +694,10 @@ abstract class WeatherApiActivity extends MinuteForecastViewsActivity {
     }
 
     void retryHourlyPageOne() {
+        if (OpenMeteoConfig.isOpenMeteo(this)) {
+            refreshWeather(true);
+            return;
+        }
         final HourlyPageState state = hourlyPageState;
         if (state == null || state.generation != weatherRequestGeneration) return;
         synchronized (hourlyCoverageLock) {
@@ -677,6 +741,7 @@ abstract class WeatherApiActivity extends MinuteForecastViewsActivity {
             LocalDate targetDate,
             HourlyCoverageCoordinator coordinator) {
         if (targetDate == null) return;
+        if (OpenMeteoConfig.isOpenMeteo(this)) return;
         HourlyPageState state = hourlyPageState;
         if (state == null || state.generation != weatherRequestGeneration) return;
         ZoneId zone = responseZone(lastCurrentWeather, lastHourlyWeather, lastDailyWeather);
@@ -1019,6 +1084,9 @@ abstract class WeatherApiActivity extends MinuteForecastViewsActivity {
 
 
     JSONObject request(String address) throws Exception {
+        if (OpenMeteoConfig.isOpenMeteo(this)) {
+            throw new SupersededWeatherRequestException();
+        }
         ApiRequestBudgetManager.Decision budget = ApiRequestBudgetManager.tryAcquire(
                 this, ApiRequestBudgetManager.Category.WEATHER);
         if (!budget.allowed) {

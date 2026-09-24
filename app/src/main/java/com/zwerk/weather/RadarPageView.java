@@ -79,7 +79,6 @@ final class RadarPageView extends LinearLayout {
     private boolean playing;
     private boolean preparing;
     private boolean pendingPlay;
-    private boolean preloadQueued;
     private boolean preparationTickScheduled;
     private boolean timelineLoading;
     private String timelineError = "";
@@ -92,7 +91,6 @@ final class RadarPageView extends LinearLayout {
     private Runnable viewportRetryTask;
     private int preparationGeneration;
     private long preparationStartedAt;
-    private int playbackPreloadIndex = -1;
     private int pendingScrubIndex;
     private Dialog fullscreenDialog;
     private boolean fullscreen;
@@ -393,6 +391,7 @@ final class RadarPageView extends LinearLayout {
 
     private boolean configureSource() {
         if (disposed) return false;
+        updateSourceSelector();
         String next = RadarProviderConfig.source(getContext());
         if (source.equals(next)) return false;
         timelineLoadGeneration++;
@@ -438,6 +437,7 @@ final class RadarPageView extends LinearLayout {
     }
 
     private void updateSourceSelector() {
+        googleOption.setVisibility(OpenMeteoConfig.isOpenMeteo(getContext()) ? GONE : VISIBLE);
         boolean google = RadarProviderConfig.GOOGLE.equals(source);
         styleSourceOption(rainViewerOption, !google);
         styleSourceOption(googleOption, google);
@@ -647,7 +647,6 @@ final class RadarPageView extends LinearLayout {
         if (disposed || !active || timeline == null || timeline.frames.size() < 2) return;
         data.retryFailedRadarTiles();
         preparing = true;
-        preloadQueued = false;
         preparationTickScheduled = false;
         preparationStartedAt = System.currentTimeMillis();
         int generation = ++preparationGeneration;
@@ -670,20 +669,26 @@ final class RadarPageView extends LinearLayout {
             schedulePreparationCheck(generation);
             return;
         }
-        if (!preloadQueued) {
-            preloadQueued = true;
-            for (RadarDataClient.Frame frame : timeline.frames) {
-                map.ensureFrame(frame, () -> checkPreparation(generation));
+        // A full timeline can exceed the bitmap cache. Loading every frame at once can
+        // evict the first frame before the last one finishes, leaving playback at 12/13.
+        // Prepare only the visible frame and the next two, then stream the rest.
+        int count = timeline.frames.size();
+        int start = Math.max(0, Math.min(frameIndex, count - 1));
+        int ready = 0;
+        int firstReady = -1;
+        int window = Math.min(3, count);
+        for (int offset = 0; offset < window; offset++) {
+            int index = (start + offset) % count;
+            RadarDataClient.Frame frame = timeline.frames.get(index);
+            map.ensureFrame(frame, () -> checkPreparation(generation));
+            if (map.frameReady(frame)) {
+                ready++;
+                if (firstReady < 0) firstReady = index;
             }
         }
-        int ready = 0;
-        for (RadarDataClient.Frame frame : timeline.frames) {
-            if (map.frameReady(frame)) ready++;
-        }
-        if (ready < timeline.frames.size()
-                && System.currentTimeMillis() - preparationStartedAt < 30_000L) {
+        if (ready < 2 && System.currentTimeMillis() - preparationStartedAt < 10_000L) {
             setSummary("Preparing animation · " + ready + "/"
-                    + timeline.frames.size() + " frames");
+                    + window + " frames");
             schedulePreparationCheck(generation);
             return;
         }
@@ -695,7 +700,8 @@ final class RadarPageView extends LinearLayout {
         }
         setSummary("");
         playing = true;
-        playbackPreloadIndex = Math.max(0, Math.min(frameIndex, timeline.frames.size() - 1));
+        if (firstReady >= 0 && firstReady != frameIndex) showFrame(firstReady, false);
+        map.setFallbackFrame(timeline.frames.get(frameIndex));
         map.setManagedRadarLoading(true);
         playButton.setMode(RadarPlaybackButton.PAUSE);
         preloadPlaybackWindow();
@@ -705,29 +711,18 @@ final class RadarPageView extends LinearLayout {
     private void preloadPlaybackWindow() {
         if (disposed || !active || timeline == null || timeline.frames.isEmpty()) return;
         int count = timeline.frames.size();
-        int current = playbackPreloadIndex >= 0
-                ? Math.min(playbackPreloadIndex, count - 1)
-                : Math.max(0, Math.min(frameIndex, count - 1));
-        RadarDataClient.Frame currentFrame = timeline.frames.get(current);
-        map.ensureFrame(currentFrame, map::invalidate);
-        if (count < 2) return;
-
-        int next = (current + 1) % count;
-        RadarDataClient.Frame nextFrame = timeline.frames.get(next);
-        map.ensureFrame(nextFrame, map::invalidate);
-
-        boolean currentReady = map.frameReady(currentFrame);
-        boolean nextReady = map.frameReady(nextFrame);
-        if (currentReady) map.setFallbackFrame(currentFrame);
-        if (currentReady && nextReady) playbackPreloadIndex = next;
+        int current = Math.max(0, Math.min(frameIndex, count - 1));
+        for (int offset = 0; offset < Math.min(3, count); offset++) {
+            RadarDataClient.Frame frame = timeline.frames.get((current + offset) % count);
+            map.ensureFrame(frame, map::invalidate);
+            if (offset == 0 && map.frameReady(frame)) map.setFallbackFrame(frame);
+        }
     }
 
     private void continuePlaybackAfterViewportChange() {
         if (!active || disposed || timeline == null || timeline.frames.size() < 2) return;
-        playbackPreloadIndex = Math.max(0, Math.min(frameIndex, timeline.frames.size() - 1));
         map.setManagedRadarLoading(true);
         if (preparing) {
-            preloadQueued = false;
             preparationTickScheduled = false;
             preparationStartedAt = System.currentTimeMillis();
             int generation = ++preparationGeneration;
@@ -751,10 +746,8 @@ final class RadarPageView extends LinearLayout {
         playing = false;
         preparing = false;
         pendingPlay = false;
-        preloadQueued = false;
         preparationTickScheduled = false;
         preparationGeneration++;
-        playbackPreloadIndex = -1;
         map.setManagedRadarLoading(false);
         handler.removeCallbacks(playbackStep);
         handler.removeCallbacks(applyScrub);

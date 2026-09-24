@@ -122,7 +122,8 @@ abstract class MinuteForecastActivity extends OptionalWeatherDataActivity {
     File minuteForecastCacheFile(double lat, double lon, String language) {
         String identity = Double.toHexString(lat)
                 + "|" + Double.toHexString(lon)
-                + "|" + (language == null ? "" : language);
+                + "|" + (language == null ? "" : language)
+                + "|" + OpenMeteoConfig.cacheScope(this);
         String name = MINUTE_CACHE_FILE_PREFIX
                 + Integer.toHexString(identity.hashCode())
                 + MINUTE_CACHE_FILE_SUFFIX;
@@ -316,10 +317,20 @@ abstract class MinuteForecastActivity extends OptionalWeatherDataActivity {
                 if (!minuteRequestScopeCurrent(requestState)) {
                     throw new SupersededWeatherRequestException();
                 }
-                String key = readApiKey();
-                if (key.isEmpty()) throw new IllegalStateException("API key is not configured");
-                String address = minuteForecastAddress(key, lat, lon);
-                JSONObject raw = requestMinuteLogical(address, requestState);
+                JSONObject raw;
+                if (OpenMeteoConfig.isOpenMeteo(this)) {
+                    raw = OpenMeteoForecastClient.loadMinute(
+                            this, lat, lon, OpenMeteoConfig.model(this),
+                            OpenMeteoConfig.readCustomerKey(this));
+                } else {
+                    String key = readApiKey();
+                    if (key.isEmpty()) throw new IllegalStateException("API key is not configured");
+                    String address = minuteForecastAddress(key, lat, lon);
+                    raw = requestMinuteLogical(address, requestState);
+                }
+                if (!minuteRequestScopeCurrent(requestState)) {
+                    throw new SupersededWeatherRequestException();
+                }
                 long fetchedAtMillis = System.currentTimeMillis();
                 persistMinuteForecastCacheQuietly(lat, lon, language, fetchedAtMillis, raw);
                 JSONObject filtered = filterElapsedMinuteResponse(raw, Instant.now());

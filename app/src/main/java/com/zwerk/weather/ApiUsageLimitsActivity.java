@@ -31,6 +31,7 @@ import java.util.Locale;
 public final class ApiUsageLimitsActivity extends Activity {
     private static final String PRICING_URL =
             "https://developers.google.com/maps/billing-and-pricing/pricing";
+    private static final String OPEN_METEO_LIMITS_URL = "https://open-meteo.com/en/terms";
     private static final int PRIMARY = Color.rgb(246, 249, 253);
     private static final int SECONDARY = Color.rgb(190, 207, 226);
     private static final int ACCENT = Color.rgb(143, 207, 255);
@@ -89,13 +90,13 @@ public final class ApiUsageLimitsActivity extends Activity {
         page.addView(header);
 
         TextView intro = text(
-                "Set local request caps. Retries and extra pages count; cached data does not.",
+                "Set local request caps. Cached data does not count.",
                 14f, SECONDARY);
         intro.setLineSpacing(dp(2), 1f);
         intro.setPadding(dp(4), dp(8), dp(4), dp(16));
         page.addView(intro);
 
-        addHeading(page, "PROFILE · " + ApiRequestBudgetManager.profileLabel(this).toUpperCase(Locale.ROOT));
+        addHeading(page, "GOOGLE · " + ApiRequestBudgetManager.profileLabel(this).toUpperCase(Locale.ROOT));
         addProfile(page, "Off", "No local cap; usage is still counted.",
                 ApiRequestBudgetManager.PROFILE_OFF);
         addProfile(page, "Conservative", "Weather/Air Quality 8,000/mo · Pollen 4,000/mo.",
@@ -104,10 +105,23 @@ public final class ApiUsageLimitsActivity extends Activity {
                 "Weather/Air Quality 10,000/mo · Pollen 5,000/mo · local pacing uses Pacific time.",
                 ApiRequestBudgetManager.PROFILE_GOOGLE_FREE);
 
-        addHeading(page, "USAGE & CUSTOM LIMITS");
+        addHeading(page, "GOOGLE USAGE & LIMITS");
         for (ApiRequestBudgetManager.Category category : ApiRequestBudgetManager.Category.values()) {
             addCategory(page, category);
         }
+
+        addHeading(page, "OPEN-METEO");
+        addOpenMeteoUsage(page);
+        TextView openMeteoNote = text(
+                "Free: 600/min · 5k/hour · 10k/day · 300k/month.\n"
+                        + "Local requests; provider call totals may differ.",
+                12.5f, SECONDARY);
+        openMeteoNote.setPadding(dp(5), dp(4), dp(5), dp(7));
+        page.addView(openMeteoNote);
+        Button openMeteoLimits = button("Open-Meteo limits ↗");
+        openMeteoLimits.setOnClickListener(v -> startActivity(
+                new Intent(Intent.ACTION_VIEW, Uri.parse(OPEN_METEO_LIMITS_URL))));
+        page.addView(openMeteoLimits, new LinearLayout.LayoutParams(-1, dp(50)));
 
         addHeading(page, "RADAR & MAP TILES");
         addExternalUsage(page, "RainViewer radar",
@@ -118,8 +132,7 @@ public final class ApiUsageLimitsActivity extends Activity {
                 false);
 
         TextView note = text(
-                "Alerts and minute data use Weather. Caps follow Pacific time. "
-                        + "Counts cover this device only.",
+                "Google caps follow Pacific time. Counts cover this device only.",
                 12.5f, SECONDARY);
         note.setLineSpacing(dp(2), 1f);
         note.setPadding(dp(5), dp(12), dp(5), dp(8));
@@ -209,6 +222,128 @@ public final class ApiUsageLimitsActivity extends Activity {
         card.addView(counters);
         card.setOnClickListener(v -> editLimits(category, usage.limits));
         page.addView(card, cardParams());
+    }
+
+    private void addOpenMeteoUsage(LinearLayout page) {
+        OpenMeteoRequestBudgetManager.Usage usage = OpenMeteoRequestBudgetManager.usage(this);
+        LinearLayout card = card(false);
+        card.setOrientation(LinearLayout.VERTICAL);
+        card.setPadding(dp(16), dp(14), dp(16), dp(14));
+
+        LinearLayout top = new LinearLayout(this);
+        top.setGravity(Gravity.CENTER_VERTICAL);
+        LinearLayout labels = new LinearLayout(this);
+        labels.setOrientation(LinearLayout.VERTICAL);
+        labels.addView(text("Open-Meteo requests", 18f, PRIMARY));
+        TextView description = text(OpenMeteoConfig.hasCustomerKey(this)
+                ? "Customer key · local caps" : "Free access · local caps", 12.5f, SECONDARY);
+        description.setPadding(0, dp(2), 0, 0);
+        labels.addView(description);
+        top.addView(labels, new LinearLayout.LayoutParams(0, -2, 1f));
+        TextView edit = text("Edit  ›", 14f, ACCENT);
+        edit.setGravity(Gravity.CENTER_VERTICAL | Gravity.END);
+        top.addView(edit, new LinearLayout.LayoutParams(dp(70), dp(40)));
+        card.addView(top);
+
+        TextView counters = text(String.format(Locale.getDefault(),
+                "Today  %,d / %s\nThis month  %,d / %s",
+                usage.today, dailyLimitLabel(usage.dailyLimit),
+                usage.month, ApiRequestBudgetManager.formatLimit(usage.monthlyLimit)),
+                14f, PRIMARY);
+        counters.setLineSpacing(dp(5), 1f);
+        counters.setPadding(0, dp(11), 0, 0);
+        card.addView(counters);
+
+        OpenMeteoRequestBudgetManager.Category[] categories =
+                OpenMeteoRequestBudgetManager.Category.values();
+        StringBuilder breakdown = new StringBuilder();
+        for (int i = 0; i < categories.length; i++) {
+            if (i > 0) breakdown.append(i == 2 ? "\n" : " · ");
+            breakdown.append(categories[i].label).append(' ')
+                    .append(String.format(Locale.getDefault(), "%,d", usage.todayByCategory[i]));
+        }
+        TextView details = text(breakdown.toString(), 12.5f, SECONDARY);
+        details.setPadding(0, dp(10), 0, 0);
+        card.addView(details);
+        card.setOnClickListener(v -> editOpenMeteoLimits(usage));
+        page.addView(card, cardParams());
+    }
+
+    private void editOpenMeteoLimits(OpenMeteoRequestBudgetManager.Usage current) {
+        Dialog dialog = new Dialog(this);
+        dialog.requestWindowFeature(Window.FEATURE_NO_TITLE);
+        dialog.setCancelable(true);
+        dialog.setCanceledOnTouchOutside(true);
+
+        LinearLayout panel = new LinearLayout(this);
+        panel.setOrientation(LinearLayout.VERTICAL);
+        panel.setPadding(dp(20), dp(20), dp(20), dp(18));
+        panel.setBackground(dialogBackground());
+        TextView title = text("Open-Meteo limits", 22f, PRIMARY);
+        title.setTypeface(Typeface.create("sans-serif-medium", Typeface.NORMAL));
+        panel.addView(title);
+        TextView help = text("Local caps only", 13f, SECONDARY);
+        help.setPadding(0, dp(5), 0, dp(15));
+        panel.addView(help);
+
+        panel.addView(fieldLabel("DAILY LIMIT"));
+        EditText daily = numberField("Daily limit", current.dailyLimit);
+        panel.addView(daily, new LinearLayout.LayoutParams(-1, dp(54)));
+        TextView monthLabel = fieldLabel("MONTHLY LIMIT");
+        monthLabel.setPadding(dp(3), dp(14), dp(3), dp(6));
+        panel.addView(monthLabel);
+        EditText monthly = numberField("Monthly limit", current.monthlyLimit);
+        panel.addView(monthly, new LinearLayout.LayoutParams(-1, dp(54)));
+
+        TextView error = text("Enter both limits.", 12.5f, Color.rgb(255, 190, 190));
+        error.setPadding(dp(3), dp(9), dp(3), 0);
+        error.setVisibility(View.GONE);
+        panel.addView(error);
+        LinearLayout actions = new LinearLayout(this);
+        LinearLayout.LayoutParams actionsParams = new LinearLayout.LayoutParams(-1, dp(50));
+        actionsParams.topMargin = dp(18);
+        panel.addView(actions, actionsParams);
+        Button cancel = dialogButton("Cancel", false);
+        cancel.setOnClickListener(v -> dialog.dismiss());
+        actions.addView(cancel, new LinearLayout.LayoutParams(0, -1, 1f));
+        Button save = dialogButton("Save limits", true);
+        LinearLayout.LayoutParams saveParams = new LinearLayout.LayoutParams(0, -1, 1f);
+        saveParams.leftMargin = dp(10);
+        actions.addView(save, saveParams);
+        save.setOnClickListener(v -> {
+            Integer dayValue = parsePositive(daily);
+            Integer monthValue = parsePositive(monthly);
+            if (dayValue == null || monthValue == null) {
+                error.setVisibility(View.VISIBLE);
+                return;
+            }
+            OpenMeteoRequestBudgetManager.setLimits(this, dayValue, monthValue);
+            dialog.dismiss();
+            buildUi();
+        });
+        Button noCap = dialogButton("No local cap", false);
+        LinearLayout.LayoutParams noCapParams = new LinearLayout.LayoutParams(-1, dp(46));
+        noCapParams.topMargin = dp(10);
+        panel.addView(noCap, noCapParams);
+        noCap.setOnClickListener(v -> {
+            OpenMeteoRequestBudgetManager.setLimits(this, -1, -1);
+            dialog.dismiss();
+            buildUi();
+        });
+
+        dialog.setContentView(panel);
+        dialog.show();
+        Window window = dialog.getWindow();
+        if (window != null) {
+            window.setBackgroundDrawable(new ColorDrawable(Color.TRANSPARENT));
+            window.addFlags(WindowManager.LayoutParams.FLAG_DIM_BEHIND);
+            WindowManager.LayoutParams attributes = window.getAttributes();
+            attributes.width = getResources().getDisplayMetrics().widthPixels - dp(36);
+            attributes.height = WindowManager.LayoutParams.WRAP_CONTENT;
+            attributes.dimAmount = 0.62f;
+            window.setAttributes(attributes);
+            window.setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE);
+        }
     }
 
     private void addExternalUsage(LinearLayout page, String title,
@@ -393,6 +528,7 @@ public final class ApiUsageLimitsActivity extends Activity {
                 .setNegativeButton("Cancel", null)
                 .setPositiveButton("Reset", (dialog, which) -> {
                      ApiRequestBudgetManager.resetUsage(this);
+                     OpenMeteoRequestBudgetManager.resetUsage(this);
                      RadarUsageCounter.reset(this);
                     buildUi();
                 })

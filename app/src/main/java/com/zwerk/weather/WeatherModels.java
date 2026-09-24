@@ -30,6 +30,9 @@ final class SceneSpec {
         if ("thunder".equals(key)) return new SceneSpec("rain", "thunder", daytime, condition);
         if ("rain".equals(key)) return new SceneSpec("rain", "rain", daytime, condition);
         if ("fog".equals(key)) return new SceneSpec(daytime ? "rain" : "night", "fog", daytime, condition);
+        if ("cloud".equals(key) || "partly".equals(key)) {
+            return new SceneSpec(daytime ? "day" : "night", key, daytime, condition);
+        }
         return new SceneSpec(daytime ? "day" : "night", "none", daytime, condition);
     }
 
@@ -80,6 +83,7 @@ final class SceneSpec {
         if (c.contains("cloud") || c.contains("overcast")) {
             return (c.contains("part") || c.contains("mostly") || c.contains("scattered")) ? "partly" : "cloud";
         }
+        if (c.contains("partly") || c.contains("mostly") || c.contains("scattered")) return "partly";
         if (c.contains("clear") || c.contains("sun")) return "clear";
         return "partly";
     }

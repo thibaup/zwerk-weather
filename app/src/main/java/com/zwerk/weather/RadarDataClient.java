@@ -337,6 +337,7 @@ final class RadarDataClient {
         if (tileY < 0 || tileY >= count) return null;
         int wrappedX = ((tileX % count) + count) % count;
         if ("https://weather.googleapis.com".equals(timeline.host)) {
+            if (OpenMeteoConfig.isOpenMeteo(context)) return null;
             String key = RadarProviderConfig.readGoogleKey(context);
             if (!key.matches("[A-Za-z0-9_-]+")) return null;
             String url = GOOGLE_TILE_ROOT + frame.path.substring(1)
@@ -607,6 +608,9 @@ final class RadarDataClient {
 
     private byte[] fetch(String urlText, int maxBytes, boolean radar) throws Exception {
         boolean google = urlText.startsWith(GOOGLE_TILE_ROOT);
+        if (google && OpenMeteoConfig.isOpenMeteo(context)) {
+            throw new IllegalStateException("Google radar is disabled for Open-Meteo");
+        }
         if (radar && !google && !TIMELINE_URL.equals(urlText)) acquireRadarSlot();
         if (!active) throw new IllegalStateException("Radar page closed");
         HttpURLConnection connection = (HttpURLConnection) new URL(urlText).openConnection();

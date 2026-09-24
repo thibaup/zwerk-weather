@@ -101,10 +101,37 @@ abstract class WeatherInteractionViewsActivity extends WeatherVisualEffectsActiv
         private int lock = LOCK_NONE;
         private boolean eligible;
         private float pullDistance;
+        private DayListScrollView touchedDayList;
 
         RefreshScrollView(Context context) {
             super(context);
             touchSlop = ViewConfiguration.get(context).getScaledTouchSlop();
+        }
+
+        void onDayListTouchStart(DayListScrollView list) {
+            touchedDayList = list;
+            if (list.getScrollY() > 0) cancelPull();
+        }
+
+        void onDayListTouchEnd(DayListScrollView list) {
+            if (touchedDayList == list) touchedDayList = null;
+        }
+
+        @Override
+        public boolean onInterceptTouchEvent(MotionEvent event) {
+            if (event.getActionMasked() == MotionEvent.ACTION_MOVE
+                    && touchedDayList != null) {
+                int index = event.findPointerIndex(activePointerId);
+                if (index >= 0) {
+                    float dx = event.getX(index) - downX;
+                    float dy = event.getY(index) - downY;
+                    if (Math.abs(dy) > touchSlop && Math.abs(dy) > Math.abs(dx)
+                            && touchedDayList.canScrollVertically(dy < 0f ? 1 : -1)) {
+                        return false;
+                    }
+                }
+            }
+            return super.onInterceptTouchEvent(event);
         }
 
         @Override
@@ -147,6 +174,12 @@ abstract class WeatherInteractionViewsActivity extends WeatherVisualEffectsActiv
                     }
                     float dx = event.getX(index) - downX;
                     float dy = event.getY(index) - downY;
+                    if (touchedDayList != null && Math.abs(dy) > touchSlop
+                            && Math.abs(dy) > Math.abs(dx)
+                            && touchedDayList.canScrollVertically(dy < 0f ? 1 : -1)) {
+                        cancelPull();
+                        break;
+                    }
                     if (lock == LOCK_NONE && Math.max(Math.abs(dx), Math.abs(dy)) > touchSlop) {
                         if (Math.abs(dx) > Math.abs(dy) * 0.92f) {
                             lock = LOCK_HORIZONTAL;
@@ -177,10 +210,12 @@ abstract class WeatherInteractionViewsActivity extends WeatherVisualEffectsActiv
                     eligible = false;
                     lock = LOCK_NONE;
                     pullDistance = 0f;
+                    touchedDayList = null;
                     break;
                 case MotionEvent.ACTION_CANCEL:
                     cancelPull();
                     activePointerId = MotionEvent.INVALID_POINTER_ID;
+                    touchedDayList = null;
                     break;
             }
 
@@ -224,6 +259,119 @@ abstract class WeatherInteractionViewsActivity extends WeatherVisualEffectsActiv
 
 
 
+    final class DayListScrollView extends ScrollView {
+        private static final int AXIS_UNDECIDED = 0;
+        private static final int AXIS_HORIZONTAL = 1;
+        private static final int AXIS_VERTICAL = 2;
+
+        private final int touchSlop;
+        private int activePointerId = MotionEvent.INVALID_POINTER_ID;
+        private int lockedAxis = AXIS_UNDECIDED;
+        private int verticalDirection;
+        private float downX;
+        private float downY;
+        private float lastY;
+
+        DayListScrollView(Context context) {
+            super(context);
+            touchSlop = ViewConfiguration.get(context).getScaledTouchSlop();
+            setOverScrollMode(View.OVER_SCROLL_ALWAYS);
+        }
+
+        @Override
+        public boolean dispatchTouchEvent(MotionEvent event) {
+            int action = event.getActionMasked();
+            switch (action) {
+                case MotionEvent.ACTION_DOWN:
+                    if (mainScroll != null) mainScroll.onDayListTouchStart(this);
+                    rebaseGesture(event, event.getActionIndex());
+                    break;
+                case MotionEvent.ACTION_POINTER_DOWN:
+                    rebaseGesture(event, event.getActionIndex());
+                    break;
+                case MotionEvent.ACTION_POINTER_UP:
+                    rebaseAfterPointerUp(event);
+                    break;
+                case MotionEvent.ACTION_MOVE:
+                    int index = event.findPointerIndex(activePointerId);
+                    if (index < 0 && event.getPointerCount() > 0) {
+                        rebaseGesture(event, 0);
+                        break;
+                    }
+                    if (index >= 0) {
+                        float dx = event.getX(index) - downX;
+                        float currentY = event.getY(index);
+                        float dy = currentY - downY;
+                        if (lockedAxis == AXIS_UNDECIDED
+                                && Math.max(Math.abs(dx), Math.abs(dy)) > touchSlop) {
+                            lockedAxis = Math.abs(dx) > Math.abs(dy)
+                                    ? AXIS_HORIZONTAL : AXIS_VERTICAL;
+                        }
+                        if (lockedAxis == AXIS_VERTICAL) {
+                            float stepY = currentY - lastY;
+                            if (stepY != 0f) verticalDirection = stepY < 0f ? 1 : -1;
+                            allowParentIntercept(!canScrollVertically(verticalDirection));
+                        } else if (lockedAxis == AXIS_HORIZONTAL) {
+                            // The hourly strip claims horizontal drags; a day row can still
+                            // hand a horizontal drag to the forecast page switcher.
+                            allowParentIntercept(true);
+                        }
+                        lastY = currentY;
+                    }
+                    break;
+                default:
+                    break;
+            }
+
+            boolean handled = super.dispatchTouchEvent(event);
+            if (action == MotionEvent.ACTION_UP || action == MotionEvent.ACTION_CANCEL) {
+                activePointerId = MotionEvent.INVALID_POINTER_ID;
+                lockedAxis = AXIS_UNDECIDED;
+                verticalDirection = 0;
+                if (mainScroll != null) mainScroll.onDayListTouchEnd(this);
+                allowParentIntercept(true);
+            }
+            return handled;
+        }
+
+        @Override
+        public void requestDisallowInterceptTouchEvent(boolean disallow) {
+            super.requestDisallowInterceptTouchEvent(disallow);
+            if (!disallow && lockedAxis == AXIS_VERTICAL
+                    && canScrollVertically(verticalDirection)) {
+                // The hourly strip released a vertical drag. Let this list intercept
+                // the next move while keeping the page scroller out of that gesture.
+                allowParentIntercept(false);
+            }
+        }
+
+        private void rebaseGesture(MotionEvent event, int index) {
+            if (index < 0 || index >= event.getPointerCount()) {
+                activePointerId = MotionEvent.INVALID_POINTER_ID;
+                return;
+            }
+            activePointerId = event.getPointerId(index);
+            downX = event.getX(index);
+            downY = event.getY(index);
+            lastY = downY;
+            lockedAxis = AXIS_UNDECIDED;
+            verticalDirection = 0;
+        }
+
+        private void rebaseAfterPointerUp(MotionEvent event) {
+            if (event.getPointerId(event.getActionIndex()) != activePointerId) return;
+            int replacement = event.getActionIndex() == 0 ? 1 : 0;
+            if (replacement < event.getPointerCount()) rebaseGesture(event, replacement);
+            else activePointerId = MotionEvent.INVALID_POINTER_ID;
+        }
+
+        private void allowParentIntercept(boolean allow) {
+            if (getParent() != null) {
+                getParent().requestDisallowInterceptTouchEvent(!allow);
+            }
+        }
+    }
+
     final class GestureHorizontalScrollView extends HorizontalScrollView {
         private static final int AXIS_UNDECIDED = 0;
         private static final int AXIS_HORIZONTAL = 1;
@@ -249,17 +397,20 @@ abstract class WeatherInteractionViewsActivity extends WeatherVisualEffectsActiv
             switch (action) {
                 case MotionEvent.ACTION_DOWN:
                     rebaseGesture(event, event.getActionIndex());
-                    setParentInterceptDisallowed(true);
+                    // The bounded day list and page scroller choose who owns a vertical
+                    // drag on its first MOVE. Horizontal drags are claimed below.
+                    setParentInterceptDisallowed(!insideDayList());
                     break;
                 case MotionEvent.ACTION_POINTER_DOWN:
                     setParentInterceptDisallowed(false);
                     rebaseGesture(event, event.getActionIndex());
-                    setParentInterceptDisallowed(true);
+                    setParentInterceptDisallowed(!insideDayList());
                     break;
                 case MotionEvent.ACTION_POINTER_UP:
                     setParentInterceptDisallowed(false);
                     rebaseAfterPointerUp(event);
-                    setParentInterceptDisallowed(activePointerId != MotionEvent.INVALID_POINTER_ID);
+                    setParentInterceptDisallowed(activePointerId != MotionEvent.INVALID_POINTER_ID
+                            && !insideDayList());
                     break;
                 case MotionEvent.ACTION_MOVE:
                     int pointerIndex = event.findPointerIndex(activePointerId);
@@ -336,113 +487,14 @@ abstract class WeatherInteractionViewsActivity extends WeatherVisualEffectsActiv
                 getParent().requestDisallowInterceptTouchEvent(disallow);
             }
         }
-    }
 
-    final class GestureVerticalScrollView extends ScrollView {
-        private final int touchSlop;
-        private float downX;
-        private float downY;
-        private int activePointerId = MotionEvent.INVALID_POINTER_ID;
-
-        GestureVerticalScrollView(Context context) {
-            super(context);
-            touchSlop = ViewConfiguration.get(context).getScaledTouchSlop();
-            setOverScrollMode(View.OVER_SCROLL_ALWAYS);
-        }
-
-        @Override
-        public boolean dispatchTouchEvent(MotionEvent event) {
-            final int action = event.getActionMasked();
-            switch (action) {
-                case MotionEvent.ACTION_DOWN:
-                    rebaseGesture(event, event.getActionIndex());
-                    requestParentForCurrentRange();
-                    break;
-                case MotionEvent.ACTION_POINTER_DOWN:
-                    setParentInterceptDisallowed(false);
-                    rebaseGesture(event, event.getActionIndex());
-                    requestParentForCurrentRange();
-                    break;
-                case MotionEvent.ACTION_POINTER_UP:
-                    setParentInterceptDisallowed(false);
-                    rebaseAfterPointerUp(event);
-                    requestParentForCurrentRange();
-                    break;
-                case MotionEvent.ACTION_MOVE:
-                    int pointerIndex = event.findPointerIndex(activePointerId);
-                    if (pointerIndex < 0 && event.getPointerCount() > 0) {
-                        rebaseGesture(event, 0);
-                        requestParentForCurrentRange();
-                        break;
-                    }
-                    if (pointerIndex >= 0) {
-                        float dx = Math.abs(event.getX(pointerIndex) - downX);
-                        float signedDy = event.getY(pointerIndex) - downY;
-                        float dy = Math.abs(signedDy);
-                        if (dy > touchSlop && dy > dx) {
-                            int direction = signedDy < 0 ? 1 : -1;
-                            // While the inner list can consume motion it keeps the gesture. At an
-                            // edge, ownership returns to the page; a fling that reaches the edge is
-                            // still absorbed by the platform stretch EdgeEffect before settling.
-                            setParentInterceptDisallowed(canScrollVertically(direction));
-                        } else if (dx > touchSlop) {
-                            setParentInterceptDisallowed(false);
-                        }
-                    }
-                    break;
-                default:
-                    break;
+        private boolean insideDayList() {
+            android.view.ViewParent ancestor = getParent();
+            while (ancestor != null) {
+                if (ancestor instanceof DayListScrollView) return true;
+                ancestor = ancestor.getParent();
             }
-
-            boolean handled = super.dispatchTouchEvent(event);
-            if (action == MotionEvent.ACTION_UP || action == MotionEvent.ACTION_CANCEL) {
-                resetGestureState();
-            }
-            return handled;
-        }
-
-        private void rebaseGesture(MotionEvent event, int pointerIndex) {
-            if (pointerIndex < 0 || pointerIndex >= event.getPointerCount()) {
-                activePointerId = MotionEvent.INVALID_POINTER_ID;
-                return;
-            }
-            activePointerId = event.getPointerId(pointerIndex);
-            downX = event.getX(pointerIndex);
-            downY = event.getY(pointerIndex);
-        }
-
-        private void rebaseAfterPointerUp(MotionEvent event) {
-            int liftedIndex = event.getActionIndex();
-            int replacement = -1;
-            for (int i = 0; i < event.getPointerCount(); i++) {
-                if (i != liftedIndex) {
-                    replacement = i;
-                    break;
-                }
-            }
-            if (replacement >= 0) {
-                rebaseGesture(event, replacement);
-            } else {
-                activePointerId = MotionEvent.INVALID_POINTER_ID;
-            }
-        }
-
-        private void requestParentForCurrentRange() {
-            setParentInterceptDisallowed(
-                    activePointerId != MotionEvent.INVALID_POINTER_ID
-                            && (canScrollVertically(1) || canScrollVertically(-1)));
-        }
-
-        private void resetGestureState() {
-            activePointerId = MotionEvent.INVALID_POINTER_ID;
-            setParentInterceptDisallowed(false);
-            invalidate();
-        }
-
-        private void setParentInterceptDisallowed(boolean disallow) {
-            if (getParent() != null) {
-                getParent().requestDisallowInterceptTouchEvent(disallow);
-            }
+            return false;
         }
     }
 

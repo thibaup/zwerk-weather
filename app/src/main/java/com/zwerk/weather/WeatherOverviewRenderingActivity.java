@@ -1529,7 +1529,14 @@ abstract class WeatherOverviewRenderingActivity extends MinuteForecastRenderingA
                 + temperatureUnitWord() + ". Select a day for hourly details and scene preview.");
         chartScroller.addView(chart, new FrameLayout.LayoutParams(chartWidth, chartHeight));
 
-        GestureVerticalScrollView list = buildTenDayList(days, zone, details);
+        DayListScrollView list = new DayListScrollView(this);
+        list.setFillViewport(false);
+        list.setVerticalScrollBarEnabled(true);
+        list.setClipToPadding(false);
+        list.setContentDescription("Scrollable 10-day forecast list");
+        list.addView(buildTenDayList(days, zone, details),
+                new ScrollView.LayoutParams(-1, -2));
+        details.setListScroller(list);
         FrameLayout modeHost = new FrameLayout(this);
         FrameLayout.LayoutParams chartHostLp = new FrameLayout.LayoutParams(-1, chartHeight);
         chartHostLp.topMargin = dp(4);
@@ -1636,27 +1643,19 @@ abstract class WeatherOverviewRenderingActivity extends MinuteForecastRenderingA
         return states;
     }
 
-    GestureVerticalScrollView buildTenDayList(
+    LinearLayout buildTenDayList(
             JSONArray days,
             ZoneId zone,
             DayDetailCoordinator details) {
-        GestureVerticalScrollView scroller = new GestureVerticalScrollView(this);
-        scroller.setFillViewport(false);
-        scroller.setVerticalScrollBarEnabled(true);
-        scroller.setOverScrollMode(View.OVER_SCROLL_ALWAYS);
-        scroller.setClipToPadding(false);
-        scroller.setPadding(0, dp(3), 0, dp(3));
-        scroller.setContentDescription("Scrollable 10-day forecast list");
-
         LinearLayout list = new LinearLayout(this);
         list.setOrientation(LinearLayout.VERTICAL);
-        scroller.addView(list, new ScrollView.LayoutParams(-1, -2));
+        list.setPadding(0, dp(3), 0, dp(3));
 
         if (days == null || days.length() == 0) {
             TextView empty = text("Daily forecast unavailable", 14, false, SOFT_WHITE);
             empty.setPadding(dp(4), dp(18), dp(4), dp(18));
             list.addView(empty);
-            return scroller;
+            return list;
         }
 
         int count = Math.min(10, days.length());
@@ -1737,7 +1736,7 @@ abstract class WeatherOverviewRenderingActivity extends MinuteForecastRenderingA
                 list.addView(divider, new LinearLayout.LayoutParams(-1, 1));
             }
         }
-        return scroller;
+        return list;
     }
 
     final class DayDetailCoordinator implements HourlyCoverageCoordinator {
@@ -1747,6 +1746,7 @@ abstract class WeatherOverviewRenderingActivity extends MinuteForecastRenderingA
         private final String hourlyDiagnostic;
         private final LinearLayout lineDetailHost;
         private final ArrayList<LinearLayout> listDetailHosts = new ArrayList<>();
+        private DayListScrollView listScroller;
         private int expandedDay = -1;
         private boolean listMode;
 
@@ -1766,6 +1766,10 @@ abstract class WeatherOverviewRenderingActivity extends MinuteForecastRenderingA
         void registerListDetailHost(int index, LinearLayout host) {
             while (listDetailHosts.size() <= index) listDetailHosts.add(null);
             listDetailHosts.set(index, host);
+        }
+
+        void setListScroller(DayListScrollView scroller) {
+            listScroller = scroller;
         }
 
         void setListMode(boolean listMode) {
@@ -1810,7 +1814,11 @@ abstract class WeatherOverviewRenderingActivity extends MinuteForecastRenderingA
         public void onHourlyCoverageChanged() {
             if (expandedDay < 0) return;
             int pageScrollY = mainScroll == null ? 0 : mainScroll.getScrollY();
+            int listScrollY = listScroller == null ? 0 : listScroller.getScrollY();
             renderExpandedDay();
+            if (listScroller != null) {
+                listScroller.post(() -> listScroller.scrollTo(0, listScrollY));
+            }
             if (mainScroll != null) {
                 mainScroll.post(() -> mainScroll.scrollTo(0, pageScrollY));
             }
@@ -2046,6 +2054,28 @@ abstract class WeatherOverviewRenderingActivity extends MinuteForecastRenderingA
     JSONObject airQualityForecastForWeatherHour(JSONObject weatherHour) {
         if (!weatherPreferences.airQualityEnabled() || weatherHour == null) return null;
         OptionalDataState state = optionalDataStateForCurrentScope(true);
+        if (state != null && state.details != null
+                && state.details.optBoolean("_openMeteo", false)) {
+            JSONObject raw = state.details.optJSONObject("raw");
+            JSONObject hourly = raw == null ? null : raw.optJSONObject("hourly");
+            JSONArray times = hourly == null ? null : hourly.optJSONArray("time");
+            ZoneId zone = responseZone(lastCurrentWeather, lastHourlyWeather, lastDailyWeather);
+            Instant target = weatherHourInstant(weatherHour, zone);
+            if (times == null || target == null) return null;
+            String localHour = target.atZone(zone).toLocalDateTime()
+                    .truncatedTo(ChronoUnit.HOURS).toString();
+            String key = "European AQI".equals(state.details.optString("scale", ""))
+                    ? "european_aqi" : "us_aqi";
+            for (int i = 0; i < times.length(); i++) {
+                if (!localHour.equals(times.optString(i, ""))) continue;
+                Double value = OpenMeteoEnvironmentClient.numberAt(hourly, key, i);
+                if (value == null) return null;
+                JSONObject index = new JSONObject();
+                try { index.put("aqi", Math.round(value)); } catch (Exception ignored) { }
+                return index;
+            }
+            return null;
+        }
         JSONObject forecast = state == null || state.details == null
                 ? null : state.details.optJSONObject("forecast");
         JSONArray predictions = forecast == null ? null : forecast.optJSONArray("hourlyForecasts");
@@ -2190,7 +2220,7 @@ abstract class WeatherOverviewRenderingActivity extends MinuteForecastRenderingA
         if (airQualityEnabled()) {
             OptionalDataState state = optionalDataStateForCurrentScope(true);
             addOverviewTile(tiles, "air_quality", optionalDetailTile(
-                    "Air quality", state, "air", "Universal AQI loading", true));
+                    "Air quality", state, "air", "Air quality loading", true));
         }
         if (pollenEnabled()) {
             OptionalDataState state = optionalDataStateForCurrentScope(false);
@@ -2377,17 +2407,34 @@ abstract class WeatherOverviewRenderingActivity extends MinuteForecastRenderingA
         LinearLayout panel = new LinearLayout(this);
         panel.setOrientation(LinearLayout.VERTICAL);
         panel.setPadding(horizontalPadding, dp(17), horizontalPadding, dp(16));
-        panel.setBackground(newEnvironmentalGlassDrawable(dp(26), false));
+        panel.setBackground(environmentDialogBackground());
         scroller.addView(panel, new ScrollView.LayoutParams(-1, -2));
 
+        LinearLayout titleRow = new LinearLayout(this);
+        titleRow.setGravity(Gravity.CENTER_VERTICAL);
         TextView title = text(label, 22, true, WHITE);
         title.setAccessibilityHeading(true);
-        title.setPadding(0, 0, 0, 0);
-        panel.addView(title);
+        titleRow.addView(title, new LinearLayout.LayoutParams(0, -2, 1f));
+        boolean openMeteo = state.details != null
+                && state.details.optBoolean("_openMeteo", false);
+        TextView source = environmentBadge(openMeteo ? "OPEN-METEO" : "GOOGLE",
+                environmentAccentColor());
+        titleRow.addView(source);
+        panel.addView(titleRow);
+        TextView subtitle = text(airQuality
+                ? "Current conditions and hourly outlook"
+                : "Daily levels and pollen types", 11, false, SOFT_WHITE);
+        LinearLayout.LayoutParams subtitleLp = new LinearLayout.LayoutParams(-1, -2);
+        subtitleLp.topMargin = dp(3);
+        subtitleLp.bottomMargin = dp(8);
+        panel.addView(subtitle, subtitleLp);
 
         int sceneAccent = environmentAccentColor();
 
-        if (airQuality) addAirQualityDialogContent(panel, state.details);
+        if (openMeteo) {
+            if (airQuality) addOpenMeteoAirQualityDetails(panel, state.details);
+            else addOpenMeteoPollenDetails(panel, state.details);
+        } else if (airQuality) addAirQualityDialogContent(panel, state.details);
         else addPollenDialogContent(panel, state.details);
 
         Button close = button("Close");
@@ -2422,6 +2469,199 @@ abstract class WeatherOverviewRenderingActivity extends MinuteForecastRenderingA
         }
     }
 
+    GradientDrawable environmentDialogBackground() {
+        String scene = displayedScene == null ? "" : displayedScene;
+        int top = "night".equals(scene) ? Color.rgb(27, 51, 89)
+                : "rain".equals(scene) || "thunder".equals(scene)
+                ? Color.rgb(43, 67, 91) : Color.rgb(45, 93, 151);
+        int bottom = "night".equals(scene) ? Color.rgb(12, 28, 55)
+                : "rain".equals(scene) || "thunder".equals(scene)
+                ? Color.rgb(24, 42, 65) : Color.rgb(24, 57, 102);
+        GradientDrawable background = new GradientDrawable(
+                GradientDrawable.Orientation.TOP_BOTTOM, new int[]{top, bottom});
+        background.setCornerRadius(dp(26));
+        background.setStroke(dp(1), Color.argb(78, 255, 255, 255));
+        return background;
+    }
+
+    void addOpenMeteoAirQualityDetails(LinearLayout panel, JSONObject details) {
+        JSONObject raw = details.optJSONObject("raw");
+        JSONObject current = raw == null ? null : raw.optJSONObject("current");
+        JSONObject hourly = raw == null ? null : raw.optJSONObject("hourly");
+        Double european = OpenMeteoEnvironmentClient.number(current, "european_aqi");
+        Double us = OpenMeteoEnvironmentClient.number(current, "us_aqi");
+        boolean useEuropean = european != null;
+        Double score = useEuropean ? european : us;
+        String scale = useEuropean ? "European AQI" : "US AQI";
+        String category = score == null ? "Unavailable" : useEuropean
+                ? OpenMeteoEnvironmentClient.europeanCategory((int) Math.round(score))
+                : OpenMeteoEnvironmentClient.usCategory((int) Math.round(score));
+        panel.addView(airQualityHero(score == null ? "—" : Long.toString(Math.round(score)),
+                category, scale, "", airQualityCategoryColor(category)));
+
+        String[] keys = {"pm2_5", "pm10", "ozone", "nitrogen_dioxide",
+                "sulphur_dioxide", "carbon_monoxide"};
+        String[] labels = {"PM2.5", "PM10", "Ozone", "Nitrogen dioxide",
+                "Sulphur dioxide", "Carbon monoxide"};
+        ArrayList<View> pollutants = new ArrayList<>();
+        for (int i = 0; i < keys.length; i++) {
+            Double amount = OpenMeteoEnvironmentClient.number(current, keys[i]);
+            if (amount != null) pollutants.add(environmentMetricRow(labels[i],
+                    OpenMeteoEnvironmentClient.format(amount) + " µg/m³"));
+        }
+        if (!pollutants.isEmpty()) {
+            panel.addView(sectionHeading("POLLUTANTS"));
+            addEnvironmentResponsiveCards(panel, pollutants);
+        }
+
+        JSONArray times = hourly == null ? null : hourly.optJSONArray("time");
+        String currentTime = current == null ? "" : current.optString("time", "");
+        if (times == null) return;
+        LinearLayout row = new LinearLayout(this);
+        row.setOrientation(LinearLayout.HORIZONTAL);
+        int count = 0;
+        String aqiKey = useEuropean ? "european_aqi" : "us_aqi";
+        for (int i = 0; i < times.length() && count < 24; i++) {
+            String time = times.optString(i, "");
+            if (!currentTime.isEmpty() && time.compareTo(currentTime) < 0) continue;
+            Double value = OpenMeteoEnvironmentClient.numberAt(hourly, aqiKey, i);
+            if (value == null) continue;
+            int rounded = (int) Math.round(value);
+            JSONObject index = new JSONObject();
+            try {
+                index.put("aqi", rounded);
+                index.put("category", useEuropean
+                        ? OpenMeteoEnvironmentClient.europeanCategory(rounded)
+                        : OpenMeteoEnvironmentClient.usCategory(rounded));
+            } catch (Exception ignored) { }
+            String label = time.length() >= 16 ? time.substring(11, 16) : time;
+            row.addView(airQualityForecastCell(label, index));
+            count++;
+        }
+        if (count > 0) {
+            panel.addView(sectionHeading("NEXT 24 HOURS"));
+            GestureHorizontalScrollView scroller = new GestureHorizontalScrollView(this);
+            scroller.setHorizontalScrollBarEnabled(false);
+            scroller.addView(row, new HorizontalScrollView.LayoutParams(-2, -2));
+            panel.addView(scroller, new LinearLayout.LayoutParams(-1, dp(118)));
+        }
+    }
+
+    void addOpenMeteoPollenDetails(LinearLayout panel, JSONObject details) {
+        JSONObject raw = details.optJSONObject("raw");
+        JSONObject hourly = raw == null ? null : raw.optJSONObject("hourly");
+        JSONArray times = hourly == null ? null : hourly.optJSONArray("time");
+        if (times == null || times.length() == 0) {
+            panel.addView(environmentDetailBlock("Pollen", "No forecast available."));
+            return;
+        }
+        String[] keys = OpenMeteoEnvironmentClient.pollenKeys();
+        String[] labels = OpenMeteoEnvironmentClient.pollenLabels();
+        java.util.LinkedHashMap<String, double[]> days = new java.util.LinkedHashMap<>();
+        for (int i = 0; i < times.length(); i++) {
+            String time = times.optString(i, "");
+            if (time.length() < 10) continue;
+            String date = time.substring(0, 10);
+            double[] maxima = days.get(date);
+            if (maxima == null) {
+                if (days.size() >= 4) break;
+                maxima = new double[keys.length];
+                java.util.Arrays.fill(maxima, Double.NaN);
+                days.put(date, maxima);
+            }
+            for (int j = 0; j < keys.length; j++) {
+                Double value = OpenMeteoEnvironmentClient.numberAt(hourly, keys[j], i);
+                if (value != null && (Double.isNaN(maxima[j]) || value > maxima[j])) {
+                    maxima[j] = value;
+                }
+            }
+        }
+        int dayIndex = 0;
+        for (java.util.Map.Entry<String, double[]> day : days.entrySet()) {
+            String label = day.getKey();
+            try {
+                label = java.time.LocalDate.parse(label).format(
+                        java.time.format.DateTimeFormatter.ofPattern("EEE d MMM", Locale.getDefault()));
+            } catch (Exception ignored) { }
+            double[] maxima = day.getValue();
+            double peak = Double.NaN;
+            String dominant = "";
+            for (int i = 0; i < keys.length; i++) {
+                if (!Double.isNaN(maxima[i]) && (Double.isNaN(peak) || maxima[i] > peak)) {
+                    peak = maxima[i];
+                    dominant = labels[i];
+                }
+            }
+            LinearLayout dayCard = new LinearLayout(this);
+            dayCard.setOrientation(LinearLayout.VERTICAL);
+            dayCard.setPadding(dp(13), dp(12), dp(13), dp(12));
+            dayCard.setBackground(newEnvironmentalGlassDrawable(dp(19), false));
+            LinearLayout header = new LinearLayout(this);
+            header.setGravity(Gravity.CENTER_VERTICAL);
+            LinearLayout copy = new LinearLayout(this);
+            copy.setOrientation(LinearLayout.VERTICAL);
+            TextView dateView = text(label, 16, true, WHITE);
+            dateView.setAccessibilityHeading(true);
+            copy.addView(dateView);
+            TextView summary = text(dominant.isEmpty()
+                    ? "No pollen reading" : "Highest reading · " + dominant,
+                    10, false, SOFT_WHITE);
+            summary.setPadding(0, dp(2), 0, 0);
+            copy.addView(summary);
+            TextView toggleHint = text(dayIndex == 0 ? "Hide details ↑" : "Show details ↓",
+                    10, false, environmentAccentColor());
+            toggleHint.setPadding(0, dp(4), 0, 0);
+            copy.addView(toggleHint);
+            header.addView(copy, new LinearLayout.LayoutParams(0, -2, 1f));
+            header.addView(environmentBadge(Double.isNaN(peak) ? "No data"
+                    : OpenMeteoEnvironmentClient.format(peak) + " grains/m³",
+                    environmentAccentColor()));
+            dayCard.addView(header);
+
+            LinearLayout dayDetails = new LinearLayout(this);
+            dayDetails.setOrientation(LinearLayout.VERTICAL);
+            dayCard.addView(dayDetails);
+            ArrayList<View> cards = new ArrayList<>();
+            for (int i = 0; i < keys.length; i++) {
+                if (!Double.isNaN(maxima[i])) {
+                    cards.add(environmentMetricRow(labels[i],
+                            OpenMeteoEnvironmentClient.format(maxima[i]) + " grains/m³"));
+                }
+            }
+            if (cards.isEmpty()) dayDetails.addView(environmentDetailBlock("Pollen", "No data."));
+            else {
+                LinearLayout.LayoutParams detailsLp = new LinearLayout.LayoutParams(-1, -2);
+                detailsLp.topMargin = dp(10);
+                LinearLayout metrics = new LinearLayout(this);
+                metrics.setOrientation(LinearLayout.VERTICAL);
+                dayDetails.addView(metrics, detailsLp);
+                addEnvironmentResponsiveCards(metrics, cards);
+            }
+            dayDetails.setVisibility(dayIndex == 0 ? View.VISIBLE : View.GONE);
+            String dayDescription = label + (Double.isNaN(peak) ? ", no data"
+                    : ", highest reading " + OpenMeteoEnvironmentClient.format(peak)
+                            + " grains per cubic meter, " + dominant);
+            header.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_YES);
+            header.setAccessibilityHeading(true);
+            makeChildrenUnimportant(header);
+            header.setClickable(true);
+            header.setFocusable(true);
+            header.setContentDescription(dayDescription + (dayIndex == 0
+                    ? ", tap to hide details" : ", tap to show details"));
+            header.setOnClickListener(v -> {
+                boolean expanded = dayDetails.getVisibility() != View.VISIBLE;
+                dayDetails.setVisibility(expanded ? View.VISIBLE : View.GONE);
+                toggleHint.setText(expanded ? "Hide details ↑" : "Show details ↓");
+                header.setContentDescription(dayDescription
+                        + (expanded ? ", tap to hide details" : ", tap to show details"));
+            });
+            LinearLayout.LayoutParams dayLp = new LinearLayout.LayoutParams(-1, -2);
+            dayLp.topMargin = dp(dayIndex == 0 ? 6 : 9);
+            panel.addView(dayCard, dayLp);
+            dayIndex++;
+        }
+    }
+
     void addAirQualityDialogContent(LinearLayout panel, JSONObject details) {
         JSONObject current = details == null ? null : details.optJSONObject("current");
         JSONObject index = universalAqiIndex(current == null ? null : current.optJSONArray("indexes"));
@@ -2447,9 +2687,8 @@ abstract class WeatherOverviewRenderingActivity extends MinuteForecastRenderingA
                 String pollutantName = firstNonEmpty(
                         stringValue(pollutant, "displayName"),
                         stringValue(pollutant, "code").toUpperCase(Locale.ROOT));
-                String units = stringValue(concentration, "units")
-                        .replace("MICROGRAMS_PER_CUBIC_METER", "µg/m³")
-                        .replace('_', ' ').toLowerCase(Locale.getDefault());
+                String units = environmentConcentrationUnit(
+                        stringValue(concentration, "units"));
                 String value = trimNumber(concentrationValue)
                         + (units.isEmpty() ? "" : " " + units);
                 View metric = environmentMetricRow(pollutantName, value);
@@ -2549,7 +2788,9 @@ abstract class WeatherOverviewRenderingActivity extends MinuteForecastRenderingA
 
     void addEnvironmentResponsiveCards(LinearLayout panel, ArrayList<View> cards) {
         if (panel == null || cards == null || cards.isEmpty()) return;
-        boolean twoColumns = getResources().getConfiguration().screenWidthDp >= 410;
+        android.content.res.Configuration configuration = getResources().getConfiguration();
+        boolean twoColumns = configuration.screenWidthDp >= 360
+                && configuration.fontScale <= 1.2f;
         if (!twoColumns) {
             for (int i = 0; i < cards.size(); i++) {
                 LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-1, -2);
@@ -2635,28 +2876,35 @@ abstract class WeatherOverviewRenderingActivity extends MinuteForecastRenderingA
             TextView summary = text(dailySummary, 10, false, SOFT_WHITE);
             summary.setPadding(0, dp(2), dp(6), 0);
             headerCopy.addView(summary);
+            TextView toggleHint = text(i == 0 ? "Hide details ↑" : "Show details ↓",
+                    10, false, environmentAccentColor());
+            toggleHint.setPadding(0, dp(4), 0, 0);
+            headerCopy.addView(toggleHint);
             dayHeader.addView(headerCopy, new LinearLayout.LayoutParams(0, -2, 1f));
             TextView badge = environmentBadge(
                     highestValue < 0 ? "No index" : "UPI " + highestValue,
                     severityColor);
             dayHeader.addView(badge);
-            dayHeader.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_YES);
-            dayHeader.setAccessibilityHeading(true);
-            dayHeader.setContentDescription(dateLabel + ", "
+            String dayDescription = dateLabel + ", "
                     + (highestValue < 0
                             ? "pollen index unavailable"
                             : "highest Universal Pollen Index " + highestValue
                                     + (highestCategory.isEmpty()
-                                            ? "" : ", " + highestCategory)));
+                                            ? "" : ", " + highestCategory));
+            dayHeader.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_YES);
+            dayHeader.setAccessibilityHeading(true);
             makeChildrenUnimportant(dayHeader);
             dayCard.addView(dayHeader);
 
             LinearLayout.LayoutParams severityLp = new LinearLayout.LayoutParams(-1, dp(4));
             severityLp.topMargin = dp(9);
             dayCard.addView(environmentSeverityTrack(highestValue, 5, severityColor), severityLp);
+            LinearLayout dayDetails = new LinearLayout(this);
+            dayDetails.setOrientation(LinearLayout.VERTICAL);
+            dayCard.addView(dayDetails);
 
             if (types != null && types.length() > 0) {
-                dayCard.addView(environmentMiniHeading("POLLEN TYPES"));
+                dayDetails.addView(environmentMiniHeading("POLLEN TYPES"));
                 boolean typeAdded = false;
                 for (int j = 0; j < types.length(); j++) {
                     JSONObject type = types.optJSONObject(j);
@@ -2668,8 +2916,8 @@ abstract class WeatherOverviewRenderingActivity extends MinuteForecastRenderingA
                     if (typeIndex == null) continue;
                     int value = typeIndex.optInt("value", -1);
                     String category = stringValue(typeIndex, "category");
-                    if (typeAdded) dayCard.addView(environmentDivider());
-                    dayCard.addView(pollenTypeRow(typeName, value, category));
+                    if (typeAdded) dayDetails.addView(environmentDivider());
+                    dayDetails.addView(pollenTypeRow(typeName, value, category));
                     typeAdded = true;
 
                     JSONArray recs = type.optJSONArray("healthRecommendations");
@@ -2703,17 +2951,17 @@ abstract class WeatherOverviewRenderingActivity extends MinuteForecastRenderingA
                             plantName, plantValue, category, inSeason));
                 }
                 if (!plantRows.isEmpty()) {
-                    dayCard.addView(environmentMiniHeading("ACTIVE PLANTS"));
+                    dayDetails.addView(environmentMiniHeading("ACTIVE PLANTS"));
                     for (int j = 0; j < plantRows.size(); j++) {
-                        if (j > 0) dayCard.addView(environmentDivider());
-                        dayCard.addView(plantRows.get(j));
+                        if (j > 0) dayDetails.addView(environmentDivider());
+                        dayDetails.addView(plantRows.get(j));
                     }
                     activePlantCount = plantRows.size();
                 }
             }
 
             if (!recommendation.isEmpty()) {
-                dayCard.addView(environmentInset(
+                dayDetails.addView(environmentInset(
                         recommendationType.isEmpty() ? "Health guidance"
                                 : recommendationType + " guidance",
                         recommendation));
@@ -2722,8 +2970,21 @@ abstract class WeatherOverviewRenderingActivity extends MinuteForecastRenderingA
                 TextView empty = text("No in-season pollen index.", 12, false, SOFT_WHITE);
                 LinearLayout.LayoutParams emptyLp = new LinearLayout.LayoutParams(-1, -2);
                 emptyLp.topMargin = dp(10);
-                dayCard.addView(empty, emptyLp);
+                dayDetails.addView(empty, emptyLp);
             }
+
+            dayDetails.setVisibility(i == 0 ? View.VISIBLE : View.GONE);
+            dayHeader.setClickable(true);
+            dayHeader.setFocusable(true);
+            dayHeader.setContentDescription(dayDescription
+                    + (i == 0 ? ", tap to hide details" : ", tap to show details"));
+            dayHeader.setOnClickListener(v -> {
+                boolean expanded = dayDetails.getVisibility() != View.VISIBLE;
+                dayDetails.setVisibility(expanded ? View.VISIBLE : View.GONE);
+                toggleHint.setText(expanded ? "Hide details ↑" : "Show details ↓");
+                dayHeader.setContentDescription(dayDescription
+                        + (expanded ? ", tap to hide details" : ", tap to show details"));
+            });
 
             LinearLayout.LayoutParams dayLp = new LinearLayout.LayoutParams(-1, -2);
             dayLp.topMargin = dp(i == 0 ? 7 : 9);
@@ -2732,25 +2993,37 @@ abstract class WeatherOverviewRenderingActivity extends MinuteForecastRenderingA
     }
 
     View airQualityHero(JSONObject index) {
+        String dominant = index == null ? ""
+                : prettyEnum(stringValue(index, "dominantPollutant"));
+        String category = index == null ? "Current air quality unavailable"
+                : firstNonEmpty(stringValue(index, "category"), "Current air quality");
+        return airQualityHero(aqiDisplayValue(index), category,
+                "Universal AQI", dominant, airQualityColor(index));
+    }
+
+    View airQualityHero(String scoreValue, String category, String scale,
+            String dominant, int accent) {
         LinearLayout hero = new LinearLayout(this);
         hero.setOrientation(LinearLayout.HORIZONTAL);
         hero.setGravity(Gravity.CENTER_VERTICAL);
         hero.setPadding(dp(13), dp(13), dp(13), dp(13));
         hero.setBackground(newEnvironmentalGlassDrawable(dp(19), false));
 
-        int accent = airQualityColor(index);
         LinearLayout score = new LinearLayout(this);
         score.setOrientation(LinearLayout.VERTICAL);
         score.setGravity(Gravity.CENTER);
         GradientDrawable scoreBackground = roundedBg(Color.argb(
                 62, Color.red(accent), Color.green(accent), Color.blue(accent)), dp(16));
         score.setBackground(scoreBackground);
-        TextView value = text(aqiDisplayValue(index).isEmpty() ? "—" : aqiDisplayValue(index),
+        String displayScore = scoreValue == null || scoreValue.isEmpty() ? "—" : scoreValue;
+        TextView value = text(displayScore,
                 30, true, WHITE);
         value.setGravity(Gravity.CENTER);
         value.setIncludeFontPadding(false);
         score.addView(value);
-        TextView aqi = text("UAQI", 9, true, WHITE);
+        String shortScale = "European AQI".equals(scale) ? "EU AQI"
+                : "US AQI".equals(scale) ? "US AQI" : "UAQI";
+        TextView aqi = text(shortScale, 9, true, WHITE);
         aqi.setAlpha(0.86f);
         aqi.setGravity(Gravity.CENTER);
         score.addView(aqi);
@@ -2762,17 +3035,14 @@ abstract class WeatherOverviewRenderingActivity extends MinuteForecastRenderingA
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) statusLabel.setLetterSpacing(0.08f);
         copy.addView(statusLabel);
 
-        String category = index == null ? "Current air quality unavailable"
-                : firstNonEmpty(stringValue(index, "category"), "Current air quality");
-        View status = environmentStatusLine(category, accent, 16, true);
+        String safeCategory = firstNonEmpty(category, "Current air quality unavailable");
+        View status = environmentStatusLine(safeCategory, accent, 16, true);
         LinearLayout.LayoutParams statusLp = new LinearLayout.LayoutParams(-1, -2);
         statusLp.topMargin = dp(3);
         copy.addView(status, statusLp);
 
-        String dominant = index == null ? ""
-                : prettyEnum(stringValue(index, "dominantPollutant"));
         TextView detail = text(dominant.isEmpty()
-                ? "Universal Air Quality Index"
+                ? scale
                 : "Main pollutant · " + dominant, 11, false, SOFT_WHITE);
         detail.setPadding(0, dp(4), 0, 0);
         detail.setMaxLines(2);
@@ -2781,11 +3051,10 @@ abstract class WeatherOverviewRenderingActivity extends MinuteForecastRenderingA
         copyLp.leftMargin = dp(12);
         hero.addView(copy, copyLp);
 
-        String aqiValue = aqiDisplayValue(index);
         hero.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_YES);
-        hero.setContentDescription("Air quality index "
-                + (aqiValue.isEmpty() ? "unavailable" : aqiValue)
-                + ", " + category
+        hero.setContentDescription(scale + " "
+                + ("—".equals(displayScore) ? "unavailable" : displayScore)
+                + ", " + safeCategory
                 + (dominant.isEmpty() ? "" : ", main pollutant " + dominant));
         makeChildrenUnimportant(hero);
         LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-1, -2);
@@ -3034,6 +3303,8 @@ abstract class WeatherOverviewRenderingActivity extends MinuteForecastRenderingA
     }
 
     int airQualityColor(JSONObject index) {
+        String category = index == null ? "" : stringValue(index, "category");
+        if (!category.isEmpty()) return airQualityCategoryColor(category);
         int value = index == null ? -1 : index.optInt("aqi", -1);
         if (value < 0) return Color.rgb(157, 177, 196);
         if (value <= 20) return Color.rgb(74, 222, 128);
@@ -3042,6 +3313,30 @@ abstract class WeatherOverviewRenderingActivity extends MinuteForecastRenderingA
         if (value <= 80) return Color.rgb(251, 146, 60);
         if (value <= 100) return Color.rgb(248, 113, 113);
         return Color.rgb(192, 132, 252);
+    }
+
+    int airQualityCategoryColor(String category) {
+        String level = category == null ? "" : category.toLowerCase(Locale.ROOT);
+        if (level.contains("hazard") || level.contains("extremely"))
+            return Color.rgb(192, 132, 252);
+        if (level.contains("very poor") || level.contains("very unhealthy"))
+            return Color.rgb(248, 113, 113);
+        if (level.contains("poor") || level.contains("unhealthy"))
+            return Color.rgb(251, 146, 60);
+        if (level.contains("moderate") || level.contains("fair"))
+            return Color.rgb(250, 204, 21);
+        if (level.contains("good") || level.contains("excellent"))
+            return Color.rgb(74, 222, 128);
+        return Color.rgb(157, 177, 196);
+    }
+
+    String environmentConcentrationUnit(String raw) {
+        String unit = raw == null ? "" : raw.trim().toUpperCase(Locale.ROOT);
+        if (unit.equals("MICROGRAMS_PER_CUBIC_METER")) return "µg/m³";
+        if (unit.equals("PARTS_PER_BILLION")) return "ppb";
+        if (unit.equals("PARTS_PER_MILLION")) return "ppm";
+        if (unit.equals("MILLIGRAMS_PER_CUBIC_METER")) return "mg/m³";
+        return unit.isEmpty() ? "" : unit.replace('_', ' ').toLowerCase(Locale.getDefault());
     }
 
     int pollenColor(int value) {
@@ -3476,17 +3771,23 @@ abstract class WeatherOverviewRenderingActivity extends MinuteForecastRenderingA
     }
 
     void addAttribution() {
-        StringBuilder source = new StringBuilder("Source: Includes weather data from Google");
-        if (airQualityEnabled()) {
-            source.append("\nSource: Includes air quality data from Google");
-        }
-        if (pollenEnabled()) {
-            source.append("\nSource: Includes pollen data from Google");
-        }
+        boolean openMeteo = OpenMeteoConfig.isOpenMeteo(this);
+        StringBuilder source = new StringBuilder(openMeteo
+                ? "Weather forecast: Open-Meteo · " + OpenMeteoConfig.modelLabel(OpenMeteoConfig.model(this))
+                        + "\nhttps://open-meteo.com/ · CC BY 4.0"
+                : "Source: Includes weather data from Google");
         if (airQualityEnabled() || pollenEnabled()) {
-            source.append("\nGoogle Maps");
+            if (openMeteo) {
+                source.append("\nAir quality and pollen: Open-Meteo / CAMS ENSEMBLE");
+            } else {
+                if (airQualityEnabled()) source.append("\nSource: Includes air quality data from Google");
+                if (pollenEnabled()) source.append("\nSource: Includes pollen data from Google");
+                source.append("\nGoogle Maps");
+            }
         }
         TextView attribution = text(source.toString(), 12, false, FAINT_WHITE);
+        if (openMeteo) android.text.util.Linkify.addLinks(
+                attribution, android.text.util.Linkify.WEB_URLS);
         attribution.setGravity(Gravity.CENTER);
         attribution.setPadding(dp(4), dp(24), dp(4), dp(10));
         pageContent().addView(attribution);
@@ -3879,6 +4180,8 @@ abstract class WeatherOverviewRenderingActivity extends MinuteForecastRenderingA
 
 
     String dataAgeLabel(JSONObject current) {
+        boolean openMeteo = current != null && current.has("_openMeteo");
+        if (openMeteo) return "Open-Meteo forecast loaded";
         Instant published = parseInstant(current == null ? null : current.optString("currentTime", null));
         if (published == null) return "Google Weather data loaded";
         long minutes;

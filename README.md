@@ -1,6 +1,6 @@
 # Zwerk Weather
 
-Zwerk Weather is an open-source, ad-free Android weather app using the Google Maps Platform Weather API, powered by WeatherNext 3.
+Zwerk Weather is an open-source, ad-free Android weather app with Google Weather and Open-Meteo forecast sources.
 
 Inspired by OnePlus Weather, it includes minute precipitation forecasts, responsive widgets, optional air quality and pollen data, and animated forecast scenes.
 
@@ -19,7 +19,7 @@ Licensed under the [Apache License 2.0](LICENSE).
 
 ## WeatherNext 3
 
-Zwerk Weather uses Google's Weather API for its weather data. As of September 2026, Google states that **WeatherNext 3 powers weather experiences in the Google Maps Platform Weather API**.
+When Google Weather is selected, Zwerk Weather uses the Google Maps Platform Weather API, powered by WeatherNext 3. Open-Meteo is available without a key for noncommercial use.
 
 ## Highlights
 
@@ -29,20 +29,21 @@ Zwerk Weather uses Google's Weather API for its weather data. As of September 20
 - Optional swipeable precipitation and radar pages. RainViewer radar includes a past-2-hour timeline; Google Weather maps show current precipitation where supported.
 - Smooth day, night, rain, snow, fog, and thunder scenes.
 - Android widget with a compact layout at small sizes and a five-hour strip at normal 4×2 sizes.
-- Per-API daily and monthly request caps default to Google's free tier to help avoid unexpected Weather, Air Quality, and Pollen billing.
+- Separate local request counts and adjustable caps for Google and Open-Meteo.
+- Open-Meteo model selection, 15-minute precipitation, and optional air quality and pollen.
 
 ## Privacy and monetization
 * **No ads.**
 * No paid subscription is required.
 * No account is required.
-* Weather requests are made using the Google Cloud API key configured by the user.
+* Open-Meteo needs no key for noncommercial use. Google Weather uses the user's Google Cloud API key.
 
 ## Requirements
 
 - Android 9 or newer (API 28+).
-- A Google Cloud project with billing configured.
-- [Weather API](https://developers.google.com/maps/documentation/weather/get-api-key) enabled.
-- Optional: [Air Quality API](https://developers.google.com/maps/documentation/air-quality/get-api-key) and [Pollen API](https://developers.google.com/maps/documentation/pollen/get-api-key).
+- Open-Meteo: no key for noncommercial use; an optional customer key for paid plans.
+- Google Weather: a Google Cloud project with billing and [Weather API](https://developers.google.com/maps/documentation/weather/get-api-key) enabled.
+- Google optional data: [Air Quality API](https://developers.google.com/maps/documentation/air-quality/get-api-key) and [Pollen API](https://developers.google.com/maps/documentation/pollen/get-api-key).
 
 The minute forecast is an [experimental Weather API feature](https://developers.google.com/maps/documentation/weather/minute-forecast). Availability and returned coverage can vary by location and project access.
 
@@ -50,9 +51,15 @@ The minute forecast is an [experimental Weather API feature](https://developers.
 
 Choose the source in the Radar tab itself. RainViewer is the recommended default; it needs no API key and loads historical radar tiles only while the page is open. Downloaded OpenStreetMap tiles are cached for 14 days; radar frames are cached for up to 3 hours.
 
+Open-Meteo does not provide radar map tiles. RainViewer radar remains available with either forecast source.
+
 Google Weather maps use the app's existing user-provided Google API key. They currently provide a **current** precipitation layer for supported US and European areas, without a playback timeline. The app counts their tile requests against the Weather API limit and caches them for 10 minutes. Google's [experimental weather-map documentation and terms](https://developers.google.com/maps/documentation/weather/weather-map) restrict using this content in an app whose primary purpose is weather information; review those terms before selecting Google. The app does not include a shared provider key.
 
 ## API key setup
+
+Select Open-Meteo in Settings to use weather forecasts without a key. Choose Best Match or a specific forecast model there. Air quality and seasonal pollen are also available from Open-Meteo. A paid customer key can be added in Settings.
+
+For Google Weather:
 
 1. Create or select a Google Cloud project and enable billing.
 2. Enable Weather API. Enable Air Quality API and Pollen API only if you want those optional tiles.

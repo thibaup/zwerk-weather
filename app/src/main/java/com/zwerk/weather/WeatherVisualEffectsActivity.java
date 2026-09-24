@@ -575,13 +575,13 @@ abstract class WeatherVisualEffectsActivity extends WeatherActivityFoundation {
 
     final class SkyLayout extends FrameLayout {
         private final Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG | Paint.DITHER_FLAG);
+        private final WeatherAtmosphereRenderer atmosphere = new WeatherAtmosphereRenderer(
+                getResources().getDisplayMetrics().density);
         private final Paint portableBlurPaint = new Paint(
                 Paint.ANTI_ALIAS_FLAG | Paint.DITHER_FLAG | Paint.FILTER_BITMAP_FLAG);
         private final Rect sourceRect = new Rect();
         private final RectF destinationRect = new RectF();
         private final Path fogPath = new Path();
-        private final Path stormPath = new Path();
-        private final Path lightningPath = new Path();
         private final Bitmap daySky = BitmapFactory.decodeResource(getResources(), R.drawable.weather_sky_day);
         private final Bitmap nightSky = BitmapFactory.decodeResource(getResources(), R.drawable.weather_sky_night);
         private final Bitmap rainSky = BitmapFactory.decodeResource(getResources(), R.drawable.weather_sky_rain);
@@ -602,7 +602,6 @@ abstract class WeatherVisualEffectsActivity extends WeatherActivityFoundation {
         private long accumulatedPause;
         private Shader fallbackShader;
         private Shader washShader;
-        private Shader stormDepthShader;
         private Shader fogWashShader;
         private Shader nightWeatherOverlay;
         private float backgroundBlurDepth;
@@ -756,6 +755,7 @@ abstract class WeatherVisualEffectsActivity extends WeatherActivityFoundation {
                 backgroundBlurEffectRadius = -1f;
             }
             if (w <= 0 || h <= 0) return;
+            atmosphere.onSizeChanged(w, h);
             fallbackShader = new LinearGradient(
                     0, 0, 0, h,
                     new int[]{Color.rgb(12, 89, 205), Color.rgb(80, 151, 235), Color.rgb(218, 231, 248)},
@@ -765,11 +765,6 @@ abstract class WeatherVisualEffectsActivity extends WeatherActivityFoundation {
                     0, 0, 0, h,
                     new int[]{Color.argb(58, 0, 35, 104), Color.argb(12, 18, 70, 150), Color.argb(28, 12, 60, 130)},
                     new float[]{0f, 0.56f, 1f},
-                    Shader.TileMode.CLAMP);
-            stormDepthShader = new LinearGradient(
-                    0, 0, 0, h,
-                    new int[]{Color.argb(80, 4, 10, 24), Color.argb(44, 8, 20, 42), Color.argb(68, 3, 9, 22)},
-                    new float[]{0f, 0.52f, 1f},
                     Shader.TileMode.CLAMP);
             fogWashShader = new LinearGradient(
                     0, 0, 0, h,
@@ -844,9 +839,13 @@ abstract class WeatherVisualEffectsActivity extends WeatherActivityFoundation {
                     drawComposite(canvas, now, true);
                 }
             }
-            if (animationRunning && (transitionActive(now) || !"none".equals(currentSpec.effect))) {
+            if (animationRunning && isAttachedToWindow()) {
                 if (headerGlass != null) headerGlass.requestAnimatedBackdropRefresh();
-                postInvalidateOnAnimation();
+                boolean fast = transitionActive(now)
+                        || "rain".equals(currentSpec.effect)
+                        || "thunder".equals(currentSpec.effect)
+                        || "snow".equals(currentSpec.effect);
+                postInvalidateDelayed(fast ? 33L : 55L);
             }
         }
 
@@ -959,7 +958,7 @@ abstract class WeatherVisualEffectsActivity extends WeatherActivityFoundation {
                     0, 0, getWidth(), getHeight(),
                     Math.max(0, Math.min(255, layerAlpha)));
             Bitmap base = bitmapFor(spec.base);
-            if (base != null) drawCover(canvas, base, getWidth(), getHeight(), 255);
+            if (base != null) drawCover(canvas, base, getWidth(), getHeight(), 255, now);
             else {
                 paint.setShader(fallbackShader);
                 canvas.drawRect(0, 0, getWidth(), getHeight(), paint);
@@ -979,15 +978,16 @@ abstract class WeatherVisualEffectsActivity extends WeatherActivityFoundation {
                 paint.setShader(null);
             }
 
+            atmosphere.drawAmbient(canvas, getWidth(), getHeight(), now, spec);
+
             if ("thunder".equals(spec.effect)) {
-                drawThunderAtmosphere(canvas, getWidth(), getHeight(), now);
-                drawRain(canvas, getWidth(), getHeight(), now);
+                atmosphere.drawRain(canvas, getWidth(), getHeight(), now, spec);
                 if (animationRunning && allowLightning) {
-                    drawLightningBolt(canvas, getWidth(), getHeight(), now);
-                    drawLightningFlash(canvas, getWidth(), getHeight(), now);
+                    atmosphere.drawLightning(canvas, getWidth(), getHeight(), now,
+                            thunderStarted);
                 }
             } else if ("rain".equals(spec.effect)) {
-                drawRain(canvas, getWidth(), getHeight(), now);
+                atmosphere.drawRain(canvas, getWidth(), getHeight(), now, spec);
             } else if ("snow".equals(spec.effect)) {
                 drawSnow(canvas, getWidth(), getHeight(), now);
             } else if ("fog".equals(spec.effect)) {
@@ -1003,7 +1003,8 @@ abstract class WeatherVisualEffectsActivity extends WeatherActivityFoundation {
             return daySky;
         }
 
-        private void drawCover(Canvas canvas, Bitmap bitmap, float w, float h, int alpha) {
+        private void drawCover(Canvas canvas, Bitmap bitmap, float w, float h, int alpha,
+                long now) {
             if (bitmap == null || bitmap.getWidth() <= 0 || bitmap.getHeight() <= 0) return;
             float destinationRatio = w / h;
             float sourceRatio = bitmap.getWidth() / (float) bitmap.getHeight();
@@ -1016,28 +1017,18 @@ abstract class WeatherVisualEffectsActivity extends WeatherActivityFoundation {
                 int top = (bitmap.getHeight() - sourceHeight) / 2;
                 sourceRect.set(0, top, bitmap.getWidth(), top + sourceHeight);
             }
-            destinationRect.set(0, 0, w, h);
+            // Slow overscanned movement gives the original sky art depth without exposing an edge.
+            float marginX = w * 0.018f;
+            float marginY = h * 0.018f;
+            float driftX = (float) Math.sin(now * 0.000045) * marginX * 0.70f;
+            float driftY = (float) Math.sin(now * 0.000032 + 1.2) * marginY * 0.70f;
+            destinationRect.set(-marginX + driftX, -marginY + driftY,
+                    w + marginX + driftX, h + marginY + driftY);
             paint.setShader(null);
             paint.setStyle(Paint.Style.FILL);
             paint.setAlpha(alpha);
             canvas.drawBitmap(bitmap, sourceRect, destinationRect, paint);
             paint.setAlpha(255);
-        }
-
-        private void drawRain(Canvas canvas, float w, float h, long now) {
-            paint.setShader(null);
-            paint.setStyle(Paint.Style.STROKE);
-            paint.setStrokeWidth(dp(1.15f));
-            paint.setStrokeCap(Paint.Cap.ROUND);
-            paint.setStrokeJoin(Paint.Join.ROUND);
-            paint.setColor(Color.argb(90, 206, 229, 255));
-            float seconds = now / 1000f;
-            for (int i = 0; i < particleX.length; i++) {
-                float x = particleX[i] * w;
-                float y = ((particleY[i] + seconds * particleSpeed[i]) % 1.12f) * h - h * 0.08f;
-                float length = dp(10f + particleSize[i] * 8f);
-                canvas.drawLine(x, y, x - length * 0.28f, y + length, paint);
-            }
         }
 
         private void drawSnow(Canvas canvas, float w, float h, long now) {
@@ -1050,44 +1041,6 @@ abstract class WeatherVisualEffectsActivity extends WeatherActivityFoundation {
                 float x = base + (float) Math.sin(seconds * 0.7f + i) * dp(9f);
                 float y = ((particleY[i] + seconds * particleSpeed[i] * 0.17f) % 1.08f) * h - h * 0.04f;
                 canvas.drawCircle(x, y, dp(particleSize[i] * 1.35f), paint);
-            }
-        }
-
-        private void drawThunderAtmosphere(Canvas canvas, float w, float h, long now) {
-            paint.setStyle(Paint.Style.FILL);
-            paint.setShader(stormDepthShader);
-            canvas.drawRect(0, 0, w, h, paint);
-            paint.setShader(null);
-
-            float seconds = now / 1000f;
-            for (int i = 0; i < 3; i++) {
-                float drift = (float) Math.sin(seconds * (0.10f + i * 0.018f) + i * 1.9f)
-                        * w * (0.055f + i * 0.012f);
-                float y = h * (0.13f + i * 0.24f)
-                        + (float) Math.sin(seconds * (0.07f + i * 0.011f) + i)
-                        * h * 0.018f;
-                float bandHeight = h * (0.14f + i * 0.018f);
-                float left = -w * 0.38f + drift;
-                float right = w * 1.38f + drift;
-
-                stormPath.reset();
-                stormPath.moveTo(left, y + bandHeight * 0.30f);
-                stormPath.cubicTo(left + w * 0.38f, y - bandHeight * 0.10f,
-                        left + w * 0.72f, y + bandHeight * 0.10f,
-                        left + w, y + bandHeight * 0.20f);
-                stormPath.cubicTo(left + w * 1.24f, y + bandHeight * 0.30f,
-                        left + w * 1.50f, y - bandHeight * 0.05f,
-                        right, y + bandHeight * 0.24f);
-                stormPath.lineTo(right, y + bandHeight * 0.86f);
-                stormPath.cubicTo(left + w * 1.50f, y + bandHeight * 1.05f,
-                        left + w * 1.18f, y + bandHeight * 0.74f,
-                        left + w, y + bandHeight * 0.80f);
-                stormPath.cubicTo(left + w * 0.66f, y + bandHeight * 0.96f,
-                        left + w * 0.34f, y + bandHeight * 0.70f,
-                        left, y + bandHeight * 0.84f);
-                stormPath.close();
-                paint.setColor(Color.argb(20 + i * 7, 4, 12 + i * 4, 28 + i * 7));
-                canvas.drawPath(stormPath, paint);
             }
         }
 
@@ -1135,56 +1088,6 @@ abstract class WeatherVisualEffectsActivity extends WeatherActivityFoundation {
             paint.setAlpha(255);
         }
 
-        private float lightningStrength(long now) {
-            long elapsed = Math.max(0L, now - thunderStarted);
-            long phase = elapsed % 6400L;
-            if (phase < 78L) return 1f - phase / 96f;
-            if (phase >= 112L && phase < 184L) {
-                return 0.52f * (1f - (phase - 112L) / 72f);
-            }
-            return 0f;
-        }
-
-        private void buildLightningPath(float w, float h, long now) {
-            long eventIndex = Math.max(0L, now - thunderStarted) / 6400L;
-            float anchor = 0.40f + ((eventIndex * 37L) % 19L) / 100f;
-            float x0 = w * anchor;
-            lightningPath.reset();
-            lightningPath.moveTo(x0, h * 0.08f);
-            lightningPath.lineTo(x0 - w * 0.035f, h * 0.24f);
-            lightningPath.lineTo(x0 + w * 0.012f, h * 0.36f);
-            lightningPath.lineTo(x0 - w * 0.050f, h * 0.52f);
-            lightningPath.lineTo(x0 - w * 0.018f, h * 0.68f);
-            lightningPath.lineTo(x0 - w * 0.072f, h * 0.84f);
-            lightningPath.moveTo(x0 + w * 0.002f, h * 0.35f);
-            lightningPath.lineTo(x0 + w * 0.105f, h * 0.43f);
-            lightningPath.lineTo(x0 + w * 0.145f, h * 0.54f);
-        }
-
-        private void drawLightningBolt(Canvas canvas, float w, float h, long now) {
-            float strength = lightningStrength(now);
-            if (strength <= 0f) return;
-            buildLightningPath(w, h, now);
-            paint.setShader(null);
-            paint.setStyle(Paint.Style.STROKE);
-            paint.setStrokeCap(Paint.Cap.ROUND);
-            paint.setStrokeJoin(Paint.Join.ROUND);
-            paint.setStrokeWidth(dp(7f));
-            paint.setColor(Color.argb(Math.round(58 * strength), 188, 220, 255));
-            canvas.drawPath(lightningPath, paint);
-            paint.setStrokeWidth(dp(1.65f));
-            paint.setColor(Color.argb(Math.round(220 * strength), 236, 247, 255));
-            canvas.drawPath(lightningPath, paint);
-        }
-
-        private void drawLightningFlash(Canvas canvas, float w, float h, long now) {
-            float strength = lightningStrength(now);
-            if (strength <= 0f) return;
-            paint.setShader(null);
-            paint.setStyle(Paint.Style.FILL);
-            paint.setColor(Color.argb(Math.round(92 * strength), 225, 238, 255));
-            canvas.drawRect(0, 0, w, h, paint);
-        }
     }
 
     static final class Api31BackgroundBlur {

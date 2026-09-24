@@ -316,7 +316,9 @@ abstract class MinuteForecastRenderingActivity extends MinuteForecastActivity {
         headlineLp.topMargin = dp(12);
         body.addView(headline, headlineLp);
         TextView detail = text(
-                "Using the returned segment timing exactly as provided by Google Weather.",
+                OpenMeteoConfig.isOpenMeteo(this)
+                        ? "Loading Open-Meteo precipitation…"
+                        : "Using the returned segment timing exactly as provided by Google Weather.",
                 13,
                 false,
                 SOFT_WHITE);
@@ -522,10 +524,16 @@ abstract class MinuteForecastRenderingActivity extends MinuteForecastActivity {
     }
 
     void addMinuteAttribution(LinearLayout page) {
-        TextView attribution = text("Source: Includes weather data from Google", 11, false, FAINT_WHITE);
+        boolean openMeteo = OpenMeteoConfig.isOpenMeteo(this);
+        TextView attribution = text(openMeteo
+                ? "Forecast: Open-Meteo · https://open-meteo.com/ · CC BY 4.0"
+                : "Source: Includes weather data from Google", 11, false, FAINT_WHITE);
+        if (openMeteo) android.text.util.Linkify.addLinks(
+                attribution, android.text.util.Linkify.WEB_URLS);
         attribution.setGravity(Gravity.CENTER);
         attribution.setPadding(dp(4), dp(24), dp(4), dp(12));
-        attribution.setContentDescription("Weather data attribution: Google");
+        attribution.setContentDescription(openMeteo
+                ? "Forecast data attribution: Open-Meteo" : "Weather data attribution: Google");
         page.addView(attribution);
     }
 

@@ -97,7 +97,16 @@ abstract class OptionalWeatherDataActivity extends WeatherApiActivity {
     private static final String PREF_NOTIFIED_ALERT_IDS = "notified_weather_alert_ids";
     private final HashMap<String, SevereAlertCache.Entry> alertMemoryCache = new HashMap<>();
     private final HashSet<String> alertLoadsInFlight = new HashSet<>();
+    private final Object[] optionalRequestLocks = new Object[16];
     private SevereAlertCache severeAlertCache;
+
+    private Object optionalRequestLock(String scope) {
+        int index = (scope.hashCode() & Integer.MAX_VALUE) % optionalRequestLocks.length;
+        synchronized (optionalRequestLocks) {
+            if (optionalRequestLocks[index] == null) optionalRequestLocks[index] = new Object();
+            return optionalRequestLocks[index];
+        }
+    }
 
     boolean airQualityEnabled() {
         return getSharedPreferences(UI_PREFS, MODE_PRIVATE)
@@ -109,7 +118,8 @@ abstract class OptionalWeatherDataActivity extends WeatherApiActivity {
     }
 
     boolean severeAlertsEnabled() {
-        return getSharedPreferences(UI_PREFS, MODE_PRIVATE)
+        return !OpenMeteoConfig.isOpenMeteo(this)
+                && getSharedPreferences(UI_PREFS, MODE_PRIVATE)
                 .getBoolean(PREF_SEVERE_ALERTS, false);
     }
 
@@ -179,7 +189,7 @@ abstract class OptionalWeatherDataActivity extends WeatherApiActivity {
             try {
                 if (severeAlertCache == null) severeAlertCache = new SevereAlertCache(this);
                 result = severeAlertCache.read(lat, lon, language);
-                if (result == null) {
+                if (result == null && severeAlertsEnabled()) {
                     String key = readApiKey();
                     if (!key.isEmpty()) {
                         JSONObject response = loadSevereAlerts(lat, lon, language, key);
@@ -269,6 +279,8 @@ abstract class OptionalWeatherDataActivity extends WeatherApiActivity {
         final double lat = latitude;
         final double lon = longitude;
         final String language = Locale.getDefault().toLanguageTag();
+        final boolean openMeteo = OpenMeteoConfig.isOpenMeteo(this);
+        final String providerScope = OpenMeteoConfig.cacheScope(this);
         final long requestSerial;
         synchronized (optionalDataLock) {
             OptionalDataState state = airQuality ? airQualityState : pollenState;
@@ -288,29 +300,43 @@ abstract class OptionalWeatherDataActivity extends WeatherApiActivity {
 
         optionalExecutor.execute(() -> {
             OptionalDataState result;
-            String endpointName = airQuality ? "air-quality-current" : "pollen-forecast";
+            String endpointName = openMeteo ? "open-meteo-air-quality"
+                    : airQuality ? "air-quality-current" : "pollen-forecast";
             try {
-                OptionalDataState cached = force
-                        ? null
-                        : readFreshOptionalDataCache(
-                                airQuality, generation, lat, lon, language);
-                if (cached != null) {
-                    result = cached;
-                } else {
-                    String key = readApiKey();
-                    if (key.isEmpty()) {
-                        result = optionalUnavailable(
-                                generation, lat, lon, language,
-                                airQuality ? "Air quality unavailable" : "Pollen unavailable");
-                    } else if (airQuality) {
-                        result = loadAirQualityState(generation, lat, lon, language, key);
+                String fetchScope = (airQuality ? "air" : "pollen") + "|" + providerScope
+                        + "|" + Double.toHexString(lat) + "|" + Double.toHexString(lon)
+                        + "|" + language;
+                synchronized (optionalRequestLock(fetchScope)) {
+                    OptionalDataState cached = force
+                            ? null
+                            : readFreshOptionalDataCache(
+                                    airQuality, generation, lat, lon, language);
+                    if (cached != null) {
+                        result = cached;
                     } else {
-                        result = loadPollenState(generation, lat, lon, language, key);
-                    }
-                    if (result.available || isOptionalNoData(result)) {
-                        persistOptionalDataCacheQuietly(
-                                airQuality, generation, lat, lon, language,
-                                result, requestSerial);
+                        String key = openMeteo
+                                ? OpenMeteoConfig.readCustomerKey(this) : readApiKey();
+                        if (openMeteo) {
+                            result = airQuality
+                                    ? OpenMeteoEnvironmentClient.loadAirQuality(
+                                            this, generation, lat, lon, language, key)
+                                    : OpenMeteoEnvironmentClient.loadPollen(
+                                            this, generation, lat, lon, language, key);
+                        } else if (key.isEmpty()) {
+                            result = optionalUnavailable(
+                                    generation, lat, lon, language,
+                                    airQuality ? "Air quality unavailable" : "Pollen unavailable");
+                        } else if (airQuality) {
+                            result = loadAirQualityState(generation, lat, lon, language, key);
+                        } else {
+                            result = loadPollenState(generation, lat, lon, language, key);
+                        }
+                        if ((result.available || isOptionalNoData(result))
+                                && providerScope.equals(OpenMeteoConfig.cacheScope(this))) {
+                            persistOptionalDataCacheQuietly(
+                                    airQuality, generation, lat, lon, language,
+                                    result, requestSerial);
+                        }
                     }
                 }
             } catch (OptionalRequestException error) {
@@ -343,7 +369,8 @@ abstract class OptionalWeatherDataActivity extends WeatherApiActivity {
 
             final OptionalDataState delivered = result;
             runOnUiThread(() -> {
-                if (!optionalScopeCurrent(generation, lat, lon, language)) return;
+                if (!optionalScopeCurrent(generation, lat, lon, language)
+                        || openMeteo != OpenMeteoConfig.isOpenMeteo(this)) return;
                 if (airQuality && !airQualityEnabled()) return;
                 if (pollen && !pollenEnabled()) return;
                 synchronized (optionalDataLock) {
@@ -449,7 +476,8 @@ abstract class OptionalWeatherDataActivity extends WeatherApiActivity {
             boolean airQuality, double lat, double lon, String language) {
         String identity = Double.toHexString(lat)
                 + "|" + Double.toHexString(lon)
-                + "|" + (language == null ? "" : language);
+                + "|" + (language == null ? "" : language)
+                + "|" + OpenMeteoConfig.cacheScope(this);
         String prefix = airQuality
                 ? AIR_QUALITY_CACHE_FILE_PREFIX : POLLEN_CACHE_FILE_PREFIX;
         return new File(
@@ -730,6 +758,11 @@ abstract class OptionalWeatherDataActivity extends WeatherApiActivity {
             String address,
             String method,
             JSONObject requestBody) throws Exception {
+        // This method only serves Google endpoints. A provider switch can happen
+        // after a queued optional task was created but before it reaches HTTP.
+        if (OpenMeteoConfig.isOpenMeteo(this)) {
+            throw new SupersededWeatherRequestException();
+        }
         ApiRequestBudgetManager.Category category = "pollen-forecast".equals(endpointName)
                 ? ApiRequestBudgetManager.Category.POLLEN
                 : "weather-alerts".equals(endpointName)

@@ -241,6 +241,7 @@ abstract class WeatherActivityFoundation extends Activity {
     double activeLoadLongitude = Double.NaN;
     String activeLoadLanguage = "";
     String activeLoadLocationId = "";
+    String activeLoadProviderScope = "";
     int weatherRequestGeneration;
     final Object hourlyCoverageLock = new Object();
     boolean hourlyCoverageLoadActive;

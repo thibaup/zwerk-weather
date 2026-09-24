@@ -117,6 +117,9 @@ public class MainActivity extends WeatherSettingsFlowActivity implements DeviceL
     private final Runnable statusAgeRefresh = new Runnable() {
         @Override public void run() {
             if (!statusAgeRefreshRunning) return;
+            if (OpenMeteoForecastClient.pruneElapsedHourly(lastHourlyWeather, Instant.now())) {
+                rerenderLastWeather();
+            }
             if (statusShowsDataAge()) notifyActiveForecastStatusChanged();
             statusAgeHandler.postDelayed(this, STATUS_AGE_REFRESH_INTERVAL_MILLIS);
         }
@@ -157,7 +160,7 @@ public class MainActivity extends WeatherSettingsFlowActivity implements DeviceL
 
         buildShell();
         content.postDelayed(() -> UpdateChecker.checkForUpdates(this, false), 1800L);
-        if (!hasConfiguredApiKey()) {
+        if (!OpenMeteoConfig.isOpenMeteo(this) && !hasConfiguredApiKey()) {
             status.setText("Google API key required");
             progress.setVisibility(View.GONE);
             showApiKeySetupDialog();
@@ -399,8 +402,12 @@ public class MainActivity extends WeatherSettingsFlowActivity implements DeviceL
         if (skyLayout == null) return;
         float depth = 0f;
         if (selectedForecastPage == PAGE_OVERVIEW
-                && transitionTargetPage == PAGE_OVERVIEW) {
-            depth = Math.min(1f, Math.max(0, scrollY) / (float) dp(360));
+                || transitionTargetPage == PAGE_OVERVIEW) {
+            float scrollDepth = Math.min(1f, Math.max(0, scrollY) / (float) dp(560));
+            float overviewPresence = Math.max(0f,
+                    1f - Math.abs(modeSwitchProgress
+                            - forecastPagePosition(PAGE_OVERVIEW)));
+            depth = 0.72f * scrollDepth * overviewPresence;
         }
         skyLayout.setBackgroundBlurDepth(depth);
     }
@@ -907,6 +914,7 @@ public class MainActivity extends WeatherSettingsFlowActivity implements DeviceL
     void setModeSwitchProgress(float value) {
         modeSwitchProgress = Math.max(0f,
                 Math.min(enabledForecastPageCount() - 1f, value));
+        updateOverviewBackgroundBlur(mainScroll == null ? 0 : mainScroll.getScrollY());
         if (modeSwitchHolder == null || modeSwitchThumb == null) return;
         int gap = dp(4);
         int count = enabledForecastPageCount();
@@ -1011,6 +1019,10 @@ public class MainActivity extends WeatherSettingsFlowActivity implements DeviceL
         if (forecastPageHost != null) forecastPageHost.requestLayout();
     }
 
+    void reloadRadarSource() {
+        if (radarPageView != null) radarPageView.reloadSource();
+    }
+
     @Override
     void performPullRefresh() {
         if (selectedForecastPage == PAGE_RADAR && radarPageView != null) {
@@ -1057,7 +1069,8 @@ public class MainActivity extends WeatherSettingsFlowActivity implements DeviceL
         if (lastCurrentWeather != null) {
             status.setText(dataAgeLabel(lastCurrentWeather));
         } else if (weatherLoadActive) {
-            status.setText("Loading Google Weather data…");
+            status.setText(OpenMeteoConfig.isOpenMeteo(this)
+                    ? "Loading Open-Meteo forecast…" : "Loading Google Weather data…");
         } else {
             status.setText("Weather data not loaded");
         }
@@ -1174,6 +1187,17 @@ public class MainActivity extends WeatherSettingsFlowActivity implements DeviceL
         LinearLayout.LayoutParams saveLp = new LinearLayout.LayoutParams(-1, dp(48));
         saveLp.topMargin = dp(16);
         panel.addView(save, saveLp);
+
+        Button useOpenMeteo = coordinateDialogButton("Use Open-Meteo without a key", false);
+        LinearLayout.LayoutParams openMeteoLp = new LinearLayout.LayoutParams(-1, dp(48));
+        openMeteoLp.topMargin = dp(8);
+        panel.addView(useOpenMeteo, openMeteoLp);
+        useOpenMeteo.setOnClickListener(v -> {
+            OpenMeteoConfig.setProvider(this, OpenMeteoConfig.OPEN_METEO);
+            field.getText().clear();
+            dialog.dismiss();
+            continueStartupAfterApiKey();
+        });
 
         View.OnClickListener saveAction = v -> {
             String candidate = validatedApiKeyInput(field);
@@ -1838,7 +1862,7 @@ public class MainActivity extends WeatherSettingsFlowActivity implements DeviceL
         } else if (suppressNextResumeWeatherLoad) {
             suppressNextResumeWeatherLoad = false;
         } else if (lastCurrentWeather != null
-                && hasConfiguredApiKey()
+                && (OpenMeteoConfig.isOpenMeteo(this) || hasConfiguredApiKey())
                 && apiKeySetupDialog == null
                 && !weatherLoadActive) {
             refreshWeather();

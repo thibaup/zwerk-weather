@@ -16,12 +16,16 @@ final class RadarProviderConfig {
     private RadarProviderConfig() { }
 
     static String source(Context context) {
+        // Open-Meteo mode must never activate Google weather map tiles, even if
+        // Google was the saved radar choice before the forecast source changed.
+        if (OpenMeteoConfig.isOpenMeteo(context)) return RAINVIEWER;
         String selected = context.getSharedPreferences(UI_PREFS, Context.MODE_PRIVATE)
                 .getString(SOURCE_PREF, RAINVIEWER);
         return GOOGLE.equals(selected) ? GOOGLE : RAINVIEWER;
     }
 
     static void setSource(Context context, String source) {
+        if (OpenMeteoConfig.isOpenMeteo(context)) return;
         context.getSharedPreferences(UI_PREFS, Context.MODE_PRIVATE).edit()
                 .putString(SOURCE_PREF, GOOGLE.equals(source) ? GOOGLE : RAINVIEWER).apply();
     }

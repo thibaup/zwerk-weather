@@ -12,8 +12,9 @@ android {
         applicationId "com.zwerk.weather"
         minSdk 28
         targetSdk 36
-        versionCode 20
-        versionName "1.2.0"
+        versionCode 30
+        // Keep the public label at 1.3.0 for subsequent builds; increment versionCode for updates.
+        versionName "1.3.0"
         buildConfigField "boolean", "FORCE_GENERIC_HEADER_BLUR", forceGenericHeaderBlur.toString()
     }
 
