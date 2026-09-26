@@ -1,0 +1,14 @@
+{
+  "Radar refresh timed out · showing current frame · tap ↻ to retry": "Timeout dell’aggiornamento radar · visualizzazione del fotogramma corrente · tocca ↻ per riprovare",
+  "Radar unavailable · tap ↻ to retry": "Radar non disponibile · tocca ↻ per riprovare",
+  "Loading radar frames · playback will start when ready": "Caricamento dei fotogrammi radar · la riproduzione inizierà quando saranno pronti",
+  "Radar map is not ready · tap play to retry": "La mappa radar non è pronta · tocca Riproduci per riprovare",
+  "Waiting for radar map layout…": "In attesa del layout della mappa radar…",
+  "Animation could not load · tap play to retry": "Impossibile caricare l’animazione · tocca Riproduci per riprovare",
+  "Preparing animation · %d/%d frames": "Preparazione dell’animazione · %d/%d fotogrammi",
+  "Warnings for %s. Follow the issuing authority's instructions.": "Avvisi per %s. Segui le istruzioni dell’autorità emittente.",
+  "Until %s": "Fino a %s",
+  "Hourly data is partial · %s": "I dati orari sono parziali · %s",
+  "Free: 600/min · 5k/hour · 10k/day · 300k/month.": "Gratis: 600/min · 5k/ora · 10k/giorno · 300k/mese.",
+  "Weather": "Meteo"
+}

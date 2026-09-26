@@ -107,6 +107,9 @@ abstract class ForecastViewsActivity extends WeatherInteractionViewsActivity {
         private SceneSpec previewScene;
         private String selectionKey = "";
         private String previewLabel = "";
+        private int previewUvIndex = -1;
+        private boolean previewUvDaily;
+        private JSONObject previewWeather;
         private final ArrayList<PreviewBinding> bindings = new ArrayList<>();
         private final ArrayList<WeakReference<ForecastChartView>> charts = new ArrayList<>();
 
@@ -115,6 +118,9 @@ abstract class ForecastViewsActivity extends WeatherInteractionViewsActivity {
             previewScene = null;
             selectionKey = "";
             previewLabel = "";
+            previewUvIndex = -1;
+            previewUvDaily = false;
+            previewWeather = null;
             bindings.clear();
             charts.clear();
             updatePreviewSubtitle();
@@ -132,7 +138,24 @@ abstract class ForecastViewsActivity extends WeatherInteractionViewsActivity {
             return selectionKey;
         }
 
-        boolean select(String key, String label, SceneSpec scene) {
+        String previewLabel() {
+            return previewLabel;
+        }
+
+        int previewUvIndex() {
+            return previewUvIndex;
+        }
+
+        boolean previewUvDaily() {
+            return previewUvDaily;
+        }
+
+        JSONObject previewWeather() {
+            return previewWeather;
+        }
+
+        boolean select(String key, String label, SceneSpec scene, int uvIndex,
+                boolean dailyUv, JSONObject weather) {
             if (key == null || key.isEmpty() || scene == null) return false;
             if (key.equals(selectionKey)) {
                 restore(true);
@@ -141,10 +164,14 @@ abstract class ForecastViewsActivity extends WeatherInteractionViewsActivity {
             selectionKey = key;
             previewLabel = label == null ? "" : label;
             previewScene = scene;
+            previewUvIndex = uvIndex;
+            previewUvDaily = dailyUv;
+            previewWeather = weather;
             if (skyLayout != null) skyLayout.setScene(scene);
             if (headerGlass != null) headerGlass.setScene(scene, animationsAllowed());
             updatePreviewSubtitle();
             refreshSelectionVisuals();
+            onForecastPreviewChanged();
             announcePreview(previewLabel + ", " + scene.condition + ". Previewing forecast. Tap again or the location to return to now.");
             return true;
         }
@@ -154,10 +181,14 @@ abstract class ForecastViewsActivity extends WeatherInteractionViewsActivity {
             previewScene = null;
             selectionKey = "";
             previewLabel = "";
+            previewUvIndex = -1;
+            previewUvDaily = false;
+            previewWeather = null;
             if (skyLayout != null) skyLayout.setScene(currentScene);
             if (headerGlass != null) headerGlass.setScene(currentScene, animationsAllowed());
             updatePreviewSubtitle();
             refreshSelectionVisuals();
+            onForecastPreviewChanged();
             if (announce && hadPreview) announcePreview("Back to current weather");
         }
 
@@ -182,6 +213,9 @@ abstract class ForecastViewsActivity extends WeatherInteractionViewsActivity {
             previewScene = null;
             selectionKey = "";
             previewLabel = "";
+            previewUvIndex = -1;
+            previewUvDaily = false;
+            previewWeather = null;
             bindings.clear();
             charts.clear();
         }
@@ -207,12 +241,14 @@ abstract class ForecastViewsActivity extends WeatherInteractionViewsActivity {
         }
     }
 
+    void onForecastPreviewChanged() { }
+
     void updatePreviewSubtitle() {
         if (previewSubtitle == null || locationArea == null) return;
         if (forecastPreview.isPreviewing()) {
-            String text = forecastPreview.previewLabel
-                    + " · " + forecastPreview.previewScene.condition
-                    + " · Back to now";
+            String text = UiTranslations.text(this, forecastPreview.previewLabel)
+                    + " · " + UiTranslations.text(this, forecastPreview.previewScene.condition)
+                    + " · " + UiTranslations.text(this, "Back to now");
             previewSubtitle.setText(text);
             previewSubtitle.setVisibility(View.VISIBLE);
             locationArea.setContentDescription(
@@ -513,7 +549,8 @@ abstract class ForecastViewsActivity extends WeatherInteractionViewsActivity {
                 canvas.drawText(dayDateLabel(day, zone), x, dateY, textPaint);
 
                 JSONObject daytime = day == null ? null : day.optJSONObject("daytimeForecast");
-                drawWeatherGlyph(canvas, description(daytime), true, x, iconY, dp(34));
+                drawWeatherGlyph(canvas, SceneSpec.glyphCondition(daytime),
+                        true, x, iconY, dp(34));
 
                 highX[i] = lowX[i] = x;
                 highY[i] = mapTemp(highs[i], highMin, highMax, highTop, highBottom);

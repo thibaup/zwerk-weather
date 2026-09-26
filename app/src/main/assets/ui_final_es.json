@@ -1,0 +1,23 @@
+{
+  "Enter a precise forecast point. Signed decimal coordinates are supported.": "Introduce un punto de previsión preciso. Se admiten coordenadas decimales con signo.",
+  "City search isn't available on this device right now.": "La búsqueda de ciudades no está disponible en este dispositivo en este momento.",
+  "The selected result had coordinates outside the valid latitude/longitude range.": "El resultado seleccionado tenía coordenadas fuera del rango válido de latitud/longitud.",
+  "OFFICIAL WEATHER ALERT": "ALERTA METEOROLÓGICA OFICIAL",
+  "%d active alerts": "%d alertas activas",
+  "Source: %s": "Fuente: %s",
+  "Open alert source %s": "Abrir la fuente de la alerta %s",
+  "Tap for official details.": "Toca para ver los detalles oficiales.",
+  "Edit  ›": "Editar  ›",
+  "DAILY LIMIT": "LÍMITE DIARIO",
+  "MONTHLY LIMIT": "LÍMITE MENSUAL",
+  "Set the maximum requests Zwerk Weather may send. Saving switches the profile to Custom.": "Establece el número máximo de solicitudes que Zwerk Weather puede enviar. Al guardar, el perfil cambia a Personalizado.",
+  "GOOGLE USAGE & LIMITS": "USO Y LÍMITES DE GOOGLE",
+  "RADAR & MAP TILES": "RADAR Y TESELAS DEL MAPA",
+  "Weather/Air Quality 8,000/mo · Pollen 4,000/mo.": "Tiempo/calidad del aire 8,000/mo · Polen 4,000/mo.",
+  "Weather/Air Quality 10,000/mo · Pollen 5,000/mo · local pacing uses Pacific time.": "Tiempo/calidad del aire 10,000/mo · Polen 5,000/mo · la cadencia local usa la hora del Pacífico.",
+  "Open-Meteo limits ↗": "Límites de Open-Meteo ↗",
+  "On-demand frames · app paced below 100 requests/IP/minute": "Fotogramas bajo demanda · la app mantiene el ritmo por debajo de 100 solicitudes/IP/minuto",
+  "Visible map tiles only · locally cached for 14 days": "Solo teselas visibles del mapa · caché local durante 14 días",
+  "Google caps follow Pacific time. Counts cover this device only.": "Los límites de Google siguen la hora del Pacífico. Los recuentos corresponden solo a este dispositivo.",
+  "View Google pricing ↗": "Ver precios de Google ↗"
+}

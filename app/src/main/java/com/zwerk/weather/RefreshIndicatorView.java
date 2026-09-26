@@ -30,7 +30,7 @@ final class RefreshIndicatorView extends View {
         setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_YES);
         textPaint.setTypeface(Typeface.create("sans-serif-medium", Typeface.NORMAL));
         textPaint.setTextAlign(Paint.Align.LEFT);
-        setContentDescription("Pull to refresh");
+        setContentDescription(UiTranslations.text(getContext(), "Pull to refresh"));
     }
 
     boolean isRefreshing() {
@@ -51,7 +51,7 @@ final class RefreshIndicatorView extends View {
         setAlpha(0f);
         pullFraction = 0f;
         releaseReady = false;
-        setContentDescription("Pull to refresh");
+        setContentDescription(UiTranslations.text(getContext(), "Pull to refresh"));
     }
 
     void setPull(float fraction, boolean ready) {
@@ -63,8 +63,10 @@ final class RefreshIndicatorView extends View {
         setTranslationY(dp(10) * (1f - Math.min(1f, pullFraction)));
         if (releaseReady != ready) {
             releaseReady = ready;
-            setContentDescription(ready ? "Release to refresh" : "Pull to refresh");
-            if (ready && isShown()) announceForAccessibility("Release to refresh");
+            setContentDescription(UiTranslations.text(getContext(),
+                    ready ? "Release to refresh" : "Pull to refresh"));
+            if (ready && isShown()) announceForAccessibility(
+                    UiTranslations.text(getContext(), "Release to refresh"));
         }
         invalidate();
     }
@@ -79,7 +81,7 @@ final class RefreshIndicatorView extends View {
             setVisibility(View.VISIBLE);
             setAlpha(1f);
             setTranslationY(0f);
-            setContentDescription("Refreshing weather");
+            setContentDescription(UiTranslations.text(getContext(), "Refreshing weather"));
             invalidate();
             postInvalidateOnAnimation();
         } else {
@@ -91,7 +93,7 @@ final class RefreshIndicatorView extends View {
         refreshing = false;
         releaseReady = false;
         pullFraction = 0f;
-        setContentDescription("Pull to refresh");
+        setContentDescription(UiTranslations.text(getContext(), "Pull to refresh"));
         settle();
     }
 

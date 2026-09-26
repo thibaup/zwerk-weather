@@ -1,0 +1,23 @@
+{
+  "Enter a precise forecast point. Signed decimal coordinates are supported.": "Kesin bir tahmin noktası girin. İşaretli ondalık koordinatlar desteklenir.",
+  "City search isn't available on this device right now.": "Şehir araması şu anda bu cihazda kullanılamıyor.",
+  "The selected result had coordinates outside the valid latitude/longitude range.": "Seçilen sonuçtaki koordinatlar geçerli enlem/boylam aralığının dışındaydı.",
+  "OFFICIAL WEATHER ALERT": "RESMÎ HAVA DURUMU UYARISI",
+  "%d active alerts": "%d etkin uyarı",
+  "Source: %s": "Kaynak: %s",
+  "Open alert source %s": "Uyarı kaynağını aç: %s",
+  "Tap for official details.": "Resmî ayrıntılar için dokunun.",
+  "Edit  ›": "Düzenle  ›",
+  "DAILY LIMIT": "GÜNLÜK SINIR",
+  "MONTHLY LIMIT": "AYLIK SINIR",
+  "Set the maximum requests Zwerk Weather may send. Saving switches the profile to Custom.": "Zwerk Weather uygulamasının gönderebileceği maksimum istek sayısını belirleyin. Kaydetmek, profili Özel olarak değiştirir.",
+  "GOOGLE USAGE & LIMITS": "GOOGLE KULLANIMI VE SINIRLARI",
+  "RADAR & MAP TILES": "RADAR VE HARİTA KAROLARI",
+  "Weather/Air Quality 8,000/mo · Pollen 4,000/mo.": "Hava durumu/hava kalitesi 8,000/mo · Polen 4,000/mo.",
+  "Weather/Air Quality 10,000/mo · Pollen 5,000/mo · local pacing uses Pacific time.": "Hava durumu/hava kalitesi 10,000/mo · Polen 5,000/mo · yerel istek temposu Pasifik saatini kullanır.",
+  "Open-Meteo limits ↗": "Open-Meteo sınırları ↗",
+  "On-demand frames · app paced below 100 requests/IP/minute": "İsteğe bağlı kareler · uygulama hızı 100 istek/IP/dakika altında tutulur",
+  "Visible map tiles only · locally cached for 14 days": "Yalnızca görünür harita karoları · yerel olarak 14 gün önbelleğe alınır",
+  "Google caps follow Pacific time. Counts cover this device only.": "Google sınırları Pasifik saatine göre uygulanır. Sayaçlar yalnızca bu cihazı kapsar.",
+  "View Google pricing ↗": "Google fiyatlandırmasını görüntüle ↗"
+}

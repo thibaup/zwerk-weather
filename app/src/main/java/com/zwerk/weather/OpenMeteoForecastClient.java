@@ -197,10 +197,11 @@ final class OpenMeteoForecastClient {
         Instant lastEnd = null;
         for (int i = 0; i < times.length(); i++) {
             String localTime = stringAt(times, i);
-            Instant start = localTimestampToInstant(localTime, clock);
-            if (start == null) continue;
-            Instant end = nextMinuteBoundary(times, i, start, clock);
-            if (end == null || !end.isAfter(start)) end = start.plus(Duration.ofMinutes(15));
+            // Open-Meteo's 15-minute precipitation at this timestamp is the sum
+            // over the preceding interval, so the timestamp is its end.
+            Instant end = localTimestampToInstant(localTime, clock);
+            if (end == null) continue;
+            Instant start = end.minus(Duration.ofMinutes(15));
 
             Double qpfMm = numberAt(source, "precipitation", i);
             Double rainMm = numberAt(source, "rain", i);
@@ -847,18 +848,6 @@ final class OpenMeteoForecastClient {
             if (next != null && next.isAfter(start)) return next;
         }
         return start.plus(Duration.ofHours(1));
-    }
-
-    private static Instant nextMinuteBoundary(
-            JSONArray times,
-            int index,
-            Instant start,
-            ResponseClock clock) {
-        if (times != null && index + 1 < times.length()) {
-            Instant next = localTimestampToInstant(stringAt(times, index + 1), clock);
-            if (next != null && next.isAfter(start)) return next;
-        }
-        return start.plus(Duration.ofMinutes(15));
     }
 
     private static LocalDateTime parseLocalDateTime(String value) {

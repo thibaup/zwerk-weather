@@ -36,7 +36,8 @@ final class OpenMeteoEnvironmentClient {
         Double european = number(current, "european_aqi");
         Double us = number(current, "us_aqi");
         if (european == null && us == null) {
-            return noData(generation, lat, lon, language, "Air quality has no data here");
+            return noData(generation, lat, lon, language,
+                    UiTranslations.text(context, "Air quality has no data here"));
         }
         boolean useEuropean = european != null;
         int aqi = (int) Math.round(useEuropean ? european : us);
@@ -47,8 +48,10 @@ final class OpenMeteoEnvironmentClient {
         details.put("current", current);
         details.put("raw", response);
         details.put("scale", scale);
+        String localizedCategory = UiTranslations.text(context, category);
         return new OptionalDataState(generation, lat, lon, language, false, true,
-                aqi + "\n" + category, scale + " " + aqi + ", " + category, details);
+                aqi + "\n" + localizedCategory,
+                scale + " " + aqi + ", " + localizedCategory, details);
     }
 
     static OptionalDataState loadPollen(Context context, int generation, double lat, double lon,
@@ -69,14 +72,18 @@ final class OpenMeteoEnvironmentClient {
         }
         if (highest < 0d) {
             return noData(generation, lat, lon, language,
-                    "Pollen unavailable here");
+                    UiTranslations.text(context, "Pollen unavailable here"));
         }
         JSONObject details = new JSONObject();
         details.put("_openMeteo", true);
         details.put("raw", response);
-        String value = dominant + "\n" + format(highest) + " grains/m³";
+        String localizedPlant = UiTranslations.text(context, dominant);
+        String value = localizedPlant + "\n" + format(highest) + " "
+                + UiTranslations.text(context, "grains/m³");
         return new OptionalDataState(generation, lat, lon, language, false, true,
-                value, dominant + " pollen " + format(highest) + " grains per cubic meter",
+                value, localizedPlant + " " + UiTranslations.text(context, "pollen") + " "
+                        + format(highest) + " "
+                        + UiTranslations.text(context, "grains per cubic meter"),
                 details);
     }
 

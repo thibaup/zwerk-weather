@@ -1,0 +1,14 @@
+{
+  "Radar refresh timed out · showing current frame · tap ↻ to retry": "Tidsgrænsen for radaropdateringen blev overskredet · det aktuelle billede vises · tryk på ↻ for at prøve igen",
+  "Radar unavailable · tap ↻ to retry": "Radar er ikke tilgængelig · tryk på ↻ for at prøve igen",
+  "Loading radar frames · playback will start when ready": "Indlæser radarbilleder · afspilningen starter, når de er klar",
+  "Radar map is not ready · tap play to retry": "Radarkortet er ikke klar · tryk på afspil for at prøve igen",
+  "Waiting for radar map layout…": "Venter på radarkortets layout…",
+  "Animation could not load · tap play to retry": "Animationen kunne ikke indlæses · tryk på afspil for at prøve igen",
+  "Preparing animation · %d/%d frames": "Forbereder animation · %d/%d billeder",
+  "Warnings for %s. Follow the issuing authority's instructions.": "Advarsler for %s. Følg anvisningerne fra den myndighed, der har udstedt advarslen.",
+  "Until %s": "Indtil %s",
+  "Hourly data is partial · %s": "Timedata er ufuldstændige · %s",
+  "Free: 600/min · 5k/hour · 10k/day · 300k/month.": "Gratis: 600/min · 5k/time · 10k/dag · 300k/måned.",
+  "Weather": "Vejr"
+}

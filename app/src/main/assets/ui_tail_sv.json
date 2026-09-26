@@ -1,0 +1,14 @@
+{
+  "Radar refresh timed out · showing current frame · tap ↻ to retry": "Tidsgränsen för radaruppdateringen överskreds · aktuell bildruta visas · tryck på ↻ för att försöka igen",
+  "Radar unavailable · tap ↻ to retry": "Radar ej tillgänglig · tryck på ↻ för att försöka igen",
+  "Loading radar frames · playback will start when ready": "Läser in radarbilder · uppspelningen startar när de är klara",
+  "Radar map is not ready · tap play to retry": "Radarkartan är inte klar · tryck på spela upp för att försöka igen",
+  "Waiting for radar map layout…": "Väntar på radarkartans layout…",
+  "Animation could not load · tap play to retry": "Animationen kunde inte läsas in · tryck på spela upp för att försöka igen",
+  "Preparing animation · %d/%d frames": "Förbereder animation · %d/%d bildrutor",
+  "Warnings for %s. Follow the issuing authority's instructions.": "Varningar för %s. Följ anvisningarna från myndigheten som utfärdade varningen.",
+  "Until %s": "Till %s",
+  "Hourly data is partial · %s": "Timdata är ofullständiga · %s",
+  "Free: 600/min · 5k/hour · 10k/day · 300k/month.": "Gratis: 600/min · 5k/timme · 10k/dag · 300k/månad.",
+  "Weather": "Väder"
+}

@@ -190,7 +190,7 @@ abstract class WeatherApiActivity extends MinuteForecastViewsActivity {
         forecastPreview.restore(false);
         final double lat = latitude;
         final double lon = longitude;
-        final String language = Locale.getDefault().getLanguage();
+        final String language = Locale.getDefault().toLanguageTag();
         final String requestLocationId = selectedLocationId == null ? "" : selectedLocationId;
         final String providerScope = OpenMeteoConfig.cacheScope(this);
         if (weatherLoadActive) {
@@ -381,7 +381,7 @@ abstract class WeatherApiActivity extends MinuteForecastViewsActivity {
         return generation == weatherRequestGeneration
                 && Math.abs(latitude - lat) <= WEATHER_CACHE_COORDINATE_TOLERANCE
                 && Math.abs(longitude - lon) <= WEATHER_CACHE_COORDINATE_TOLERANCE
-                && Locale.getDefault().getLanguage().equals(language)
+                && Locale.getDefault().toLanguageTag().equals(language)
                 && activeLoadProviderScope.equals(OpenMeteoConfig.cacheScope(this))
                 && (selectedLocationId == null ? "" : selectedLocationId)
                         .equals(requestLocationId == null ? "" : requestLocationId);
@@ -437,7 +437,7 @@ abstract class WeatherApiActivity extends MinuteForecastViewsActivity {
     boolean requestScopeCurrent(int generation) {
         if (OpenMeteoConfig.isOpenMeteo(this)) return false;
         if (generation != weatherRequestGeneration) return false;
-        String language = Locale.getDefault().getLanguage();
+        String language = Locale.getDefault().toLanguageTag();
         String locationId = selectedLocationId == null ? "" : selectedLocationId;
         if (weatherLoadActive) {
             return Math.abs(activeLoadLatitude - latitude) <= WEATHER_CACHE_COORDINATE_TOLERANCE
@@ -464,7 +464,7 @@ abstract class WeatherApiActivity extends MinuteForecastViewsActivity {
         double cachedLatitude = pageState == null ? latitude : pageState.latitude;
         double cachedLongitude = pageState == null ? longitude : pageState.longitude;
         String cachedLanguage = pageState == null
-                ? Locale.getDefault().getLanguage() : pageState.language;
+                ? Locale.getDefault().toLanguageTag() : pageState.language;
         String cachedLocationId = pageState == null
                 ? (selectedLocationId == null ? "" : selectedLocationId) : pageState.locationId;
         rememberInMemoryForecast(
@@ -880,7 +880,7 @@ abstract class WeatherApiActivity extends MinuteForecastViewsActivity {
                 weatherRequestGeneration,
                 latitude,
                 longitude,
-                Locale.getDefault().getLanguage(),
+                Locale.getDefault().toLanguageTag(),
                 selectedLocationId == null ? "" : selectedLocationId,
                 "METRIC");
     }

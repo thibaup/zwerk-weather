@@ -1,0 +1,14 @@
+{
+  "Radar refresh timed out · showing current frame · tap ↻ to retry": "Isteklo je vrijeme za osvježavanje radara · prikazuje se trenutačni kadar · dodirnite ↻ za ponovni pokušaj",
+  "Radar unavailable · tap ↻ to retry": "Radar nije dostupan · dodirnite ↻ za ponovni pokušaj",
+  "Loading radar frames · playback will start when ready": "Učitavanje radarskih kadrova · reprodukcija će započeti kada budu spremni",
+  "Radar map is not ready · tap play to retry": "Radarska karta nije spremna · dodirnite reprodukciju za ponovni pokušaj",
+  "Waiting for radar map layout…": "Čeka se raspored radarske karte…",
+  "Animation could not load · tap play to retry": "Animaciju nije moguće učitati · dodirnite reprodukciju za ponovni pokušaj",
+  "Preparing animation · %d/%d frames": "Priprema animacije · %d/%d kadrova",
+  "Warnings for %s. Follow the issuing authority's instructions.": "Upozorenja za %s. Slijedite upute tijela koje je izdalo upozorenje.",
+  "Until %s": "Do %s",
+  "Hourly data is partial · %s": "Podaci po satima nepotpuni su · %s",
+  "Free: 600/min · 5k/hour · 10k/day · 300k/month.": "Besplatno: 600/min · 5k/sat · 10k/dan · 300k/mjesec.",
+  "Weather": "Vrijeme"
+}

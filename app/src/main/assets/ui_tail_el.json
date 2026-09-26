@@ -1,0 +1,14 @@
+{
+  "Radar refresh timed out · showing current frame · tap ↻ to retry": "Έληξε το χρονικό όριο ανανέωσης του ραντάρ · εμφανίζεται το τρέχον καρέ · πατήστε ↻ για νέα προσπάθεια",
+  "Radar unavailable · tap ↻ to retry": "Το ραντάρ δεν είναι διαθέσιμο · πατήστε ↻ για νέα προσπάθεια",
+  "Loading radar frames · playback will start when ready": "Φόρτωση καρέ ραντάρ · η αναπαραγωγή θα ξεκινήσει όταν είναι έτοιμα",
+  "Radar map is not ready · tap play to retry": "Ο χάρτης ραντάρ δεν είναι έτοιμος · πατήστε αναπαραγωγή για νέα προσπάθεια",
+  "Waiting for radar map layout…": "Αναμονή για τη διάταξη του χάρτη ραντάρ…",
+  "Animation could not load · tap play to retry": "Δεν ήταν δυνατή η φόρτωση της κινούμενης εικόνας · πατήστε αναπαραγωγή για νέα προσπάθεια",
+  "Preparing animation · %d/%d frames": "Προετοιμασία κινούμενης εικόνας · %d/%d καρέ",
+  "Warnings for %s. Follow the issuing authority's instructions.": "Προειδοποιήσεις για %s. Ακολουθήστε τις οδηγίες της αρχής που εξέδωσε την προειδοποίηση.",
+  "Until %s": "Έως %s",
+  "Hourly data is partial · %s": "Τα ωριαία δεδομένα είναι ελλιπή · %s",
+  "Free: 600/min · 5k/hour · 10k/day · 300k/month.": "Δωρεάν: 600/λεπτό · 5k/ώρα · 10k/ημέρα · 300k/μήνα.",
+  "Weather": "Καιρός"
+}

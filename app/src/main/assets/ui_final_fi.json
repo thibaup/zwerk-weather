@@ -1,0 +1,23 @@
+{
+  "Enter a precise forecast point. Signed decimal coordinates are supported.": "Anna tarkka ennustepiste. Etumerkillisiä desimaalikoordinaatteja tuetaan.",
+  "City search isn't available on this device right now.": "Kaupunkihaku ei ole tällä laitteella juuri nyt käytettävissä.",
+  "The selected result had coordinates outside the valid latitude/longitude range.": "Valitun tuloksen koordinaatit olivat sallitun leveys-/pituusastealueen ulkopuolella.",
+  "OFFICIAL WEATHER ALERT": "VIRALLINEN SÄÄVAROITUS",
+  "%d active alerts": "Aktiivisia varoituksia: %d",
+  "Source: %s": "Lähde: %s",
+  "Open alert source %s": "Avaa varoituksen lähde %s",
+  "Tap for official details.": "Napauta nähdäksesi viralliset tiedot.",
+  "Edit  ›": "Muokkaa  ›",
+  "DAILY LIMIT": "PÄIVITTÄINEN RAJA",
+  "MONTHLY LIMIT": "KUUKAUSITTAINEN RAJA",
+  "Set the maximum requests Zwerk Weather may send. Saving switches the profile to Custom.": "Määritä enimmäismäärä pyyntöjä, joita Zwerk Weather saa lähettää. Tallentaminen vaihtaa profiilin Mukautetuksi.",
+  "GOOGLE USAGE & LIMITS": "GOOGLE-KÄYTTÖ JA RAJAT",
+  "RADAR & MAP TILES": "TUTKA JA KARTTARUUDUT",
+  "Weather/Air Quality 8,000/mo · Pollen 4,000/mo.": "Sää/ilmanlaatu 8,000/mo · Siitepöly 4,000/mo.",
+  "Weather/Air Quality 10,000/mo · Pollen 5,000/mo · local pacing uses Pacific time.": "Sää/ilmanlaatu 10,000/mo · Siitepöly 5,000/mo · paikallinen tahdistus käyttää Tyynenmeren aikaa.",
+  "Open-Meteo limits ↗": "Open-Meteo-rajat ↗",
+  "On-demand frames · app paced below 100 requests/IP/minute": "Kuvat pyynnöstä · sovellus pitää tahdin alle 100 pyyntöä/IP/minuutti",
+  "Visible map tiles only · locally cached for 14 days": "Vain näkyvät karttaruudut · paikallisesti välimuistissa 14 päivää",
+  "Google caps follow Pacific time. Counts cover this device only.": "Google-rajat noudattavat Tyynenmeren aikaa. Laskurit koskevat vain tätä laitetta.",
+  "View Google pricing ↗": "Näytä Google-hinnoittelu ↗"
+}

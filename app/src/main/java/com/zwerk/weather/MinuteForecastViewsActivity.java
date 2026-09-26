@@ -303,7 +303,7 @@ abstract class MinuteForecastViewsActivity extends ForecastViewsActivity {
                 markerPaint.setColor(Color.argb(238, 255, 184, 42));
                 canvas.drawLine(nowX, plotTop, nowX, plotBottom, markerPaint);
 
-                String nowLabel = "Now";
+                String nowLabel = UiTranslations.text(getContext(), "Now");
                 textPaint.setTypeface(Typeface.create("sans-serif", Typeface.BOLD));
                 textPaint.setTextAlign(Paint.Align.CENTER);
                 textPaint.setColor(Color.rgb(255, 205, 72));
@@ -363,9 +363,12 @@ abstract class MinuteForecastViewsActivity extends ForecastViewsActivity {
             textPaint.setColor(Color.argb(188, 255, 255, 255));
             textPaint.setTextAlign(Paint.Align.LEFT);
             float labelX = plotRight + dp(7);
-            canvas.drawText("Light", labelX, (lightTop + plotBottom) * 0.5f + dp(3), textPaint);
-            canvas.drawText("Moderate", labelX, (moderateTop + lightTop) * 0.5f + dp(3), textPaint);
-            canvas.drawText("Heavy", labelX, (plotTop + moderateTop) * 0.5f + dp(3), textPaint);
+            canvas.drawText(UiTranslations.text(getContext(), "Light"), labelX,
+                    (lightTop + plotBottom) * 0.5f + dp(3), textPaint);
+            canvas.drawText(UiTranslations.text(getContext(), "Moderate"), labelX,
+                    (moderateTop + lightTop) * 0.5f + dp(3), textPaint);
+            canvas.drawText(UiTranslations.text(getContext(), "Heavy"), labelX,
+                    (plotTop + moderateTop) * 0.5f + dp(3), textPaint);
         }
 
         private void drawTimeTicks(Canvas canvas) {
@@ -511,17 +514,21 @@ abstract class MinuteForecastViewsActivity extends ForecastViewsActivity {
 
         private void updateAccessibility(boolean announce) {
             if (segments.isEmpty()) {
-                setContentDescription("Minute precipitation graph, no returned segments");
+                setContentDescription(UiTranslations.text(getContext(),
+                        "Minute precipitation graph, no returned segments"));
                 return;
             }
             MinuteSegment segment = segments.get(Math.max(0, Math.min(selectedIndex, segments.size() - 1)));
             Instant selectedInstant = Instant.ofEpochMilli(selectedTimeMillis);
-            String detail = minuteSelectionDetail(segment, selectedInstant, zone);
-            String description = "Minute precipitation graph. " + detail
-                    + ". Swipe or use left and right to move in two-minute steps.";
+            String detail = localizedMinuteSelectionDetail(getContext(), segment,
+                    selectedInstant, zone);
+            String description = UiTranslations.text(getContext(), "Minute precipitation graph. ")
+                    + detail + UiTranslations.text(getContext(),
+                    ". Swipe or use left and right to move in two-minute steps.");
             setContentDescription(description);
             if (Build.VERSION.SDK_INT >= 30) {
-                setStateDescription("Selected " + formatTime(selectedInstant, zone));
+                setStateDescription(UiTranslations.text(getContext(), "Selected ")
+                        + formatTime(selectedInstant, zone));
             }
             if (announce && isShown()) announceForAccessibility(detail);
         }

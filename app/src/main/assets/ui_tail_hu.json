@@ -1,0 +1,14 @@
+{
+  "Radar refresh timed out · showing current frame · tap ↻ to retry": "A radar frissítése túllépte az időkorlátot · az aktuális képkocka látható · koppintson a ↻ ikonra az újrapróbálkozáshoz",
+  "Radar unavailable · tap ↻ to retry": "A radar nem érhető el · koppintson a ↻ ikonra az újrapróbálkozáshoz",
+  "Loading radar frames · playback will start when ready": "Radar-képkockák betöltése · a lejátszás akkor indul, amikor elkészültek",
+  "Radar map is not ready · tap play to retry": "A radartérkép még nem áll készen · koppintson a lejátszásra az újrapróbálkozáshoz",
+  "Waiting for radar map layout…": "Várakozás a radartérkép elrendezésére…",
+  "Animation could not load · tap play to retry": "Az animáció nem tölthető be · koppintson a lejátszásra az újrapróbálkozáshoz",
+  "Preparing animation · %d/%d frames": "Animáció előkészítése · %d/%d képkocka",
+  "Warnings for %s. Follow the issuing authority's instructions.": "Figyelmeztetések ehhez: %s. Kövesse a figyelmeztetést kiadó hatóság utasításait.",
+  "Until %s": "Eddig: %s",
+  "Hourly data is partial · %s": "Az óránkénti adatok hiányosak · %s",
+  "Free: 600/min · 5k/hour · 10k/day · 300k/month.": "Ingyenes: 600/perc · 5k/óra · 10k/nap · 300k/hónap.",
+  "Weather": "Időjárás"
+}

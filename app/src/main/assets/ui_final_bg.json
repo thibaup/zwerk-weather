@@ -1,0 +1,23 @@
+{
+  "Enter a precise forecast point. Signed decimal coordinates are supported.": "Въведете точна точка за прогноза. Поддържат се десетични координати със знак.",
+  "City search isn't available on this device right now.": "Търсенето на градове в момента не е налично на това устройство.",
+  "The selected result had coordinates outside the valid latitude/longitude range.": "Избраният резултат съдържаше координати извън валидния диапазон за географска ширина/дължина.",
+  "OFFICIAL WEATHER ALERT": "ОФИЦИАЛНО ПРЕДУПРЕЖДЕНИЕ ЗА ВРЕМЕТО",
+  "%d active alerts": "Активни предупреждения: %d",
+  "Source: %s": "Източник: %s",
+  "Open alert source %s": "Отваряне на източника на предупреждението %s",
+  "Tap for official details.": "Докоснете за официални подробности.",
+  "Edit  ›": "Редактиране  ›",
+  "DAILY LIMIT": "ДНЕВЕН ЛИМИТ",
+  "MONTHLY LIMIT": "МЕСЕЧЕН ЛИМИТ",
+  "Set the maximum requests Zwerk Weather may send. Saving switches the profile to Custom.": "Задайте максималния брой заявки, които Zwerk Weather може да изпраща. При запазване профилът се превключва на Персонализиран.",
+  "GOOGLE USAGE & LIMITS": "ИЗПОЛЗВАНЕ И ЛИМИТИ НА GOOGLE",
+  "RADAR & MAP TILES": "РАДАР И ПЛОЧКИ НА КАРТАТА",
+  "Weather/Air Quality 8,000/mo · Pollen 4,000/mo.": "Време/качество на въздуха 8,000/mo · Полени 4,000/mo.",
+  "Weather/Air Quality 10,000/mo · Pollen 5,000/mo · local pacing uses Pacific time.": "Време/качество на въздуха 10,000/mo · Полени 5,000/mo · локалното темпо използва тихоокеанско време.",
+  "Open-Meteo limits ↗": "Лимити на Open-Meteo ↗",
+  "On-demand frames · app paced below 100 requests/IP/minute": "Кадри при поискване · приложението поддържа темп под 100 заявки/IP/минута",
+  "Visible map tiles only · locally cached for 14 days": "Само видими плочки на картата · локално кеширани за 14 дни",
+  "Google caps follow Pacific time. Counts cover this device only.": "Лимитите на Google следват тихоокеанското време. Броячите се отнасят само за това устройство.",
+  "View Google pricing ↗": "Вижте цените на Google ↗"
+}

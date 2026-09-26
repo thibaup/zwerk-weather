@@ -92,6 +92,12 @@ public class MainActivity extends WeatherSettingsFlowActivity implements DeviceL
     private static final int PAGE_OVERVIEW = 0;
     private static final int PAGE_PRECIPITATION = 1;
     private static final int PAGE_RADAR = 2;
+    private static final String PREF_SUPPORT_FIRST_OPEN = "support_first_open_at";
+    private static final String PREF_SUPPORT_LAUNCH_COUNT = "support_launch_count";
+    private static final long SUPPORT_PROMPT_DELAY_MILLIS = 3L * 24L * 60L * 60L * 1000L;
+    private final Handler supportPromptHandler = new Handler(Looper.getMainLooper());
+    private final Runnable supportPromptTask = this::showSupportPromptIfEligible;
+    private Dialog supportPromptDialog;
     private ForecastSwipeLayout forecastSwipeLayout;
     private LinearLayout radarPageContent;
     private RadarPageView radarPageView;
@@ -125,8 +131,14 @@ public class MainActivity extends WeatherSettingsFlowActivity implements DeviceL
         }
     };
 
+    @Override
+    protected void attachBaseContext(Context newBase) {
+        super.attachBaseContext(AppLocaleManager.wrap(newBase));
+    }
+
     protected void onCreate(Bundle state) {
         super.onCreate(state);
+        recordSupportPromptLaunch();
         RainAlertManager.reconcile(this);
         weatherPreferences = new WeatherPreferences(this);
         forecastDiskCache = new ForecastDiskCache(this);
@@ -161,7 +173,7 @@ public class MainActivity extends WeatherSettingsFlowActivity implements DeviceL
         buildShell();
         content.postDelayed(() -> UpdateChecker.checkForUpdates(this, false), 1800L);
         if (!OpenMeteoConfig.isOpenMeteo(this) && !hasConfiguredApiKey()) {
-            status.setText("Google API key required");
+            status.setText(UiTranslations.text(this, "Google API key required"));
             progress.setVisibility(View.GONE);
             showApiKeySetupDialog();
             return;
@@ -306,12 +318,12 @@ public class MainActivity extends WeatherSettingsFlowActivity implements DeviceL
         toolbar.addView(locationArea, new LinearLayout.LayoutParams(0, dp(52), 1));
 
         HeaderGlyphButton places = new HeaderGlyphButton(this, HeaderGlyphButton.MENU_PLUS);
-        places.setContentDescription("Choose forecast location");
+        places.setContentDescription(UiTranslations.text(this, "Choose forecast location"));
         places.setOnClickListener(v -> openCityManager());
         toolbar.addView(places, new LinearLayout.LayoutParams(dp(44), dp(44)));
 
         HeaderGlyphButton settings = new HeaderGlyphButton(this, HeaderGlyphButton.SETTINGS);
-        settings.setContentDescription("Weather options");
+        settings.setContentDescription(UiTranslations.text(this, "Weather options"));
         settings.setOnClickListener(v -> openSettings());
         LinearLayout.LayoutParams settingsLp = new LinearLayout.LayoutParams(dp(44), dp(44));
         settingsLp.leftMargin = dp(2);
@@ -887,26 +899,31 @@ public class MainActivity extends WeatherSettingsFlowActivity implements DeviceL
     void updateForecastModeButtons() {
         if (overviewModeButton == null) return;
         overviewModeButton.setSelected(selectedForecastPage == PAGE_OVERVIEW);
-        overviewModeButton.setContentDescription("Overview forecast view"
-                + (selectedForecastPage == PAGE_OVERVIEW ? ", selected" : ", not selected"));
+        overviewModeButton.setContentDescription(UiTranslations.text(this, "Overview forecast view")
+                + ", " + UiTranslations.text(this,
+                selectedForecastPage == PAGE_OVERVIEW ? "selected" : "not selected"));
         if (precipitationModeButton != null) {
             precipitationModeButton.setSelected(selectedForecastPage == PAGE_PRECIPITATION);
-            precipitationModeButton.setContentDescription("Minute precipitation view"
-                    + (selectedForecastPage == PAGE_PRECIPITATION
-                    ? ", selected" : ", not selected"));
+            precipitationModeButton.setContentDescription(UiTranslations.text(this, "Minute precipitation view")
+                    + ", " + UiTranslations.text(this,
+                    selectedForecastPage == PAGE_PRECIPITATION ? "selected" : "not selected"));
         }
         if (radarModeButton != null) {
             radarModeButton.setSelected(selectedForecastPage == PAGE_RADAR);
-            radarModeButton.setContentDescription("Animated precipitation radar view"
-                    + (selectedForecastPage == PAGE_RADAR ? ", selected" : ", not selected"));
+            radarModeButton.setContentDescription(UiTranslations.text(this, "Animated precipitation radar view")
+                    + ", " + UiTranslations.text(this,
+                    selectedForecastPage == PAGE_RADAR ? "selected" : "not selected"));
         }
         if (Build.VERSION.SDK_INT >= 30) {
             overviewModeButton.setStateDescription(
-                    selectedForecastPage == PAGE_OVERVIEW ? "Selected" : "Not selected");
+                    UiTranslations.text(this, selectedForecastPage == PAGE_OVERVIEW
+                            ? "Selected" : "Not selected"));
             if (precipitationModeButton != null) precipitationModeButton.setStateDescription(
-                    selectedForecastPage == PAGE_PRECIPITATION ? "Selected" : "Not selected");
+                    UiTranslations.text(this, selectedForecastPage == PAGE_PRECIPITATION
+                            ? "Selected" : "Not selected"));
             if (radarModeButton != null) radarModeButton.setStateDescription(
-                    selectedForecastPage == PAGE_RADAR ? "Selected" : "Not selected");
+                    UiTranslations.text(this, selectedForecastPage == PAGE_RADAR
+                            ? "Selected" : "Not selected"));
         }
         setModeSwitchProgress(forecastPagePosition(selectedForecastPage));
     }
@@ -1046,8 +1063,8 @@ public class MainActivity extends WeatherSettingsFlowActivity implements DeviceL
     void notifyActiveForecastStatusChanged() {
         if (status == null) return;
         if (selectedForecastPage == PAGE_RADAR) {
-            status.setText(radarPageView == null
-                    ? "Radar data not loaded" : radarPageView.statusText());
+            status.setText(UiTranslations.text(this, radarPageView == null
+                    ? "Radar data not loaded" : radarPageView.statusText()));
             if (radarRefreshIndicatorActive
                     && (radarPageView == null || !radarPageView.isLoading())) {
                 radarRefreshIndicatorActive = false;
@@ -1056,7 +1073,7 @@ public class MainActivity extends WeatherSettingsFlowActivity implements DeviceL
             return;
         }
         if (selectedForecastPage == PAGE_PRECIPITATION) {
-            status.setText(minuteForecastStatusLabel());
+            status.setText(UiTranslations.text(this, minuteForecastStatusLabel()));
             if (precipitationRefreshIndicatorActive) {
                 MinuteForecastState state = minuteForecastStateForCurrentScope();
                 if (state == null || !state.loading) {
@@ -1069,10 +1086,10 @@ public class MainActivity extends WeatherSettingsFlowActivity implements DeviceL
         if (lastCurrentWeather != null) {
             status.setText(dataAgeLabel(lastCurrentWeather));
         } else if (weatherLoadActive) {
-            status.setText(OpenMeteoConfig.isOpenMeteo(this)
-                    ? "Loading Open-Meteo forecast…" : "Loading Google Weather data…");
+            status.setText(UiTranslations.text(this, OpenMeteoConfig.isOpenMeteo(this)
+                    ? "Loading Open-Meteo forecast…" : "Loading Google Weather data…"));
         } else {
-            status.setText("Weather data not loaded");
+            status.setText(UiTranslations.text(this, "Weather data not loaded"));
         }
     }
 
@@ -1108,9 +1125,10 @@ public class MainActivity extends WeatherSettingsFlowActivity implements DeviceL
     }
 
     private boolean statusShowsDataAge() {
-        if (status == null || status.getText() == null) return false;
-        String value = status.getText().toString().toLowerCase(Locale.ROOT);
-        return value.contains("published") || value.contains("updated");
+        return selectedForecastPage == PAGE_OVERVIEW
+                && lastCurrentWeather != null
+                && !lastCurrentWeather.has("_openMeteo")
+                && parseInstant(lastCurrentWeather.optString("currentTime", null)) != null;
     }
 
     private void stopStatusAgeRefresh() {
@@ -1209,7 +1227,7 @@ public class MainActivity extends WeatherSettingsFlowActivity implements DeviceL
                 writeApiKeyAtomically(candidate);
                 field.getText().clear();
                 error.setVisibility(View.GONE);
-                status.setText("Preparing Zwerk Weather…");
+                status.setText(UiTranslations.text(this, "Preparing Zwerk Weather…"));
                 progress.setVisibility(View.VISIBLE);
                 forceNextWeatherLoad = true;
                 dialog.dismiss();
@@ -1259,9 +1277,12 @@ public class MainActivity extends WeatherSettingsFlowActivity implements DeviceL
         panel.addView(heading, headingLp);
 
         TextView steps = text(
-                "1. Create or select a Google Cloud project and enable billing.\n"
-                        + "2. Enable Weather API. Enable Air Quality API and Pollen API too if you want those optional tiles.\n"
-                        + "3. Create a key. Add an Android app restriction with the package and SHA-1 below. Under API restrictions, allow every API you enabled, then paste the key below.",
+                UiTranslations.text(this,
+                        "1. Create or select a Google Cloud project and enable billing.")
+                        + "\n" + UiTranslations.text(this,
+                                "2. Enable Weather API. Enable Air Quality API and Pollen API too if you want those optional tiles.")
+                        + "\n" + UiTranslations.text(this,
+                                "3. Create a key. Add an Android app restriction with the package and SHA-1 below. Under API restrictions, allow every API you enabled, then paste the key below."),
                 12,
                 false,
                 SOFT_WHITE);
@@ -1272,7 +1293,8 @@ public class MainActivity extends WeatherSettingsFlowActivity implements DeviceL
 
         TextView identity = text(androidRestrictionIdentity(), 11, false, FAINT_WHITE);
         identity.setTextIsSelectable(true);
-        identity.setContentDescription("Android API key restriction identity. "
+        identity.setContentDescription(UiTranslations.text(this,
+                "Android API key restriction identity.") + " "
                 + androidRestrictionIdentity().replace("\n", ". "));
         LinearLayout.LayoutParams identityLp = new LinearLayout.LayoutParams(-1, -2);
         identityLp.topMargin = dp(8);
@@ -1299,13 +1321,15 @@ public class MainActivity extends WeatherSettingsFlowActivity implements DeviceL
         try {
             startActivity(new Intent(Intent.ACTION_VIEW, Uri.parse(address)));
         } catch (Exception ignored) {
-            Toast.makeText(this, "No browser is available to open this link.", Toast.LENGTH_SHORT).show();
+            Toast.makeText(this, UiTranslations.text(this,
+                    "No browser is available to open this link."), Toast.LENGTH_SHORT).show();
         }
     }
 
     String androidRestrictionIdentity() {
         String fingerprint = signingCertificateSha1();
-        return "Android restriction\nPackage: " + getPackageName()
+        return UiTranslations.text(this, "Android restriction") + "\n"
+                + UiTranslations.text(this, "Package") + ": " + getPackageName()
                 + (fingerprint.isEmpty() ? "" : "\nSHA-1: " + fingerprint);
     }
 
@@ -1330,7 +1354,7 @@ public class MainActivity extends WeatherSettingsFlowActivity implements DeviceL
 
     EditText apiKeyEditText() {
         EditText field = new EditText(this);
-        field.setHint("API key");
+        field.setHint(UiTranslations.text(this, "API key"));
         field.setTextColor(WHITE);
         field.setHintTextColor(Color.argb(110, 255, 255, 255));
         field.setTextSize(16);
@@ -1369,7 +1393,8 @@ public class MainActivity extends WeatherSettingsFlowActivity implements DeviceL
     }
 
     void showApiKeySaveFailure(TextView error) {
-        error.setText("Could not save the key. Check the value and try again.");
+        error.setText(UiTranslations.text(this,
+                "Could not save the key. Check the value and try again."));
         error.setVisibility(View.VISIBLE);
     }
 
@@ -1432,7 +1457,8 @@ public class MainActivity extends WeatherSettingsFlowActivity implements DeviceL
 
     @Override
     public void onLocationCheckStarted() {
-        if (status != null) status.setText("Finding your location…");
+        if (status != null) status.setText(UiTranslations.text(this,
+                "Finding your location…"));
     }
 
     @Override
@@ -1530,7 +1556,7 @@ public class MainActivity extends WeatherSettingsFlowActivity implements DeviceL
 
         TextView title = text("Forecast location", 23, false, WHITE);
         title.setTypeface(Typeface.create("sans-serif-medium", Typeface.NORMAL));
-        title.setContentDescription("Forecast location");
+        title.setContentDescription(UiTranslations.text(this, "Forecast location"));
         panel.addView(title);
 
         TextView explanation = text(
@@ -1582,7 +1608,8 @@ public class MainActivity extends WeatherSettingsFlowActivity implements DeviceL
         panel.addView(lon, lonFieldLp);
 
         Button useLocation = coordinateDialogButton("Use my location", false);
-        useLocation.setContentDescription("Use my location for the forecast");
+        useLocation.setContentDescription(UiTranslations.text(this,
+                "Use my location for the forecast"));
         LinearLayout.LayoutParams locationLp = new LinearLayout.LayoutParams(-1, dp(48));
         locationLp.topMargin = dp(18);
         panel.addView(useLocation, locationLp);
@@ -1595,12 +1622,13 @@ public class MainActivity extends WeatherSettingsFlowActivity implements DeviceL
         panel.addView(actions, actionsLp);
 
         Button cancel = coordinateDialogButton("Cancel", false);
-        cancel.setContentDescription("Cancel coordinate entry");
+        cancel.setContentDescription(UiTranslations.text(this, "Cancel coordinate entry"));
         LinearLayout.LayoutParams cancelLp = new LinearLayout.LayoutParams(0, dp(48), 1f);
         actions.addView(cancel, cancelLp);
 
         Button load = coordinateDialogButton("Load", true);
-        load.setContentDescription("Load forecast for these coordinates");
+        load.setContentDescription(UiTranslations.text(this,
+                "Load forecast for these coordinates"));
         LinearLayout.LayoutParams loadLp = new LinearLayout.LayoutParams(0, dp(48), 1f);
         loadLp.leftMargin = dp(10);
         actions.addView(load, loadLp);
@@ -1621,7 +1649,8 @@ public class MainActivity extends WeatherSettingsFlowActivity implements DeviceL
                 acceptLocation(newLat, newLon, null, false);
             } catch (NumberFormatException e) {
                 dialog.dismiss();
-                Toast.makeText(this, "Invalid coordinates", Toast.LENGTH_SHORT).show();
+                Toast.makeText(this, UiTranslations.text(this, "Invalid coordinates"),
+                        Toast.LENGTH_SHORT).show();
             }
         });
         lon.setOnEditorActionListener((view, actionId, event) -> {
@@ -1691,7 +1720,7 @@ public class MainActivity extends WeatherSettingsFlowActivity implements DeviceL
 
     Button coordinateDialogButton(String label, boolean primary) {
         Button button = new Button(this);
-        button.setText(label);
+        button.setText(UiTranslations.text(this, label));
         button.setAllCaps(false);
         button.setTextSize(13);
         button.setTextColor(WHITE);
@@ -1842,9 +1871,125 @@ public class MainActivity extends WeatherSettingsFlowActivity implements DeviceL
         refreshWeather(forceNetwork);
     }
 
+    @Override
+    void render(JSONObject current, JSONObject hourly, JSONObject daily, String responseUnit) {
+        super.render(current, hourly, daily, responseUnit);
+        scheduleSupportPrompt();
+    }
+
+    private void recordSupportPromptLaunch() {
+        android.content.SharedPreferences prefs = getSharedPreferences(UI_PREFS, MODE_PRIVATE);
+        if (prefs.getBoolean(SettingsActivity.PREF_SUPPORT_PROMPT_HANDLED, false)) return;
+        long firstOpen = prefs.getLong(PREF_SUPPORT_FIRST_OPEN, 0L);
+        android.content.SharedPreferences.Editor editor = prefs.edit();
+        if (firstOpen <= 0L) editor.putLong(PREF_SUPPORT_FIRST_OPEN, System.currentTimeMillis());
+        editor.putInt(PREF_SUPPORT_LAUNCH_COUNT,
+                Math.min(3, prefs.getInt(PREF_SUPPORT_LAUNCH_COUNT, 0) + 1)).apply();
+    }
+
+    private void scheduleSupportPrompt() {
+        supportPromptHandler.removeCallbacks(supportPromptTask);
+        android.content.SharedPreferences prefs = getSharedPreferences(UI_PREFS, MODE_PRIVATE);
+        long firstOpen = prefs.getLong(PREF_SUPPORT_FIRST_OPEN, 0L);
+        if (prefs.getBoolean(SettingsActivity.PREF_SUPPORT_PROMPT_HANDLED, false)
+                || firstOpen <= 0L
+                || System.currentTimeMillis() - firstOpen < SUPPORT_PROMPT_DELAY_MILLIS
+                || prefs.getInt(PREF_SUPPORT_LAUNCH_COUNT, 0) < 3) return;
+        supportPromptHandler.postDelayed(supportPromptTask, 3500L);
+    }
+
+    private void showSupportPromptIfEligible() {
+        if (isFinishing() || isDestroyed() || !hasWindowFocus()
+                || lastCurrentWeather == null || lastDailyWeather == null
+                || apiKeySetupDialog != null
+                || (supportPromptDialog != null && supportPromptDialog.isShowing())) return;
+        android.content.SharedPreferences prefs = getSharedPreferences(UI_PREFS, MODE_PRIVATE);
+        if (prefs.getBoolean(SettingsActivity.PREF_SUPPORT_PROMPT_HANDLED, false)) return;
+
+        Dialog dialog = new Dialog(this);
+        dialog.requestWindowFeature(Window.FEATURE_NO_TITLE);
+        dialog.setCancelable(true);
+        dialog.setCanceledOnTouchOutside(true);
+
+        LinearLayout panel = new LinearLayout(this);
+        panel.setOrientation(LinearLayout.VERTICAL);
+        panel.setPadding(dp(22), dp(22), dp(22), dp(18));
+        GradientDrawable background = new GradientDrawable(
+                GradientDrawable.Orientation.TOP_BOTTOM,
+                new int[]{Color.rgb(22, 48, 77), Color.rgb(11, 25, 43)});
+        background.setCornerRadius(dp(24));
+        background.setStroke(dp(1), Color.argb(65, 255, 255, 255));
+        panel.setBackground(background);
+
+        TextView star = text("★", 25, true, ACCENT_YELLOW);
+        star.setGravity(Gravity.CENTER);
+        star.setBackground(roundedBg(Color.argb(32, 255, 194, 24), dp(14)));
+        star.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
+        panel.addView(star, new LinearLayout.LayoutParams(dp(48), dp(48)));
+
+        TextView title = text("Enjoying Zwerk Weather?", 22, true, WHITE);
+        LinearLayout.LayoutParams titleLp = new LinearLayout.LayoutParams(-1, -2);
+        titleLp.topMargin = dp(15);
+        panel.addView(title, titleLp);
+
+        TextView description = text(
+                "Zwerk Weather is ad-free and open source. A GitHub star helps more people discover the project.",
+                14, false, SOFT_WHITE);
+        description.setLineSpacing(dp(3), 1f);
+        LinearLayout.LayoutParams descriptionLp = new LinearLayout.LayoutParams(-1, -2);
+        descriptionLp.topMargin = dp(8);
+        panel.addView(description, descriptionLp);
+
+        Button starButton = coordinateDialogButton("Star on GitHub ↗", true);
+        LinearLayout.LayoutParams starLp = new LinearLayout.LayoutParams(-1, dp(48));
+        starLp.topMargin = dp(22);
+        panel.addView(starButton, starLp);
+        starButton.setOnClickListener(v -> {
+            dialog.dismiss();
+            try {
+                startActivity(new Intent(Intent.ACTION_VIEW,
+                        Uri.parse(SettingsActivity.PROJECT_GITHUB_URL)));
+            } catch (Exception ignored) {
+                Toast.makeText(this, UiTranslations.text(this,
+                        "No browser is available to open this link."), Toast.LENGTH_SHORT).show();
+            }
+        });
+
+        Button close = coordinateDialogButton("Close", false);
+        LinearLayout.LayoutParams closeLp = new LinearLayout.LayoutParams(-1, dp(48));
+        closeLp.topMargin = dp(8);
+        panel.addView(close, closeLp);
+        close.setOnClickListener(v -> dialog.dismiss());
+
+        dialog.setOnDismissListener(ignored -> {
+            if (supportPromptDialog == dialog) supportPromptDialog = null;
+        });
+        dialog.setContentView(panel);
+        dialog.show();
+        supportPromptDialog = dialog;
+        prefs.edit().putBoolean(SettingsActivity.PREF_SUPPORT_PROMPT_HANDLED, true).apply();
+
+        Window window = dialog.getWindow();
+        if (window != null) {
+            window.setBackgroundDrawable(new ColorDrawable(Color.TRANSPARENT));
+            window.addFlags(WindowManager.LayoutParams.FLAG_DIM_BEHIND);
+            WindowManager.LayoutParams attributes = window.getAttributes();
+            attributes.dimAmount = 0.62f;
+            window.setAttributes(attributes);
+            window.setGravity(Gravity.CENTER);
+            window.getDecorView().setPadding(0, 0, 0, 0);
+            int width = Math.min(getResources().getDisplayMetrics().widthPixels - dp(32), dp(420));
+            window.setLayout(Math.max(1, width), ViewGroup.LayoutParams.WRAP_CONTENT);
+        }
+    }
+
 
     protected void onResume() {
         super.onResume();
+        if (AppLocaleManager.isContextStale(this)) {
+            recreate();
+            return;
+        }
         if (radarPageView != null && selectedForecastPage == PAGE_RADAR) {
             radarPageView.setActive(true);
         }
@@ -1856,6 +2001,7 @@ public class MainActivity extends WeatherSettingsFlowActivity implements DeviceL
         for (SunTrackView track : sunTrackViews) {
             if (track != null) track.setAnimationRunning(enabled);
         }
+        scheduleSupportPrompt();
 
         if (!hasResumedOnce) {
             hasResumedOnce = true;
@@ -1871,6 +2017,7 @@ public class MainActivity extends WeatherSettingsFlowActivity implements DeviceL
 
     @Override
     protected void onPause() {
+        supportPromptHandler.removeCallbacks(supportPromptTask);
         stopStatusAgeRefresh();
         forecastPreview.restore(false);
         if (radarPageView != null) radarPageView.setActive(false);
@@ -1883,6 +2030,8 @@ public class MainActivity extends WeatherSettingsFlowActivity implements DeviceL
 
     @Override
     protected void onDestroy() {
+        supportPromptHandler.removeCallbacks(supportPromptTask);
+        if (supportPromptDialog != null) supportPromptDialog.dismiss();
         stopStatusAgeRefresh();
         if (radarPageView != null) radarPageView.dispose();
         if (locationRefreshCoordinator != null) locationRefreshCoordinator.destroy();

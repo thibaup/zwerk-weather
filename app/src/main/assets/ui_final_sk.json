@@ -1,0 +1,23 @@
+{
+  "Enter a precise forecast point. Signed decimal coordinates are supported.": "Zadajte presný bod predpovede. Podporované sú desatinné súradnice so znamienkom.",
+  "City search isn't available on this device right now.": "Vyhľadávanie miest momentálne nie je na tomto zariadení k dispozícii.",
+  "The selected result had coordinates outside the valid latitude/longitude range.": "Vybraný výsledok obsahoval súradnice mimo platného rozsahu zemepisnej šírky/dĺžky.",
+  "OFFICIAL WEATHER ALERT": "OFICIÁLNA VÝSTRAHA PRED POČASÍM",
+  "%d active alerts": "Aktívne výstrahy: %d",
+  "Source: %s": "Zdroj: %s",
+  "Open alert source %s": "Otvoriť zdroj výstrahy %s",
+  "Tap for official details.": "Ťuknutím zobrazíte oficiálne podrobnosti.",
+  "Edit  ›": "Upraviť  ›",
+  "DAILY LIMIT": "DENNÝ LIMIT",
+  "MONTHLY LIMIT": "MESAČNÝ LIMIT",
+  "Set the maximum requests Zwerk Weather may send. Saving switches the profile to Custom.": "Nastavte maximálny počet požiadaviek, ktoré môže Zwerk Weather odoslať. Uložením sa profil prepne na Vlastný.",
+  "GOOGLE USAGE & LIMITS": "VYUŽITIE A LIMITY GOOGLE",
+  "RADAR & MAP TILES": "RADAR A MAPOVÉ DLAŽDICE",
+  "Weather/Air Quality 8,000/mo · Pollen 4,000/mo.": "Počasie/kvalita ovzdušia 8,000/mo · Peľ 4,000/mo.",
+  "Weather/Air Quality 10,000/mo · Pollen 5,000/mo · local pacing uses Pacific time.": "Počasie/kvalita ovzdušia 10,000/mo · Peľ 5,000/mo · miestne riadenie tempa používa pacifický čas.",
+  "Open-Meteo limits ↗": "Limity Open-Meteo ↗",
+  "On-demand frames · app paced below 100 requests/IP/minute": "Snímky na vyžiadanie · aplikácia udržiava tempo pod 100 požiadaviek/IP/minútu",
+  "Visible map tiles only · locally cached for 14 days": "Iba viditeľné mapové dlaždice · lokálne uložené vo vyrovnávacej pamäti na 14 dní",
+  "Google caps follow Pacific time. Counts cover this device only.": "Limity Google sa riadia pacifickým časom. Počty sa týkajú iba tohto zariadenia.",
+  "View Google pricing ↗": "Zobraziť ceny Google ↗"
+}

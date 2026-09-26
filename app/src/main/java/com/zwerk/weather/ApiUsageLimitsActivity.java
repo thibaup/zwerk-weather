@@ -3,6 +3,7 @@ package com.zwerk.weather;
 import android.app.Activity;
 import android.app.AlertDialog;
 import android.app.Dialog;
+import android.content.Context;
 import android.content.Intent;
 import android.graphics.Color;
 import android.graphics.Typeface;
@@ -35,6 +36,11 @@ public final class ApiUsageLimitsActivity extends Activity {
     private static final int PRIMARY = Color.rgb(246, 249, 253);
     private static final int SECONDARY = Color.rgb(190, 207, 226);
     private static final int ACCENT = Color.rgb(143, 207, 255);
+
+    @Override
+    protected void attachBaseContext(Context newBase) {
+        super.attachBaseContext(AppLocaleManager.wrap(newBase));
+    }
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -77,7 +83,7 @@ public final class ApiUsageLimitsActivity extends Activity {
         back.setIncludeFontPadding(false);
         back.setPadding(0, 0, 0, dp(4));
         back.setBackground(controlBackground());
-        back.setContentDescription("Back");
+        back.setContentDescription(UiTranslations.text(this, "Back"));
         back.setClickable(true);
         back.setFocusable(true);
         back.setOnClickListener(v -> finish());
@@ -96,7 +102,8 @@ public final class ApiUsageLimitsActivity extends Activity {
         intro.setPadding(dp(4), dp(8), dp(4), dp(16));
         page.addView(intro);
 
-        addHeading(page, "GOOGLE · " + ApiRequestBudgetManager.profileLabel(this).toUpperCase(Locale.ROOT));
+        addHeading(page, "GOOGLE · " + UiTranslations.text(this,
+                ApiRequestBudgetManager.profileLabel(this)).toUpperCase(Locale.getDefault()));
         addProfile(page, "Off", "No local cap; usage is still counted.",
                 ApiRequestBudgetManager.PROFILE_OFF);
         addProfile(page, "Conservative", "Weather/Air Quality 8,000/mo · Pollen 4,000/mo.",
@@ -113,8 +120,9 @@ public final class ApiUsageLimitsActivity extends Activity {
         addHeading(page, "OPEN-METEO");
         addOpenMeteoUsage(page);
         TextView openMeteoNote = text(
-                "Free: 600/min · 5k/hour · 10k/day · 300k/month.\n"
-                        + "Local requests; provider call totals may differ.",
+                UiTranslations.text(this, "Free: 600/min · 5k/hour · 10k/day · 300k/month.")
+                        + "\n" + UiTranslations.text(this,
+                        "Local requests; provider call totals may differ."),
                 12.5f, SECONDARY);
         openMeteoNote.setPadding(dp(5), dp(4), dp(5), dp(7));
         page.addView(openMeteoNote);
@@ -212,9 +220,9 @@ public final class ApiUsageLimitsActivity extends Activity {
         top.addView(edit, new LinearLayout.LayoutParams(dp(70), dp(40)));
         card.addView(top);
 
-        String today = String.format(Locale.getDefault(), "Today  %,d / %s",
+        String today = String.format(Locale.getDefault(), UiTranslations.text(this, "Today  %,d / %s"),
                 usage.today, dailyLimitLabel(usage.limits.daily));
-        String month = String.format(Locale.getDefault(), "This month  %,d / %s",
+        String month = String.format(Locale.getDefault(), UiTranslations.text(this, "This month  %,d / %s"),
                 usage.month, ApiRequestBudgetManager.formatLimit(usage.limits.monthly));
         TextView counters = text(today + "\n" + month, 14f, PRIMARY);
         counters.setLineSpacing(dp(5), 1f);
@@ -245,11 +253,13 @@ public final class ApiUsageLimitsActivity extends Activity {
         top.addView(edit, new LinearLayout.LayoutParams(dp(70), dp(40)));
         card.addView(top);
 
-        TextView counters = text(String.format(Locale.getDefault(),
-                "Today  %,d / %s\nThis month  %,d / %s",
-                usage.today, dailyLimitLabel(usage.dailyLimit),
-                usage.month, ApiRequestBudgetManager.formatLimit(usage.monthlyLimit)),
-                14f, PRIMARY);
+        String today = String.format(Locale.getDefault(),
+                UiTranslations.text(this, "Today  %,d / %s"),
+                usage.today, dailyLimitLabel(usage.dailyLimit));
+        String month = String.format(Locale.getDefault(),
+                UiTranslations.text(this, "This month  %,d / %s"),
+                usage.month, ApiRequestBudgetManager.formatLimit(usage.monthlyLimit));
+        TextView counters = text(today + "\n" + month, 14f, PRIMARY);
         counters.setLineSpacing(dp(5), 1f);
         counters.setPadding(0, dp(11), 0, 0);
         card.addView(counters);
@@ -356,8 +366,10 @@ public final class ApiUsageLimitsActivity extends Activity {
         detail.setPadding(0, dp(3), 0, 0);
         card.addView(detail);
         String counts = String.format(Locale.getDefault(),
-                "Today  %,d\nThis month  %,d",
-                RadarUsageCounter.today(this, rainViewer),
+                UiTranslations.text(this, "Today  %,d"),
+                RadarUsageCounter.today(this, rainViewer)) + "\n"
+                + String.format(Locale.getDefault(),
+                UiTranslations.text(this, "This month  %,d"),
                 RadarUsageCounter.month(this, rainViewer));
         TextView usage = text(counts, 14f, PRIMARY);
         usage.setLineSpacing(dp(5), 1f);
@@ -386,7 +398,9 @@ public final class ApiUsageLimitsActivity extends Activity {
         panel.setPadding(dp(20), dp(20), dp(20), dp(18));
         panel.setBackground(dialogBackground());
 
-        TextView title = text(category.label + " limits", 22f, PRIMARY);
+        TextView title = text(String.format(Locale.getDefault(),
+                UiTranslations.text(this, "Limits for %s"),
+                UiTranslations.text(this, category.label)), 22f, PRIMARY);
         title.setTypeface(Typeface.create("sans-serif-medium", Typeface.NORMAL));
         panel.addView(title);
 
@@ -459,7 +473,7 @@ public final class ApiUsageLimitsActivity extends Activity {
 
     private EditText numberField(String hint, int value) {
         EditText field = new EditText(this);
-        field.setHint(hint);
+        field.setHint(UiTranslations.text(this, hint));
         field.setHintTextColor(Color.argb(155, 190, 207, 226));
         field.setTextColor(PRIMARY);
         field.setTextSize(17f);
@@ -486,7 +500,7 @@ public final class ApiUsageLimitsActivity extends Activity {
     private Button dialogButton(String label, boolean primary) {
         Button button = new Button(this);
         button.setAllCaps(false);
-        button.setText(label);
+        button.setText(UiTranslations.text(this, label));
         button.setTextSize(14f);
         button.setTypeface(Typeface.create("sans-serif-medium", Typeface.NORMAL));
         button.setTextColor(PRIMARY);
@@ -523,10 +537,11 @@ public final class ApiUsageLimitsActivity extends Activity {
 
     private void confirmReset() {
         new AlertDialog.Builder(this)
-                .setTitle("Reset usage counters?")
-                .setMessage("This clears local counters only. Provider usage and billing are unaffected.")
-                .setNegativeButton("Cancel", null)
-                .setPositiveButton("Reset", (dialog, which) -> {
+                .setTitle(UiTranslations.text(this, "Reset usage counters?"))
+                .setMessage(UiTranslations.text(this,
+                        "This clears local counters only. Provider usage and billing are unaffected."))
+                .setNegativeButton(UiTranslations.text(this, "Cancel"), null)
+                .setPositiveButton(UiTranslations.text(this, "Reset"), (dialog, which) -> {
                      ApiRequestBudgetManager.resetUsage(this);
                      OpenMeteoRequestBudgetManager.resetUsage(this);
                      RadarUsageCounter.reset(this);
@@ -566,7 +581,7 @@ public final class ApiUsageLimitsActivity extends Activity {
 
     private Button button(String label) {
         Button button = new Button(this);
-        button.setText(label);
+        button.setText(UiTranslations.text(this, label));
         button.setTextColor(PRIMARY);
         button.setTextSize(14f);
         button.setAllCaps(false);
@@ -585,7 +600,7 @@ public final class ApiUsageLimitsActivity extends Activity {
 
     private TextView text(String value, float size, int color) {
         TextView view = new TextView(this);
-        view.setText(value);
+        view.setText(UiTranslations.text(this, value));
         view.setTextSize(size);
         view.setTextColor(color);
         view.setFontFeatureSettings("kern");

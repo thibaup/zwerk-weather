@@ -35,6 +35,7 @@ public class WeatherWidgetProvider extends AppWidgetProvider {
     public static final String KEY_TEMPERATURE = "temperature";
     public static final String KEY_UNIT = "unit";
     public static final String KEY_CONDITION = "condition";
+    public static final String KEY_CONDITION_TYPE = "condition_type";
     public static final String KEY_DAYTIME = "daytime";
     public static final String KEY_ADVICE = "advice";
     public static final String KEY_UPDATED_EPOCH_MS = "updated_epoch_ms";
@@ -161,9 +162,10 @@ public class WeatherWidgetProvider extends AppWidgetProvider {
     }
 
     private static RemoteViews buildViews(Context context, int appWidgetId, Bundle optionsHint) {
-        RemoteViews compact = buildMode(context, WidgetMode.COMPACT);
-        RemoteViews normal = buildMode(context, WidgetMode.NORMAL);
-        RemoteViews tall = buildMode(context, WidgetMode.TALL);
+        Context localized = AppLocaleManager.wrap(context);
+        RemoteViews compact = buildMode(localized, WidgetMode.COMPACT);
+        RemoteViews normal = buildMode(localized, WidgetMode.NORMAL);
+        RemoteViews tall = buildMode(localized, WidgetMode.TALL);
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
             try {
@@ -203,7 +205,7 @@ public class WeatherWidgetProvider extends AppWidgetProvider {
 
         SharedPreferences prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
         if (!prefs.getBoolean(KEY_HAS_SNAPSHOT, false)) {
-            renderPlaceholder(views, mode);
+            renderPlaceholder(context, views, mode);
             return views;
         }
 
@@ -211,20 +213,23 @@ public class WeatherWidgetProvider extends AppWidgetProvider {
         int temperature = prefs.getInt(KEY_TEMPERATURE, Integer.MIN_VALUE);
         String unit = clean(prefs.getString(KEY_UNIT, "°C"), "°C");
         String condition = clean(prefs.getString(KEY_CONDITION, "Forecast"), "Forecast");
+        String conditionType = clean(prefs.getString(KEY_CONDITION_TYPE, condition), condition);
         boolean daytime = prefs.getBoolean(KEY_DAYTIME, true);
         int high = prefs.getInt(KEY_DAILY_HIGH, Integer.MIN_VALUE);
         int low = prefs.getInt(KEY_DAILY_LOW, Integer.MIN_VALUE);
         String advice = clean(prefs.getString(KEY_ADVICE, "Open Zwerk Weather for details"),
                 "Open Zwerk Weather for details");
+        String localizedAdvice = localizeAdvice(context, advice);
 
         views.setTextViewText(R.id.widget_city, city);
         views.setTextViewText(R.id.widget_temperature,
                 temperature == Integer.MIN_VALUE ? "—" : Integer.toString(temperature));
         views.setTextViewText(R.id.widget_unit, compactUnit(unit));
-        views.setTextViewText(R.id.widget_condition, condition);
-        views.setImageViewResource(R.id.widget_glyph, iconFor(condition, daytime));
-        views.setTextViewText(R.id.widget_high_low, highLowLabel(high, low));
-        views.setImageViewResource(R.id.widget_scene, sceneFor(condition, daytime));
+        String localizedCondition = UiTranslations.text(context, condition);
+        views.setTextViewText(R.id.widget_condition, localizedCondition);
+        views.setImageViewResource(R.id.widget_glyph, iconFor(conditionType, daytime));
+        views.setTextViewText(R.id.widget_high_low, highLowLabel(context, high, low));
+        views.setImageViewResource(R.id.widget_scene, sceneFor(conditionType, daytime));
         views.setViewVisibility(R.id.widget_hour_strip,
                 mode == WidgetMode.COMPACT ? View.GONE : View.VISIBLE);
         views.setViewVisibility(R.id.widget_glyph,
@@ -232,14 +237,16 @@ public class WeatherWidgetProvider extends AppWidgetProvider {
 
         if (mode == WidgetMode.NORMAL) {
             bindHourlyStrip(
+                    context,
                     views,
                     prefs.getString(KEY_HOURLY_JSON, ""),
                     NORMAL_HOUR_TIME_IDS,
                     NORMAL_HOUR_GLYPH_IDS,
                     NORMAL_HOUR_TEMP_IDS);
         } else if (mode == WidgetMode.TALL) {
-            views.setTextViewText(R.id.widget_advice, advice);
+            views.setTextViewText(R.id.widget_advice, localizedAdvice);
             bindHourlyStrip(
+                    context,
                     views,
                     prefs.getString(KEY_HOURLY_JSON, ""),
                     TALL_HOUR_TIME_IDS,
@@ -247,19 +254,34 @@ public class WeatherWidgetProvider extends AppWidgetProvider {
                     TALL_HOUR_TEMP_IDS);
         }
 
-        String range = highLowLabel(high, low);
+        String range = highLowLabel(context, high, low);
         views.setContentDescription(R.id.widget_root,
                 String.format(Locale.getDefault(), "%s, %s%s, %s, %s. %s",
                         city,
                         temperature == Integer.MIN_VALUE ? "" : Integer.toString(temperature),
                         temperature == Integer.MIN_VALUE ? "" : unit,
-                        condition,
+                        localizedCondition,
                         range,
-                        advice));
+                        localizedAdvice));
         return views;
     }
 
+    private static String localizeAdvice(Context context, String advice) {
+        String marker = " • Updated ";
+        int split = advice.indexOf(marker);
+        if (split >= 0) {
+            return UiTranslations.text(context, advice.substring(0, split)) + " • "
+                    + UiTranslations.text(context, "Updated")
+                    + advice.substring(split + marker.length() - 1);
+        }
+        if (advice.startsWith("Updated ")) {
+            return UiTranslations.text(context, "Updated") + advice.substring("Updated".length());
+        }
+        return UiTranslations.text(context, advice);
+    }
+
     private static void bindHourlyStrip(
+            Context context,
             RemoteViews views,
             String json,
             int[] timeIds,
@@ -285,25 +307,27 @@ public class WeatherWidgetProvider extends AppWidgetProvider {
             String time = clean(hour.optString("time", "—"), "—");
             int temperature = hour.optInt("temperature", Integer.MIN_VALUE);
             String condition = clean(hour.optString("condition", "Forecast"), "Forecast");
+            String conditionType = clean(hour.optString("conditionType", condition), condition);
             boolean daytime = hour.optBoolean("daytime", true);
 
             views.setViewVisibility(timeIds[i], View.VISIBLE);
             views.setViewVisibility(glyphIds[i], View.VISIBLE);
             views.setViewVisibility(tempIds[i], View.VISIBLE);
-            views.setTextViewText(timeIds[i], i == 0 ? "Now" : time);
-            views.setImageViewResource(glyphIds[i], iconFor(condition, daytime));
+            views.setTextViewText(timeIds[i], i == 0
+                    ? UiTranslations.text(context, "Now") : time);
+            views.setImageViewResource(glyphIds[i], iconFor(conditionType, daytime));
             views.setTextViewText(tempIds[i],
                     temperature == Integer.MIN_VALUE ? "—" : temperature + "°");
         }
     }
 
-    private static void renderPlaceholder(RemoteViews views, WidgetMode mode) {
+    private static void renderPlaceholder(Context context, RemoteViews views, WidgetMode mode) {
         views.setTextViewText(R.id.widget_city, "Zwerk Weather");
         views.setTextViewText(R.id.widget_temperature, "—");
         views.setTextViewText(R.id.widget_unit, "°");
-        views.setTextViewText(R.id.widget_condition, "Forecast not cached");
+        views.setTextViewText(R.id.widget_condition, UiTranslations.text(context, "Forecast"));
         views.setImageViewResource(R.id.widget_glyph, R.drawable.widget_ic_cloud);
-        views.setTextViewText(R.id.widget_high_low, "Open app to refresh");
+        views.setTextViewText(R.id.widget_high_low, "—");
         views.setImageViewResource(R.id.widget_scene, R.drawable.widget_scene_day);
         views.setViewVisibility(R.id.widget_hour_strip,
                 mode == WidgetMode.COMPACT ? View.GONE : View.VISIBLE);
@@ -311,16 +335,20 @@ public class WeatherWidgetProvider extends AppWidgetProvider {
                 mode == WidgetMode.COMPACT ? View.GONE : View.VISIBLE);
 
         if (mode == WidgetMode.NORMAL) {
-            bindPlaceholderHours(views, NORMAL_HOUR_TIME_IDS, NORMAL_HOUR_GLYPH_IDS, NORMAL_HOUR_TEMP_IDS);
+            bindPlaceholderHours(context, views, NORMAL_HOUR_TIME_IDS,
+                    NORMAL_HOUR_GLYPH_IDS, NORMAL_HOUR_TEMP_IDS);
         } else if (mode == WidgetMode.TALL) {
-            views.setTextViewText(R.id.widget_advice, "Open Zwerk Weather to refresh");
-            bindPlaceholderHours(views, TALL_HOUR_TIME_IDS, TALL_HOUR_GLYPH_IDS, TALL_HOUR_TEMP_IDS);
+            views.setTextViewText(R.id.widget_advice,
+                    UiTranslations.text(context, "Open Zwerk Weather to refresh"));
+            bindPlaceholderHours(context, views, TALL_HOUR_TIME_IDS,
+                    TALL_HOUR_GLYPH_IDS, TALL_HOUR_TEMP_IDS);
         }
-        views.setContentDescription(R.id.widget_root,
-                "Zwerk Weather widget. Open Zwerk Weather to refresh.");
+        views.setContentDescription(R.id.widget_root, UiTranslations.text(context,
+                "Zwerk Weather widget. Open Zwerk Weather to refresh."));
     }
 
     private static void bindPlaceholderHours(
+            Context context,
             RemoteViews views,
             int[] timeIds,
             int[] glyphIds,
@@ -330,7 +358,8 @@ public class WeatherWidgetProvider extends AppWidgetProvider {
             views.setViewVisibility(timeIds[i], View.VISIBLE);
             views.setViewVisibility(glyphIds[i], View.VISIBLE);
             views.setViewVisibility(tempIds[i], View.VISIBLE);
-            views.setTextViewText(timeIds[i], i == 0 ? "Now" : "—");
+            views.setTextViewText(timeIds[i],
+                    i == 0 ? UiTranslations.text(context, "Now") : "—");
             views.setImageViewResource(glyphIds[i], R.drawable.widget_ic_cloud);
             views.setTextViewText(tempIds[i], "—");
         }
@@ -392,8 +421,11 @@ public class WeatherWidgetProvider extends AppWidgetProvider {
         return "cloud";
     }
 
-    private static String highLowLabel(int high, int low) {
-        if (high == Integer.MIN_VALUE && low == Integer.MIN_VALUE) return "High / low —";
+    private static String highLowLabel(Context context, int high, int low) {
+        if (high == Integer.MIN_VALUE && low == Integer.MIN_VALUE) {
+            return UiTranslations.text(context, "High") + " / "
+                    + UiTranslations.text(context, "Low") + " —";
+        }
         String highPart = high == Integer.MIN_VALUE ? "—" : high + "°";
         String lowPart = low == Integer.MIN_VALUE ? "—" : low + "°";
         return "↑ " + highPart + "   ↓ " + lowPart;

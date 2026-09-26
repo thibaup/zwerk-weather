@@ -307,7 +307,7 @@ abstract class MinuteForecastRenderingActivity extends MinuteForecastActivity {
         body.setPadding(dp(18), dp(22), dp(18), dp(22));
         ProgressBar spinner = new ProgressBar(this);
         spinner.setIndeterminate(true);
-        spinner.setContentDescription("Loading minute precipitation");
+        spinner.setContentDescription(UiTranslations.text(this, "Loading minute precipitation"));
         body.addView(spinner, new LinearLayout.LayoutParams(dp(38), dp(38)));
         TextView headline = text("Loading precipitation…", 17, true, WHITE);
         headline.setGravity(Gravity.CENTER);
@@ -440,14 +440,22 @@ abstract class MinuteForecastRenderingActivity extends MinuteForecastActivity {
             selectedTime.setText(formatTime(selectedInstant, zone));
             selectedRate.setText(minuteRateDisplay(segment));
             selectedChance.setText(segment.probability == null ? "—" : segment.probability + "%");
-            selectedType.setText(minuteTypeIntensityLabel(segment));
-            String detail = minuteSelectionDetail(segment, selectedInstant, zone);
-            metricRow.setContentDescription("Selected precipitation. " + detail);
+            selectedType.setText(UiTranslations.text(this, minuteTypeIntensityLabel(segment)));
+            String detail = localizedMinuteSelectionDetail(this, segment, selectedInstant, zone);
+            metricRow.setContentDescription(UiTranslations.text(this, "Selected precipitation. ") + detail);
         });
 
         LinearLayout.LayoutParams graphLp = new LinearLayout.LayoutParams(-1, dp(220));
         graphLp.topMargin = dp(3);
         graphBody.addView(graph, graphLp);
+        if (state.response.has("_openMeteo")) {
+            TextView explanation = text(
+                    "A rain chance can be above 0% even when the model forecasts 0 mm/h for this interval.",
+                    12, false, SOFT_WHITE);
+            LinearLayout.LayoutParams explanationLp = new LinearLayout.LayoutParams(-1, -2);
+            explanationLp.topMargin = dp(8);
+            graphBody.addView(explanation, explanationLp);
+        }
         addMinutePageCard(page, graphBody, 10);
     }
 
@@ -532,8 +540,8 @@ abstract class MinuteForecastRenderingActivity extends MinuteForecastActivity {
                 attribution, android.text.util.Linkify.WEB_URLS);
         attribution.setGravity(Gravity.CENTER);
         attribution.setPadding(dp(4), dp(24), dp(4), dp(12));
-        attribution.setContentDescription(openMeteo
-                ? "Forecast data attribution: Open-Meteo" : "Weather data attribution: Google");
+        attribution.setContentDescription(UiTranslations.text(this, openMeteo
+                ? "Forecast data attribution: Open-Meteo" : "Weather data attribution: Google"));
         page.addView(attribution);
     }
 

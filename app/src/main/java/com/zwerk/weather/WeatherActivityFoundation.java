@@ -802,6 +802,35 @@ abstract class WeatherActivityFoundation extends Activity {
         return detail.toString();
     }
 
+    static String localizedMinuteSelectionDetail(Context context,
+            MinuteSegment segment, Instant selectedTime, ZoneId zone) {
+        if (segment == null) return UiTranslations.text(context, "No selected segment");
+        StringBuilder detail = new StringBuilder();
+        detail.append(formatTime(selectedTime == null ? segment.start : selectedTime, zone));
+        appendPart(detail, String.format(Locale.getDefault(),
+                UiTranslations.text(context, "returned interval %s to %s"),
+                formatTime(segment.start, zone), formatTime(segment.end, zone)));
+        Double rate = minuteRateMmPerHour(segment);
+        appendPart(detail, rate == null ? UiTranslations.text(context, "Rate unavailable")
+                : String.format(Locale.getDefault(),
+                UiTranslations.text(context, "Rate %s millimeters per hour"),
+                formatMinuteRate(rate)));
+        if (segment.probability != null) {
+            appendPart(detail, String.format(Locale.getDefault(),
+                    UiTranslations.text(context, "Chance %s%%"), segment.probability));
+        }
+        String typeIntensity = minuteTypeIntensityLabel(segment);
+        if (!"—".equals(typeIntensity)) appendPart(detail,
+                UiTranslations.text(context, typeIntensity));
+        if (segment.snowfallQuantity != null) {
+            appendPart(detail, String.format(Locale.getDefault(),
+                    UiTranslations.text(context, "Snowfall %s%s"),
+                    formatMinuteQuantity(segment.snowfallQuantity),
+                    minuteUnitLabel(segment.snowfallUnit)));
+        }
+        return detail.toString();
+    }
+
     static Double minuteRateMmPerHour(MinuteSegment segment) {
         if (segment == null || segment.qpfQuantity == null) return null;
         long durationMillis;

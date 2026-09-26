@@ -1,0 +1,14 @@
+{
+  "Radar refresh timed out · showing current frame · tap ↻ to retry": "Час очікування оновлення радара минув · показано поточний кадр · натисніть ↻, щоб повторити",
+  "Radar unavailable · tap ↻ to retry": "Радар недоступний · натисніть ↻, щоб повторити",
+  "Loading radar frames · playback will start when ready": "Завантаження кадрів радара · відтворення почнеться, коли вони будуть готові",
+  "Radar map is not ready · tap play to retry": "Радарна карта ще не готова · натисніть «Відтворити», щоб повторити",
+  "Waiting for radar map layout…": "Очікування компонування радарної карти…",
+  "Animation could not load · tap play to retry": "Не вдалося завантажити анімацію · натисніть «Відтворити», щоб повторити",
+  "Preparing animation · %d/%d frames": "Підготовка анімації · %d/%d кадрів",
+  "Warnings for %s. Follow the issuing authority's instructions.": "Попередження для %s. Дотримуйтеся вказівок органу, що видав попередження.",
+  "Until %s": "До %s",
+  "Hourly data is partial · %s": "Погодинні дані неповні · %s",
+  "Free: 600/min · 5k/hour · 10k/day · 300k/month.": "Безкоштовно: 600/хв · 5k/год · 10k/день · 300k/місяць.",
+  "Weather": "Погода"
+}

@@ -849,8 +849,10 @@ abstract class OptionalWeatherDataActivity extends WeatherApiActivity {
         if (manager == null) return;
         if (Build.VERSION.SDK_INT >= 26) {
             NotificationChannel channel = new NotificationChannel(
-                    ALERT_CHANNEL_ID, "Official weather alerts", NotificationManager.IMPORTANCE_HIGH);
-            channel.setDescription("Public warnings from official weather authorities");
+                    ALERT_CHANNEL_ID, UiTranslations.text(this, "Official weather alerts"),
+                    NotificationManager.IMPORTANCE_HIGH);
+            channel.setDescription(UiTranslations.text(this,
+                    "Public warnings from official weather authorities"));
             manager.createNotificationChannel(channel);
         }
         Intent open = new Intent(this, MainActivity.class)
@@ -864,7 +866,7 @@ abstract class OptionalWeatherDataActivity extends WeatherApiActivity {
         if (!area.isEmpty() && !severity.isEmpty()) bodyText = severity + " · " + area;
         Notification notification = new Notification.Builder(this, ALERT_CHANNEL_ID)
                 .setSmallIcon(android.R.drawable.ic_dialog_alert)
-                .setContentTitle(title.isEmpty() ? "Weather alert" : title)
+                .setContentTitle(title.isEmpty() ? UiTranslations.text(this, "Weather alert") : title)
                 .setContentText(bodyText)
                 .setStyle(new Notification.BigTextStyle().bigText(bodyText))
                 .setCategory(Notification.CATEGORY_ALARM)

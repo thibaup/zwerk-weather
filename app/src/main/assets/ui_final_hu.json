@@ -1,0 +1,23 @@
+{
+  "Enter a precise forecast point. Signed decimal coordinates are supported.": "Adjon meg egy pontos előrejelzési pontot. Az előjeles tizedes koordináták támogatottak.",
+  "City search isn't available on this device right now.": "A városkeresés jelenleg nem érhető el ezen az eszközön.",
+  "The selected result had coordinates outside the valid latitude/longitude range.": "A kiválasztott találat koordinátái kívül estek az érvényes szélességi/hosszúsági tartományon.",
+  "OFFICIAL WEATHER ALERT": "HIVATALOS IDŐJÁRÁSI RIASZTÁS",
+  "%d active alerts": "Aktív riasztások: %d",
+  "Source: %s": "Forrás: %s",
+  "Open alert source %s": "Riasztási forrás megnyitása: %s",
+  "Tap for official details.": "Koppintson a hivatalos részletekért.",
+  "Edit  ›": "Szerkesztés  ›",
+  "DAILY LIMIT": "NAPI KORLÁT",
+  "MONTHLY LIMIT": "HAVI KORLÁT",
+  "Set the maximum requests Zwerk Weather may send. Saving switches the profile to Custom.": "Állítsa be a Zwerk Weather által küldhető kérések maximális számát. Mentéskor a profil Egyéni értékre vált.",
+  "GOOGLE USAGE & LIMITS": "GOOGLE-HASZNÁLAT ÉS -KORLÁTOK",
+  "RADAR & MAP TILES": "RADAR ÉS TÉRKÉPCSEMPÉK",
+  "Weather/Air Quality 8,000/mo · Pollen 4,000/mo.": "Időjárás/levegőminőség 8,000/mo · Pollen 4,000/mo.",
+  "Weather/Air Quality 10,000/mo · Pollen 5,000/mo · local pacing uses Pacific time.": "Időjárás/levegőminőség 10,000/mo · Pollen 5,000/mo · a helyi ütemezés csendes-óceáni időt használ.",
+  "Open-Meteo limits ↗": "Open-Meteo-korlátok ↗",
+  "On-demand frames · app paced below 100 requests/IP/minute": "Igény szerinti képkockák · az alkalmazás 100 kérés/IP/perc alatt tartja az ütemet",
+  "Visible map tiles only · locally cached for 14 days": "Csak a látható térképcsempék · helyi gyorsítótárban 14 napig",
+  "Google caps follow Pacific time. Counts cover this device only.": "A Google korlátai csendes-óceáni idő szerint működnek. A számlálók csak erre az eszközre vonatkoznak.",
+  "View Google pricing ↗": "Google-árak megtekintése ↗"
+}

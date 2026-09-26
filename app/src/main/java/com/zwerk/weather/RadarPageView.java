@@ -138,7 +138,7 @@ final class RadarPageView extends LinearLayout {
         summary.setVisibility(GONE);
         titles.addView(summary);
         refreshButton = new RadarRefreshButton(context);
-        refreshButton.setContentDescription("Refresh radar frames");
+        refreshButton.setContentDescription(UiTranslations.text(getContext(), "Refresh radar frames"));
         refreshButton.setOnClickListener(v -> loadTimeline(true));
         heading.addView(refreshButton, new LinearLayout.LayoutParams(dp(48), dp(48)));
 
@@ -168,7 +168,8 @@ final class RadarPageView extends LinearLayout {
 
         map = new RadarMapView(context, data, this::onViewportChanged);
         mapHolder.addView(map, new FrameLayout.LayoutParams(-1, -1));
-        map.setContentDescription("Interactive precipitation radar map. Drag to pan.");
+        map.setContentDescription(UiTranslations.text(getContext(),
+                "Interactive precipitation radar map. Drag to pan."));
 
         LinearLayout mapControls = new LinearLayout(context);
         mapControls.setOrientation(VERTICAL);
@@ -210,7 +211,8 @@ final class RadarPageView extends LinearLayout {
         mapMessage.setVisibility(GONE);
         mapMessage.setClickable(true);
         mapMessage.setFocusable(true);
-        mapMessage.setContentDescription("Radar status. Tap to retry loading the map.");
+        mapMessage.setContentDescription(UiTranslations.text(getContext(),
+                "Radar status. Tap to retry loading the map."));
         mapMessage.setOnClickListener(v -> retryRadarLoad(false));
         FrameLayout.LayoutParams messageParams = new FrameLayout.LayoutParams(
                 -2, -2, Gravity.CENTER);
@@ -228,7 +230,8 @@ final class RadarPageView extends LinearLayout {
         TextView osmCredit = label("© OpenStreetMap contributors", 10, false,
                 Color.argb(238, 243, 248, 255));
         osmCredit.setOnClickListener(v -> openUrl("https://www.openstreetmap.org/copyright"));
-        osmCredit.setContentDescription("Map by OpenStreetMap contributors. Open copyright page.");
+        osmCredit.setContentDescription(UiTranslations.text(getContext(),
+                "Map by OpenStreetMap contributors. Open copyright page."));
         credits.addView(osmCredit, new LinearLayout.LayoutParams(0, -2, 1f));
         radarCredit = label("Radar by RainViewer ↗", 10, false,
                 Color.argb(255, 168, 219, 255));
@@ -247,7 +250,7 @@ final class RadarPageView extends LinearLayout {
         timelineBar = new SeekBar(context);
         timelineBar.setMax(0);
         timelineBar.setEnabled(false);
-        timelineBar.setContentDescription("Radar time");
+        timelineBar.setContentDescription(UiTranslations.text(getContext(), "Radar time"));
         timelineBar.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
             @Override public void onProgressChanged(SeekBar bar, int value, boolean fromUser) {
                 if (!fromUser) return;
@@ -331,7 +334,7 @@ final class RadarPageView extends LinearLayout {
 
     private void setSummary(String text) {
         String value = text == null ? "" : text.trim();
-        summary.setText(value);
+        summary.setText(UiTranslations.text(getContext(), value));
         summary.setVisibility(value.isEmpty() ? GONE : VISIBLE);
     }
 
@@ -410,23 +413,28 @@ final class RadarPageView extends LinearLayout {
         playbackRow.setVisibility(google ? GONE : VISIBLE);
         legendBar.setVisibility(google ? GONE : VISIBLE);
         legendLabels.setVisibility(google ? GONE : VISIBLE);
-        radarCredit.setText(google ? "Weather map by Google ↗" : "Radar by RainViewer ↗");
+        radarCredit.setText(UiTranslations.text(getContext(),
+                google ? "Weather map by Google ↗" : "Radar by RainViewer ↗"));
         radarCredit.setOnClickListener(v -> openUrl(google
                 ? "https://developers.google.com/maps/documentation/weather/weather-map"
                 : "https://www.rainviewer.com/"));
         hint.setText("");
         hint.setVisibility(GONE);
-        frameTime.setText(google ? "Current precipitation" : "Radar timeline");
+        frameTime.setText(UiTranslations.text(getContext(),
+                google ? "Current precipitation" : "Radar timeline"));
         notifyStatusChanged();
         return true;
     }
 
     private TextView sourceOption(String title, String nextSource) {
-        TextView option = label(title, 13, true, Color.WHITE);
+        String[] lines = title.split("\n", 2);
+        String localized = UiTranslations.text(getContext(), lines[0]) + "\n"
+                + UiTranslations.text(getContext(), lines[1]);
+        TextView option = label(localized, 13, true, Color.WHITE);
         option.setGravity(Gravity.CENTER);
         option.setClickable(true);
         option.setFocusable(true);
-        option.setContentDescription(title.replace('\n', ' '));
+        option.setContentDescription(localized.replace('\n', ' '));
         option.setOnClickListener(v -> {
             if (nextSource.equals(source)) return;
             RadarProviderConfig.setSource(getContext(), nextSource);
@@ -569,7 +577,7 @@ final class RadarPageView extends LinearLayout {
             refreshButton.setLoading(false);
             loading.setVisibility(GONE);
             playButton.setMode(RadarPlaybackButton.PLAY);
-            timelineError = "Radar loading timed out. Tap retry to try again.";
+            timelineError = "Radar loading timed out · tap ↻ to retry";
             if (timeline != null && !timeline.frames.isEmpty()) {
                 setSummary("Radar refresh timed out · showing current frame · tap ↻ to retry");
                 scheduleViewportLoad(0L);
@@ -592,7 +600,11 @@ final class RadarPageView extends LinearLayout {
     private void showMapRetryMessage(String text) {
         String value = text == null ? "" : text.trim();
         if (value.isEmpty()) value = "Radar loading failed.";
-        if (!value.toLowerCase(Locale.ROOT).contains("retry")) value += " Tap to retry.";
+        boolean hasRetry = value.toLowerCase(Locale.ROOT).contains("retry");
+        value = UiTranslations.text(getContext(), value);
+        if (!hasRetry) {
+            value += " " + UiTranslations.text(getContext(), "Tap to retry.");
+        }
         mapMessage.setText(value);
         mapMessage.setVisibility(VISIBLE);
     }
@@ -619,9 +631,9 @@ final class RadarPageView extends LinearLayout {
         timelineBar.setProgress(frameIndex);
         String time = FRAME_TIME.format(Instant.ofEpochSecond(frame.timeSeconds)
                 .atZone(ZoneId.systemDefault()));
-        frameTime.setText((RadarProviderConfig.GOOGLE.equals(source) ? "Current · "
-                : frameIndex == timeline.frames.size() - 1 ? "Latest · " : "Past · ")
-                + time);
+        frameTime.setText(UiTranslations.text(getContext(), RadarProviderConfig.GOOGLE.equals(source)
+                ? "Current" : frameIndex == timeline.frames.size() - 1 ? "Latest" : "Past")
+                + " · " + time);
         if (userSelected) mapMessage.setVisibility(GONE);
     }
 
@@ -687,8 +699,9 @@ final class RadarPageView extends LinearLayout {
             }
         }
         if (ready < 2 && System.currentTimeMillis() - preparationStartedAt < 10_000L) {
-            setSummary("Preparing animation · " + ready + "/"
-                    + window + " frames");
+            setSummary(String.format(Locale.getDefault(),
+                    UiTranslations.text(getContext(), "Preparing animation · %d/%d frames"),
+                    ready, window));
             schedulePreparationCheck(generation);
             return;
         }
@@ -881,7 +894,8 @@ final class RadarPageView extends LinearLayout {
         fullscreen = true;
         fullscreenDialog = dialog;
         fullscreenButton.setText("×");
-        fullscreenButton.setContentDescription("Exit fullscreen radar");
+        fullscreenButton.setContentDescription(UiTranslations.text(getContext(),
+                "Exit fullscreen radar"));
 
         try {
             dialog.show();
@@ -928,7 +942,8 @@ final class RadarPageView extends LinearLayout {
         frameTime.setPadding(dp(3), 0, 0, 0);
 
         fullscreenButton.setText("⛶");
-        fullscreenButton.setContentDescription("Enter fullscreen radar");
+        fullscreenButton.setContentDescription(UiTranslations.text(getContext(),
+                "Enter fullscreen radar"));
         fullscreenDialog = null;
         mapHolderPanelLayoutParams = null;
         playbackRowPanelLayoutParams = null;
@@ -949,7 +964,7 @@ final class RadarPageView extends LinearLayout {
 
     private TextView label(String value, float size, boolean bold, int color) {
         TextView view = new TextView(getContext());
-        view.setText(value);
+        view.setText(UiTranslations.text(getContext(), value));
         view.setTextSize(size);
         view.setTextColor(color);
         view.setTypeface(Typeface.create("sans-serif", bold ? Typeface.BOLD : Typeface.NORMAL));
@@ -958,7 +973,7 @@ final class RadarPageView extends LinearLayout {
 
     private Button control(String value, String description) {
         Button button = new Button(getContext());
-        button.setText(value);
+        button.setText(UiTranslations.text(getContext(), value));
         button.setAllCaps(false);
         button.setTextSize(20f);
         button.setTextColor(Color.WHITE);
@@ -969,7 +984,7 @@ final class RadarPageView extends LinearLayout {
         button.setMinimumWidth(0);
         button.setBackground(panelBackground(
                 Color.argb(190, 68, 130, 190), Color.argb(190, 36, 91, 158)));
-        button.setContentDescription(description);
+        button.setContentDescription(UiTranslations.text(getContext(), description));
         return button;
     }
 
@@ -1086,9 +1101,10 @@ final class RadarPlaybackButton extends View {
 
     void setMode(int next) {
         mode = next;
-        setContentDescription(next == PAUSE ? "Pause radar animation"
+        setContentDescription(UiTranslations.text(getContext(), next == PAUSE
+                ? "Pause radar animation"
                 : next == LOADING ? "Radar animation loading. Tap to cancel playback."
-                : "Play radar animation");
+                : "Play radar animation"));
         invalidate();
     }
 

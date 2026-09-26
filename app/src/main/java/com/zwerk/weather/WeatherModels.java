@@ -24,7 +24,7 @@ final class SceneSpec {
 
     static SceneSpec fromWeather(JSONObject weather, boolean fallbackDaytime) {
         String condition = description(weather);
-        String key = conditionKey(condition);
+        String key = conditionKey(glyphCondition(weather));
         boolean daytime = safeBoolean(weather, "isDaytime", fallbackDaytime);
         if ("snow".equals(key)) return new SceneSpec("snow", "snow", daytime, condition);
         if ("thunder".equals(key)) return new SceneSpec("rain", "thunder", daytime, condition);
@@ -34,6 +34,12 @@ final class SceneSpec {
             return new SceneSpec(daytime ? "day" : "night", key, daytime, condition);
         }
         return new SceneSpec(daytime ? "day" : "night", "none", daytime, condition);
+    }
+
+    static String glyphCondition(JSONObject weather) {
+        JSONObject condition = weather == null ? null : weather.optJSONObject("weatherCondition");
+        String type = condition == null ? "" : condition.optString("type", "");
+        return type.isEmpty() ? description(weather) : type;
     }
 
     String paletteScene() {

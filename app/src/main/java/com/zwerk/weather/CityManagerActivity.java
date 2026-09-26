@@ -133,6 +133,11 @@ public class CityManagerActivity extends Activity {
     private AlertDialog activeDialog;
 
     @Override
+    protected void attachBaseContext(Context newBase) {
+        super.attachBaseContext(AppLocaleManager.wrap(newBase));
+    }
+
+    @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         configureWindow();
@@ -265,7 +270,7 @@ public class CityManagerActivity extends Activity {
                 ViewGroup.LayoutParams.MATCH_PARENT, dp(56)));
 
         GlyphButton back = new GlyphButton(this, GlyphButton.BACK);
-        back.setContentDescription("Back");
+        back.setContentDescription(UiTranslations.text(this, "Back"));
         back.setOnClickListener(v -> handleBack());
         header.addView(back, new LinearLayout.LayoutParams(dp(48), dp(48)));
 
@@ -279,7 +284,7 @@ public class CityManagerActivity extends Activity {
         header.addView(title, titleLp);
 
         editButton = new GlyphButton(this, GlyphButton.EDIT);
-        editButton.setContentDescription("Edit cities");
+        editButton.setContentDescription(UiTranslations.text(this, "Edit cities"));
         editButton.setOnClickListener(v -> setEditMode(!editMode));
         header.addView(editButton, new LinearLayout.LayoutParams(dp(48), dp(48)));
     }
@@ -290,7 +295,7 @@ public class CityManagerActivity extends Activity {
         searchBackground.setColor(COLOR_SEARCH);
         searchBackground.setCornerRadius(dp(23));
         searchBox.setBackground(searchBackground);
-        searchBox.setContentDescription("City search");
+        searchBox.setContentDescription(UiTranslations.text(this, "City search"));
 
         LinearLayout.LayoutParams searchLp = new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, dp(46));
@@ -301,7 +306,7 @@ public class CityManagerActivity extends Activity {
         page.addView(searchBox, searchLp);
 
         GlyphButton searchIcon = new GlyphButton(this, GlyphButton.SEARCH);
-        searchIcon.setContentDescription("Focus city search");
+        searchIcon.setContentDescription(UiTranslations.text(this, "Focus city search"));
         searchIcon.setOnClickListener(v -> focusSearch());
         FrameLayout.LayoutParams iconLp = new FrameLayout.LayoutParams(
                 dp(40), dp(40), Gravity.START | Gravity.CENTER_VERTICAL);
@@ -312,13 +317,13 @@ public class CityManagerActivity extends Activity {
         searchInput.setBackground(null);
         searchInput.setTextColor(COLOR_PRIMARY_TEXT);
         searchInput.setHintTextColor(COLOR_SEARCH_HINT);
-        searchInput.setHint("Search cities");
+        searchInput.setHint(UiTranslations.text(this, "Search cities"));
         searchInput.setTextSize(18f);
         searchInput.setSingleLine(true);
         searchInput.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_FLAG_CAP_WORDS);
         searchInput.setImeOptions(EditorInfo.IME_ACTION_SEARCH | EditorInfo.IME_FLAG_NO_EXTRACT_UI);
         searchInput.setPadding(0, 0, 0, 0);
-        searchInput.setContentDescription("Search cities");
+        searchInput.setContentDescription(UiTranslations.text(this, "Search cities"));
         searchInput.setOnEditorActionListener((v, actionId, event) -> {
             if (actionId == EditorInfo.IME_ACTION_SEARCH
                     || (event != null
@@ -348,7 +353,7 @@ public class CityManagerActivity extends Activity {
         clearSearch.setClickable(true);
         clearSearch.setFocusable(true);
         clearSearch.setVisibility(View.GONE);
-        clearSearch.setContentDescription("Clear search and show saved cities");
+        clearSearch.setContentDescription(UiTranslations.text(this, "Clear search and show saved cities"));
         clearSearch.setOnClickListener(v -> clearSearchAndShowSaved(false));
         FrameLayout.LayoutParams clearLp = new FrameLayout.LayoutParams(
                 dp(42), dp(42), Gravity.END | Gravity.CENTER_VERTICAL);
@@ -359,7 +364,7 @@ public class CityManagerActivity extends Activity {
         searchProgress.setIndeterminate(true);
         searchProgress.setVisibility(View.GONE);
         searchProgress.setIndeterminateTintList(ColorStateList.valueOf(COLOR_SECONDARY_TEXT));
-        searchProgress.setContentDescription("Searching");
+        searchProgress.setContentDescription(UiTranslations.text(this, "Searching"));
         FrameLayout.LayoutParams progressLp = new FrameLayout.LayoutParams(
                 dp(24), dp(24), Gravity.END | Gravity.CENTER_VERTICAL);
         progressLp.rightMargin = dp(50);
@@ -385,7 +390,7 @@ public class CityManagerActivity extends Activity {
         coordinateShortcut.setPadding(dp(10), dp(7), dp(10), dp(7));
         coordinateShortcut.setClickable(true);
         coordinateShortcut.setFocusable(true);
-        coordinateShortcut.setContentDescription("Advanced coordinate entry");
+        coordinateShortcut.setContentDescription(UiTranslations.text(this, "Advanced coordinate entry"));
         coordinateShortcut.setOnClickListener(v -> showCoordinateEntryDialog());
         meta.addView(coordinateShortcut, new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.WRAP_CONTENT, dp(36)));
@@ -410,7 +415,8 @@ public class CityManagerActivity extends Activity {
 
     private void buildFloatingButton() {
         addButton = new FloatingAddButton(this);
-        addButton.setContentDescription("Add city. Long press for advanced coordinate entry.");
+        addButton.setContentDescription(UiTranslations.text(this,
+                "Add city. Long press for advanced coordinate entry."));
         addButton.setOnClickListener(v -> focusSearch());
         addButton.setOnLongClickListener(v -> {
             showCoordinateEntryDialog();
@@ -426,7 +432,8 @@ public class CityManagerActivity extends Activity {
     private void setEditMode(boolean enabled) {
         editMode = enabled;
         editButton.setGlyph(enabled ? GlyphButton.DONE : GlyphButton.EDIT);
-        editButton.setContentDescription(enabled ? "Done editing cities" : "Edit cities");
+        editButton.setContentDescription(UiTranslations.text(this,
+                enabled ? "Done editing cities" : "Edit cities"));
         renderLocations();
     }
 
@@ -631,7 +638,8 @@ public class CityManagerActivity extends Activity {
         setSearchState("", false);
         List<Address> candidates = sanitizeCandidates(addresses);
         if (candidates.isEmpty()) {
-            setSearchState("No results for “" + query + "”.", false);
+            setSearchState(String.format(java.util.Locale.getDefault(),
+                    UiTranslations.text(this, "No results for “%s”."), query), false);
             renderSearchPlaceholder("Try a nearby city name or use Coordinates.");
             return;
         }
@@ -654,13 +662,13 @@ public class CityManagerActivity extends Activity {
             searchStatus.setText("");
             searchStatus.setVisibility(View.GONE);
         } else {
-            searchStatus.setText(message);
+            searchStatus.setText(UiTranslations.text(this, message));
             searchStatus.setVisibility(View.VISIBLE);
         }
     }
 
     private void showSearchFailure(String title, String message, boolean offerCoordinates) {
-        setSearchState(title + ".", false);
+        setSearchState(UiTranslations.text(this, title) + ".", false);
         renderSearchPlaceholder(message);
     }
 
@@ -808,11 +816,11 @@ public class CityManagerActivity extends Activity {
         card.addView(nameLabel);
 
         EditText name = new EditText(this);
-        name.setHint("Optional, e.g. Brussels");
+        name.setHint(UiTranslations.text(this, "Optional, e.g. Brussels"));
         name.setSingleLine(true);
         name.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_FLAG_CAP_WORDS);
         name.setImeOptions(EditorInfo.IME_ACTION_NEXT);
-        name.setContentDescription("Optional location name");
+        name.setContentDescription(UiTranslations.text(this, "Optional location name"));
         name.setTextColor(COLOR_PRIMARY_TEXT);
         name.setHintTextColor(Color.rgb(145, 159, 177));
         name.setTextSize(16f);
@@ -840,7 +848,8 @@ public class CityManagerActivity extends Activity {
                 0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
 
         TextView latitudeLabel = makeText("Latitude", 12f, COLOR_SECONDARY_TEXT, true);
-        latitudeLabel.setContentDescription("Latitude, minus 90 to 90 degrees");
+        latitudeLabel.setContentDescription(UiTranslations.text(this,
+                "Latitude, minus 90 to 90 degrees"));
         latitudeColumn.addView(latitudeLabel);
 
         EditText latitude = new EditText(this);
@@ -850,7 +859,7 @@ public class CityManagerActivity extends Activity {
                 | InputType.TYPE_NUMBER_FLAG_DECIMAL
                 | InputType.TYPE_NUMBER_FLAG_SIGNED);
         latitude.setImeOptions(EditorInfo.IME_ACTION_NEXT);
-        latitude.setContentDescription("Latitude");
+        latitude.setContentDescription(UiTranslations.text(this, "Latitude"));
         latitude.setTextColor(COLOR_PRIMARY_TEXT);
         latitude.setHintTextColor(Color.rgb(126, 143, 164));
         latitude.setTextSize(16f);
@@ -871,7 +880,8 @@ public class CityManagerActivity extends Activity {
         coordinateRow.addView(longitudeColumn, longitudeColumnLp);
 
         TextView longitudeLabel = makeText("Longitude", 12f, COLOR_SECONDARY_TEXT, true);
-        longitudeLabel.setContentDescription("Longitude, minus 180 to 180 degrees");
+        longitudeLabel.setContentDescription(UiTranslations.text(this,
+                "Longitude, minus 180 to 180 degrees"));
         longitudeColumn.addView(longitudeLabel);
 
         EditText longitude = new EditText(this);
@@ -881,7 +891,7 @@ public class CityManagerActivity extends Activity {
                 | InputType.TYPE_NUMBER_FLAG_DECIMAL
                 | InputType.TYPE_NUMBER_FLAG_SIGNED);
         longitude.setImeOptions(EditorInfo.IME_ACTION_DONE);
-        longitude.setContentDescription("Longitude");
+        longitude.setContentDescription(UiTranslations.text(this, "Longitude"));
         longitude.setTextColor(COLOR_PRIMARY_TEXT);
         longitude.setHintTextColor(Color.rgb(126, 143, 164));
         longitude.setTextSize(16f);
@@ -915,7 +925,8 @@ public class CityManagerActivity extends Activity {
             useDevice.setPadding(dp(10), dp(7), dp(10), dp(7));
             useDevice.setClickable(true);
             useDevice.setFocusable(true);
-            useDevice.setContentDescription("Fill coordinates from saved device location");
+            useDevice.setContentDescription(UiTranslations.text(this,
+                    "Fill coordinates from saved device location"));
             useDevice.setBackground(pressableRoundedBackground(
                     Color.argb(44, 78, 139, 214), Color.argb(92, 86, 154, 235), dp(12)));
             useDevice.setOnClickListener(v -> {
@@ -937,7 +948,7 @@ public class CityManagerActivity extends Activity {
         reset.setPadding(dp(10), dp(7), dp(10), dp(7));
         reset.setClickable(true);
         reset.setFocusable(true);
-        reset.setContentDescription("Clear coordinate form");
+        reset.setContentDescription(UiTranslations.text(this, "Clear coordinate form"));
         reset.setBackground(pressableRoundedBackground(
                 Color.argb(38, 255, 255, 255), Color.argb(70, 255, 255, 255), dp(12)));
         reset.setOnClickListener(v -> {
@@ -1133,7 +1144,7 @@ public class CityManagerActivity extends Activity {
 
     private TextView makeText(String value, float sizeSp, int color, boolean bold) {
         TextView text = new TextView(this);
-        text.setText(value);
+        text.setText(UiTranslations.text(this, value));
         text.setTextSize(sizeSp);
         text.setTextColor(color);
         text.setTypeface(Typeface.create("sans-serif", bold ? Typeface.BOLD : Typeface.NORMAL));
@@ -1902,7 +1913,8 @@ public class CityManagerActivity extends Activity {
             setClickable(true);
             setFocusable(true);
             setMinimumHeight(dp(104));
-            setContentDescription((selected ? "Selected. " : "") + cardDescription(location));
+            setContentDescription((selected ? UiTranslations.text(context, "Selected. ") : "")
+                    + cardDescription(location));
             setBackground(new CityCardBackground(
                     dp(18),
                     Math.max(1f, getResources().getDisplayMetrics().density),
@@ -1937,7 +1949,8 @@ public class CityManagerActivity extends Activity {
 
             if (location.isDevice) {
                 LocationPinView pin = new LocationPinView(context);
-                pin.setContentDescription("Device location");
+                pin.setContentDescription(UiTranslations.text(CityManagerActivity.this,
+                        "Device location"));
                 LinearLayout.LayoutParams pinLp = new LinearLayout.LayoutParams(dp(20), dp(20));
                 pinLp.leftMargin = dp(5);
                 nameRow.addView(pin, pinLp);
@@ -1979,8 +1992,8 @@ public class CityManagerActivity extends Activity {
             deleteButton = new GlyphButton(context, location.isDevice ? GlyphButton.LOCK : GlyphButton.TRASH);
             deleteButton.setVisibility(View.GONE);
             deleteButton.setContentDescription(location.isDevice
-                    ? "Device location cannot be deleted"
-                    : "Delete " + location.name);
+                    ? UiTranslations.text(context, "Device location cannot be deleted")
+                    : UiTranslations.text(context, "Delete ") + location.name);
             deleteButton.setEnabled(!location.isDevice);
             if (!location.isDevice) {
                 deleteButton.setOnClickListener(v -> {

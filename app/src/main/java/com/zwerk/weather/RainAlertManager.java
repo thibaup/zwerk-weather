@@ -278,6 +278,7 @@ public final class RainAlertManager {
     private static boolean postNotification(
             Context context, RainEpisode episode, Instant now, String location) {
         if (!canPostNotifications(context)) return false;
+        Context localized = AppLocaleManager.wrap(context);
         NotificationManager manager =
                 (NotificationManager) context.getSystemService(Context.NOTIFICATION_SERVICE);
         if (manager == null) return false;
@@ -285,8 +286,10 @@ public final class RainAlertManager {
         NotificationChannel existing = manager.getNotificationChannel(CHANNEL_ID);
         if (existing == null) {
             NotificationChannel channel = new NotificationChannel(
-                    CHANNEL_ID, "Rain alerts", NotificationManager.IMPORTANCE_HIGH);
-            channel.setDescription("Imminent rain alerts for the selected Zwerk Weather location.");
+                    CHANNEL_ID, UiTranslations.text(localized, "Rain alerts"),
+                    NotificationManager.IMPORTANCE_HIGH);
+            channel.setDescription(UiTranslations.text(localized,
+                    "Imminent rain alerts for the selected Zwerk Weather location."));
             manager.createNotificationChannel(channel);
         } else if (existing.getImportance() == NotificationManager.IMPORTANCE_NONE) {
             return false;
@@ -303,21 +306,32 @@ public final class RainAlertManager {
         long seconds = Math.max(0L, Duration.between(now, episode.start).getSeconds());
         long minutes = (seconds + 59L) / 60L;
         boolean underway = episode.start.isBefore(now);
-        String timing = underway ? "now" : minutes <= 1L ? "now" : "in about " + minutes + " min";
+        String timing = underway || minutes <= 1L
+                ? UiTranslations.text(localized, "now")
+                : UiTranslations.text(localized, "in about") + " " + minutes
+                        + " " + UiTranslations.text(localized, "min");
         String intensity = friendlyIntensity(episode.intensity);
         StringBuilder body = new StringBuilder();
-        if (!intensity.isEmpty()) body.append(intensity).append(' ');
-        if (underway) body.append("rain in progress");
-        else body.append("rain expected ").append(timing);
+        if (!intensity.isEmpty()) {
+            String rain = "Light".equals(intensity) ? "Slight rain" : intensity + " rain";
+            body.append(UiTranslations.text(localized, rain));
+            if (!underway) body.append(" · ").append(timing);
+        } else if (underway) {
+            body.append(UiTranslations.text(localized, "rain in progress"));
+        } else {
+            body.append(UiTranslations.text(localized, "rain expected")).append(' ').append(timing);
+        }
         body.append(" · ").append(location);
         if (episode.probability != null) {
-            body.append(" · ").append(episode.probability).append("% chance");
+            body.append(" · ").append(episode.probability).append("% ")
+                    .append(UiTranslations.text(localized, "chance"));
         }
 
-        Notification notification = new Notification.Builder(context, CHANNEL_ID)
+        Notification notification = new Notification.Builder(localized, CHANNEL_ID)
                 .setSmallIcon(android.R.drawable.stat_notify_more)
-                .setContentTitle(underway ? "Rain nearby now"
-                        : minutes <= 1L ? "Rain starting now" : "Rain starting soon")
+                .setContentTitle(UiTranslations.text(localized,
+                        underway ? "Rain nearby now"
+                                : minutes <= 1L ? "Rain starting now" : "Rain starting soon"))
                 .setContentText(body.toString())
                 .setStyle(new Notification.BigTextStyle().bigText(body.toString()))
                 .setCategory(Notification.CATEGORY_EVENT)

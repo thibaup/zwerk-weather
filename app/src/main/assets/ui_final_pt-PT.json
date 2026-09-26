@@ -1,0 +1,23 @@
+{
+  "Enter a precise forecast point. Signed decimal coordinates are supported.": "Introduza um ponto de previsão preciso. São suportadas coordenadas decimais com sinal.",
+  "City search isn't available on this device right now.": "A pesquisa de cidades não está disponível neste dispositivo neste momento.",
+  "The selected result had coordinates outside the valid latitude/longitude range.": "O resultado selecionado tinha coordenadas fora do intervalo válido de latitude/longitude.",
+  "OFFICIAL WEATHER ALERT": "ALERTA METEOROLÓGICO OFICIAL",
+  "%d active alerts": "%d alertas ativos",
+  "Source: %s": "Fonte: %s",
+  "Open alert source %s": "Abrir a fonte do alerta %s",
+  "Tap for official details.": "Toque para ver os detalhes oficiais.",
+  "Edit  ›": "Editar  ›",
+  "DAILY LIMIT": "LIMITE DIÁRIO",
+  "MONTHLY LIMIT": "LIMITE MENSAL",
+  "Set the maximum requests Zwerk Weather may send. Saving switches the profile to Custom.": "Defina o número máximo de pedidos que o Zwerk Weather pode enviar. Ao guardar, o perfil muda para Personalizado.",
+  "GOOGLE USAGE & LIMITS": "UTILIZAÇÃO E LIMITES DA GOOGLE",
+  "RADAR & MAP TILES": "RADAR E MOSAICOS DO MAPA",
+  "Weather/Air Quality 8,000/mo · Pollen 4,000/mo.": "Meteorologia/qualidade do ar 8,000/mo · Pólen 4,000/mo.",
+  "Weather/Air Quality 10,000/mo · Pollen 5,000/mo · local pacing uses Pacific time.": "Meteorologia/qualidade do ar 10,000/mo · Pólen 5,000/mo · o controlo local do ritmo usa a hora do Pacífico.",
+  "Open-Meteo limits ↗": "Limites do Open-Meteo ↗",
+  "On-demand frames · app paced below 100 requests/IP/minute": "Imagens a pedido · a aplicação mantém o ritmo abaixo de 100 pedidos/IP/minuto",
+  "Visible map tiles only · locally cached for 14 days": "Apenas mosaicos do mapa visíveis · em cache local durante 14 dias",
+  "Google caps follow Pacific time. Counts cover this device only.": "Os limites da Google seguem a hora do Pacífico. As contagens abrangem apenas este dispositivo.",
+  "View Google pricing ↗": "Ver preços da Google ↗"
+}

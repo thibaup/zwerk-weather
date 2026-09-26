@@ -269,7 +269,7 @@ abstract class MinuteForecastActivity extends OptionalWeatherDataActivity {
         final int generation = weatherRequestGeneration;
         final double lat = latitude;
         final double lon = longitude;
-        final String language = Locale.getDefault().getLanguage();
+        final String language = Locale.getDefault().toLanguageTag();
         MinuteForecastState pendingRequestState = null;
         synchronized (minuteForecastLock) {
             MinuteForecastState current = minuteForecastState;
@@ -373,7 +373,7 @@ abstract class MinuteForecastActivity extends OptionalWeatherDataActivity {
                     weatherRequestGeneration,
                     latitude,
                     longitude,
-                    Locale.getDefault().getLanguage())) {
+                    Locale.getDefault().toLanguageTag())) {
                 return;
             }
             minuteForecastState = resultState;
@@ -430,7 +430,7 @@ abstract class MinuteForecastActivity extends OptionalWeatherDataActivity {
                             weatherRequestGeneration,
                             latitude,
                             longitude,
-                            Locale.getDefault().getLanguage());
+                            Locale.getDefault().toLanguageTag());
         }
     }
 
@@ -516,7 +516,7 @@ abstract class MinuteForecastActivity extends OptionalWeatherDataActivity {
                     weatherRequestGeneration,
                     latitude,
                     longitude,
-                    Locale.getDefault().getLanguage())) {
+                    Locale.getDefault().toLanguageTag())) {
                 return null;
             }
             if (state.response != null && !state.isFresh(System.currentTimeMillis())) {

@@ -1,0 +1,14 @@
+{
+  "Radar refresh timed out · showing current frame · tap ↻ to retry": "Vypršal časový limit obnovenia radaru · zobrazuje sa aktuálna snímka · klepnutím na ↻ skúste znova",
+  "Radar unavailable · tap ↻ to retry": "Radar nie je k dispozícii · klepnutím na ↻ skúste znova",
+  "Loading radar frames · playback will start when ready": "Načítavajú sa radarové snímky · prehrávanie sa spustí, keď budú pripravené",
+  "Radar map is not ready · tap play to retry": "Radarová mapa nie je pripravená · klepnutím na prehrať skúste znova",
+  "Waiting for radar map layout…": "Čaká sa na rozloženie radarovej mapy…",
+  "Animation could not load · tap play to retry": "Animáciu sa nepodarilo načítať · klepnutím na prehrať skúste znova",
+  "Preparing animation · %d/%d frames": "Príprava animácie · %d/%d snímok",
+  "Warnings for %s. Follow the issuing authority's instructions.": "Výstrahy pre %s. Riaďte sa pokynmi orgánu, ktorý výstrahu vydal.",
+  "Until %s": "Do %s",
+  "Hourly data is partial · %s": "Hodinové údaje sú neúplné · %s",
+  "Free: 600/min · 5k/hour · 10k/day · 300k/month.": "Zadarmo: 600/min · 5k/hod. · 10k/deň · 300k/mesiac.",
+  "Weather": "Počasie"
+}

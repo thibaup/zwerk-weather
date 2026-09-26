@@ -39,11 +39,12 @@ final class WeatherWidgetSnapshotPublisher {
         if (temperature == null) return;
 
         String condition = formatter.description(current);
+        String conditionType = SceneSpec.glyphCondition(current);
         boolean daytime = formatter.safeBoolean(current, "isDaytime", true);
         Instant observation = formatter.parseInstant(current == null ? null : current.optString("currentTime", null));
         if (observation == null) observation = Instant.now();
         String updated = "Updated " + formatter.formatTime(observation, zone);
-        String advice = widgetAdvice(condition, updated);
+        String advice = widgetAdvice(conditionType, updated);
         Integer high = formatter.degreesOrNull(today == null ? null : today.optJSONObject("maxTemperature"));
         Integer low = formatter.degreesOrNull(today == null ? null : today.optJSONObject("minTemperature"));
 
@@ -59,6 +60,7 @@ final class WeatherWidgetSnapshotPublisher {
                     compact.put("time", formatter.hourLabel(hour, zone));
                     if (hourTemperature != null) compact.put("temperature", hourTemperature);
                     compact.put("condition", formatter.description(hour));
+                    compact.put("conditionType", SceneSpec.glyphCondition(hour));
                     compact.put("daytime", formatter.safeBoolean(hour, "isDaytime", true));
                     int precipitation = formatter.probability(hour);
                     if (precipitation >= 0) compact.put("precipitation", precipitation);
@@ -82,6 +84,7 @@ final class WeatherWidgetSnapshotPublisher {
                 .putInt(WeatherWidgetProvider.KEY_TEMPERATURE, temperature)
                 .putString(WeatherWidgetProvider.KEY_UNIT, formatter.temperatureUnitSymbol())
                 .putString(WeatherWidgetProvider.KEY_CONDITION, condition)
+                .putString(WeatherWidgetProvider.KEY_CONDITION_TYPE, conditionType)
                 .putBoolean(WeatherWidgetProvider.KEY_DAYTIME, daytime)
                 .putString(WeatherWidgetProvider.KEY_ADVICE, advice)
                 .putString(WeatherWidgetProvider.KEY_HOURLY_JSON, compactHours.toString())

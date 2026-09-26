@@ -1,0 +1,22 @@
+{
+  "Rain alerts": "Sadehälytykset",
+  "Imminent rain alerts for the selected Zwerk Weather location.": "Hälytykset pian alkavasta sateesta valitussa Zwerk Weather -sijainnissa.",
+  "now": "nyt",
+  "in about": "arviolta",
+  "min": "min",
+  "rain in progress": "sade käynnissä",
+  "rain expected": "sadetta odotettavissa",
+  "chance": "todennäköisyys",
+  "Rain nearby now": "Lähistöllä sataa nyt",
+  "Rain starting now": "Sade alkaa nyt",
+  "Rain starting soon": "Sade alkaa pian",
+  "Storm conditions": "Myrskyiset olosuhteet",
+  "Rain possible": "Sade mahdollinen",
+  "Snow possible": "Lumisade mahdollinen",
+  "Reduced visibility": "Heikentynyt näkyvyys",
+  "Updated": "Päivitetty",
+  "Open Zwerk Weather for details": "Avaa Zwerk Weather nähdäksesi lisätiedot",
+  "Open Zwerk Weather to refresh": "Avaa Zwerk Weather päivittääksesi",
+  "Forecast": "Ennuste",
+  "Public warnings from official weather authorities": "Virallisten sääviranomaisten julkiset varoitukset"
+}

@@ -119,6 +119,11 @@ public class WeatherDetailSettingsActivity extends Activity {
     private int scrimBase = Color.rgb(8, 55, 120);
 
     @Override
+    protected void attachBaseContext(Context newBase) {
+        super.attachBaseContext(AppLocaleManager.wrap(newBase));
+    }
+
+    @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         prefs = getSharedPreferences(WEATHER_UI, MODE_PRIVATE);
@@ -585,7 +590,7 @@ public class WeatherDetailSettingsActivity extends Activity {
 
     private TextView text(String value, float sp, int color, boolean bold) {
         TextView view = new TextView(this);
-        view.setText(value);
+        view.setText(UiTranslations.text(this, value));
         view.setTextSize(sp);
         view.setTextColor(color);
         view.setTypeface(Typeface.create("sans-serif", bold ? Typeface.BOLD : Typeface.NORMAL));

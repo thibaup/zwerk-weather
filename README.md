@@ -24,13 +24,17 @@ When Google Weather is selected, Zwerk Weather uses the Google Maps Platform Wea
 ## Highlights
 
 - Current conditions, a horizontally scrollable hourly forecast, and a 10-day line/list forecast.
-- Expandable day cards with detailed hourly temperature, precipitation, wind, pressure, and visibility.
+- Expandable day cards with hourly temperature, precipitation, feels-like temperature, wind, pressure, and UV index.
 - Minute precipitation graph with 2-hour and 6-hour views, using two-minute selection steps when returned coverage permits it.
 - Optional swipeable precipitation and radar pages. RainViewer radar includes a past-2-hour timeline; Google Weather maps show current precipitation where supported.
 - Smooth day, night, rain, snow, fog, and thunder scenes.
 - Android widget with a compact layout at small sizes and a five-hour strip at normal 4×2 sizes.
 - Separate local request counts and adjustable caps for Google and Open-Meteo.
 - Open-Meteo model selection, 15-minute precipitation, and optional air quality and pollen.
+
+## Languages
+
+Choose **Settings → App language** to follow the phone language or select English, Dutch, French, German, Spanish, Italian, Portuguese (Portugal or Brazil), Polish, Russian, Ukrainian, Turkish, Swedish, Danish, Norwegian Bokmål, Finnish, Czech, Slovak, Hungarian, Romanian, Greek, Bulgarian, or Croatian. The choice is saved on this device.
 
 ## Privacy and monetization
 * **No ads.**
@@ -82,7 +86,7 @@ If an Air Quality or Pollen tile reports that the key is blocked, tap the tile f
 Download the APK from this repository's Releases page and allow installation from your browser or file manager, or use ADB:
 
 ```powershell
-adb install -r .\Zwerk-Weather-1.2.0.apk
+adb install -r .\Zwerk-Weather-1.4.0.apk
 ```
 
 ## App updates

@@ -48,7 +48,9 @@ final class UpdateChecker {
             prefs.edit().putLong(KEY_LAST_ATTEMPT, now).apply();
         }
 
-        if (manual) Toast.makeText(activity, "Checking for updates…", Toast.LENGTH_SHORT).show();
+        if (manual) Toast.makeText(activity,
+                UiTranslations.text(activity, "Checking for updates…"),
+                Toast.LENGTH_SHORT).show();
         EXECUTOR.execute(() -> {
             try {
                 UpdateInfo update = fetchLatestRelease();
@@ -61,7 +63,8 @@ final class UpdateChecker {
                     } else if (manual) {
                         Toast.makeText(
                                 activity,
-                                "Zwerk Weather " + currentVersion + " is up to date.",
+                                UiTranslations.text(activity, "Up to date")
+                                        + " · Zwerk Weather " + currentVersion,
                                 Toast.LENGTH_LONG).show();
                     }
                 });
@@ -71,7 +74,8 @@ final class UpdateChecker {
                     if (!activity.isFinishing() && !activity.isDestroyed()) {
                         Toast.makeText(
                                 activity,
-                                "Couldn’t check for updates. Try again when you’re online.",
+                                UiTranslations.text(activity,
+                                        "Couldn’t check for updates. Try again when you’re online."),
                                 Toast.LENGTH_LONG).show();
                     }
                 });
@@ -195,17 +199,21 @@ final class UpdateChecker {
             Activity activity,
             String currentVersion,
             UpdateInfo update) {
-        String message = update.name + " is available.\n\nInstalled version: "
-                + currentVersion + "\nLatest version: " + update.version;
+        String message = update.name + "\n\n"
+                + UiTranslations.text(activity, "Installed version") + ": "
+                + currentVersion + "\n"
+                + UiTranslations.text(activity, "Latest version") + ": " + update.version;
         new AlertDialog.Builder(activity)
-                .setTitle("Update available")
+                .setTitle(UiTranslations.text(activity, "Update available"))
                 .setMessage(message)
-                .setNegativeButton("Later", null)
-                .setPositiveButton(update.directApk ? "Download APK" : "View release", (dialog, which) -> {
+                .setNegativeButton(UiTranslations.text(activity, "Later"), null)
+                .setPositiveButton(UiTranslations.text(activity,
+                        update.directApk ? "Download APK" : "View release"), (dialog, which) -> {
                     try {
                         activity.startActivity(new Intent(Intent.ACTION_VIEW, Uri.parse(update.url)));
                     } catch (Exception ignored) {
-                        Toast.makeText(activity, "Couldn’t open the download link.", Toast.LENGTH_LONG).show();
+                        Toast.makeText(activity, UiTranslations.text(activity,
+                                "Couldn’t open the download link."), Toast.LENGTH_LONG).show();
                     }
                 })
                 .show();

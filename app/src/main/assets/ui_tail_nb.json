@@ -1,0 +1,14 @@
+{
+  "Radar refresh timed out · showing current frame · tap ↻ to retry": "Tidsavbrudd ved radaroppdatering · viser gjeldende bilde · trykk på ↻ for å prøve igjen",
+  "Radar unavailable · tap ↻ to retry": "Radar er utilgjengelig · trykk på ↻ for å prøve igjen",
+  "Loading radar frames · playback will start when ready": "Laster radarbilder · avspillingen starter når de er klare",
+  "Radar map is not ready · tap play to retry": "Radarkartet er ikke klart · trykk på spill av for å prøve igjen",
+  "Waiting for radar map layout…": "Venter på oppsettet for radarkartet…",
+  "Animation could not load · tap play to retry": "Animasjonen kunne ikke lastes inn · trykk på spill av for å prøve igjen",
+  "Preparing animation · %d/%d frames": "Klargjør animasjon · %d/%d bilder",
+  "Warnings for %s. Follow the issuing authority's instructions.": "Advarsler for %s. Følg instruksjonene fra myndigheten som utstedte advarselen.",
+  "Until %s": "Til %s",
+  "Hourly data is partial · %s": "Timedata er ufullstendige · %s",
+  "Free: 600/min · 5k/hour · 10k/day · 300k/month.": "Gratis: 600/min · 5k/time · 10k/dag · 300k/måned.",
+  "Weather": "Vær"
+}

@@ -1,0 +1,14 @@
+{
+  "Radar refresh timed out · showing current frame · tap ↻ to retry": "Radar yenileme zaman aşımına uğradı · mevcut kare gösteriliyor · yeniden denemek için ↻ simgesine dokunun",
+  "Radar unavailable · tap ↻ to retry": "Radar kullanılamıyor · yeniden denemek için ↻ simgesine dokunun",
+  "Loading radar frames · playback will start when ready": "Radar kareleri yükleniyor · hazır olduklarında oynatma başlayacak",
+  "Radar map is not ready · tap play to retry": "Radar haritası hazır değil · yeniden denemek için oynat düğmesine dokunun",
+  "Waiting for radar map layout…": "Radar haritası düzeni bekleniyor…",
+  "Animation could not load · tap play to retry": "Animasyon yüklenemedi · yeniden denemek için oynat düğmesine dokunun",
+  "Preparing animation · %d/%d frames": "Animasyon hazırlanıyor · %d/%d kare",
+  "Warnings for %s. Follow the issuing authority's instructions.": "%s için uyarılar. Uyarıyı yayımlayan yetkilinin talimatlarını izleyin.",
+  "Until %s": "%s'e kadar",
+  "Hourly data is partial · %s": "Saatlik veriler kısmi · %s",
+  "Free: 600/min · 5k/hour · 10k/day · 300k/month.": "Ücretsiz: 600/dk · 5k/saat · 10k/gün · 300k/ay.",
+  "Weather": "Hava durumu"
+}

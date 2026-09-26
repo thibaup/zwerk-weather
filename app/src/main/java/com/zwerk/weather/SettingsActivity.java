@@ -89,6 +89,9 @@ public class SettingsActivity extends Activity {
             "https://developers.google.com/maps/documentation/weather/get-api-key";
     private static final String GOOGLE_CLOUD_CREDENTIALS_URL =
             "https://console.cloud.google.com/apis/credentials";
+    static final String PROJECT_GITHUB_URL =
+            "https://github.com/thibaup/zwerk-weather";
+    static final String PREF_SUPPORT_PROMPT_HANDLED = "support_prompt_handled";
     private static final String PREF_ANIMATIONS = "weather_animations";
     private static final String PREF_RAIN_ALERTS = "rain_alerts";
     private static final String PREF_SEVERE_ALERTS = "severe_weather_alerts";
@@ -156,6 +159,11 @@ public class SettingsActivity extends Activity {
     private String initialWeatherDetailsSignature;
     private String displayedBudgetProfile;
     private boolean displayedNotificationsBlocked;
+
+    @Override
+    protected void attachBaseContext(Context newBase) {
+        super.attachBaseContext(AppLocaleManager.wrap(newBase));
+    }
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -393,65 +401,71 @@ public class SettingsActivity extends Activity {
                 ViewGroup.LayoutParams.MATCH_PARENT, dp(60)));
 
         SettingsBackButton back = new SettingsBackButton(this);
-        back.setContentDescription("Back");
+        back.setContentDescription(getString(R.string.settings_back));
         back.setClickable(true);
         back.setFocusable(true);
         back.setOnClickListener(v -> handleBack());
         header.addView(back, new LinearLayout.LayoutParams(dp(48), dp(60)));
 
-        TextView title = text(unitsPage ? "Units" : "Settings", 25f, PRIMARY, false);
+        TextView title = text(getString(unitsPage ? R.string.settings_units_title : R.string.settings_title), 25f, PRIMARY, false);
         title.setGravity(Gravity.CENTER_VERTICAL);
         LinearLayout.LayoutParams titleLp = new LinearLayout.LayoutParams(0, dp(60), 1f);
         titleLp.leftMargin = dp(4);
         header.addView(title, titleLp);
 
         if (unitsPage) {
-            addSectionHeading("Measurement units");
+            addSectionHeading(getString(R.string.settings_measurement_units));
             addUnitRows(page);
         } else {
-            addSectionHeading("Zwerk Weather");
-            addActionRow("Weather source",
-                    OpenMeteoConfig.isOpenMeteo(this) ? "Open-Meteo" : "Google Weather",
+            addSectionHeading(getString(R.string.settings_section_app));
+            addActionRow(
+                    getString(R.string.settings_app_language),
+                    AppLocaleManager.selectedLanguageLabel(this),
+                    this::showLanguageDialog);
+            addActionRow(getString(R.string.settings_weather_source),
+                    getString(OpenMeteoConfig.isOpenMeteo(this)
+                            ? R.string.settings_source_open_meteo
+                            : R.string.settings_source_google_weather),
                     this::showWeatherSourceDialog);
             if (OpenMeteoConfig.isOpenMeteo(this)) {
-                addActionRow("Open-Meteo forecast model",
+                addActionRow(getString(R.string.settings_open_meteo_model),
                         OpenMeteoConfig.modelLabel(OpenMeteoConfig.model(this)),
                         this::showOpenMeteoModelDialog);
-                addActionRow("Open-Meteo customer key",
+                addActionRow(getString(R.string.settings_open_meteo_customer_key),
                         OpenMeteoConfig.hasCustomerKey(this)
-                                ? "Configured"
-                                : "Optional for paid plans",
+                                ? getString(R.string.settings_configured)
+                                : getString(R.string.settings_optional_paid_plans),
                         this::showOpenMeteoKeyDialog);
             }
             addActionRow(
-                    "Google API key",
+                    getString(R.string.settings_google_api_key),
                     hasConfiguredApiKey()
-                            ? "Configured · tap to replace"
-                            : "Not configured · tap to add",
+                            ? getString(R.string.settings_configured_tap_replace)
+                            : getString(R.string.settings_not_configured_tap_add),
                     this::showApiKeyDialog);
             addActionRow(
-                    "API request limits",
-                    "Google · Open-Meteo · radar",
+                    getString(R.string.settings_api_request_limits),
+                    getString(R.string.settings_api_request_limits_summary),
                     () -> startActivity(new Intent(this, ApiUsageLimitsActivity.class)));
             addActionRow(
-                    "Refresh forecast",
+                    getString(R.string.settings_refresh_forecast),
                     "",
                     () -> returnAction(ACTION_REFRESH));
             addActionRow(
-                    "Check for updates",
-                    "Checks GitHub Releases for a newer APK.",
+                    getString(R.string.settings_check_updates),
+                    getString(R.string.settings_check_updates_summary),
                     () -> UpdateChecker.checkForUpdates(this, true));
-            addSectionHeading("Alerts");
+            addSectionHeading(getString(R.string.settings_alerts));
             addSwitchRow(
-                    "Rain alerts",
+                    getString(R.string.settings_rain_alerts),
                     "",
                     PREF_RAIN_ALERTS,
                     false);
             if (!OpenMeteoConfig.isOpenMeteo(this)) {
-                addSwitchRow("Severe weather alerts", "", PREF_SEVERE_ALERTS, false);
+                addSwitchRow(getString(R.string.settings_severe_weather_alerts), "", PREF_SEVERE_ALERTS, false);
             }
             if (displayedNotificationsBlocked) {
-                addActionRow("Enable alert notifications", "", () -> {
+                addActionRow(getString(R.string.settings_enable_alert_notifications), "", () -> {
                     Intent notificationSettings = new Intent(
                             android.provider.Settings.ACTION_APP_NOTIFICATION_SETTINGS)
                             .putExtra(android.provider.Settings.EXTRA_APP_PACKAGE, getPackageName());
@@ -460,46 +474,48 @@ public class SettingsActivity extends Activity {
             }
 
             addSectionHeading(OpenMeteoConfig.isOpenMeteo(this)
-                    ? "Optional Open-Meteo data" : "Optional Google data");
+                    ? getString(R.string.settings_optional_open_meteo_data)
+                    : getString(R.string.settings_optional_google_data));
             addSwitchRow(
-                    "Air Quality",
+                    getString(R.string.settings_air_quality),
                     "",
                     PREF_AIR_QUALITY,
                     false);
             addSwitchRow(
-                    "Pollen",
+                    getString(R.string.settings_pollen),
                     "",
                     PREF_POLLEN,
                     false);
 
-            addSectionHeading("Display");
+            addSectionHeading(getString(R.string.settings_display));
             addSwitchRow(
-                    "Precipitation page",
-                    "Show the minute-by-minute rain view in the forecast tabs.",
+                    getString(R.string.settings_precipitation_page),
+                    getString(R.string.settings_precipitation_page_summary),
                     PREF_PRECIPITATION_PAGE,
                     true);
             addSwitchRow(
-                    "Radar page",
-                    "Show the radar map in the forecast tabs.",
+                    getString(R.string.settings_radar_page),
+                    getString(R.string.settings_radar_page_summary),
                     PREF_RADAR_PAGE,
                     true);
             addActionRow(
-                    "Weather details",
-                    "Choose the measurements shown on the overview.",
+                    getString(R.string.settings_weather_details),
+                    getString(R.string.settings_weather_details_summary),
                     () -> startActivity(new Intent(this, WeatherDetailSettingsActivity.class)));
-            addActionRow("Units", "Temperature, wind, pressure, and visibility",
+            addActionRow(getString(R.string.settings_units_title), getString(R.string.settings_units_summary),
                     () -> startActivityForResult(new Intent(this, SettingsActivity.class)
                             .putExtra(EXTRA_UNITS_PAGE, true), REQUEST_UNITS_PAGE));
             addSwitchRow(
-                    "Weather animations",
+                    getString(R.string.settings_weather_animations),
                     "",
                     PREF_ANIMATIONS,
                     true);
 
             addActionRow(
-                    "Preview weather scenes",
+                    getString(R.string.settings_preview_weather_scenes),
                     "",
                     this::showScenePreview);
+            addGitHubStarCard();
 
             String versionName = "";
             try {
@@ -508,7 +524,8 @@ public class SettingsActivity extends Activity {
             } catch (Exception ignored) {
                 // Keep the footer usable if package metadata is unavailable.
             }
-            TextView footer = text("Zwerk Weather " + (versionName == null ? "" : versionName),
+            TextView footer = text(getString(R.string.settings_version_format,
+                    versionName == null ? "" : versionName),
                     12f, Color.argb(170, 210, 222, 236), false);
             footer.setGravity(Gravity.CENTER);
             footer.setPadding(dp(4), dp(28), dp(4), dp(8));
@@ -532,6 +549,31 @@ public class SettingsActivity extends Activity {
             return insets;
         });
         root.requestApplyInsets();
+    }
+
+    private void showLanguageDialog() {
+        AppLocaleManager.LanguageOption[] options = AppLocaleManager.OPTIONS;
+        String[] labels = new String[options.length];
+        String[] subtitles = new String[options.length];
+        for (int i = 0; i < options.length; i++) {
+            labels[i] = getString(options[i].labelResId);
+            subtitles[i] = "";
+        }
+        subtitles[0] = AppLocaleManager.systemLanguageNativeName();
+        showGlassChoiceDialog(
+                getString(R.string.settings_app_language),
+                labels,
+                subtitles,
+                AppLocaleManager.selectedIndex(this),
+                true,
+                index -> {
+                    String nextTag = options[index].tag;
+                    if (!nextTag.equals(AppLocaleManager.selectedTag(this))) {
+                        AppLocaleManager.setSelectedTag(this, nextTag);
+                        WeatherWidgetProvider.requestRefresh(this);
+                        getWindow().getDecorView().post(this::recreate);
+                    }
+                });
     }
 
     private void showWeatherSourceDialog() {
@@ -594,7 +636,7 @@ public class SettingsActivity extends Activity {
                     dialog.dismiss();
                     buildUi();
                 } catch (Exception ignored) {
-                    error.setText("Could not remove the key.");
+                    error.setText(UiTranslations.text(this, "Could not remove the key."));
                     error.setVisibility(View.VISIBLE);
                 }
             });
@@ -606,7 +648,7 @@ public class SettingsActivity extends Activity {
         actionsLp.topMargin = dp(16);
         panel.addView(actions, actionsLp);
 
-        Button cancel = sceneChip("Cancel");
+        Button cancel = sceneChip(getString(R.string.settings_cancel));
         cancel.setTextSize(14f);
         cancel.setBackground(sceneChipBackground(false));
         actions.addView(cancel, new LinearLayout.LayoutParams(0, dp(48), 1f));
@@ -620,7 +662,7 @@ public class SettingsActivity extends Activity {
             String candidate = field.getText().toString().trim();
             if (candidate.isEmpty() || candidate.length() > 512
                     || candidate.matches(".*\\s.*")) {
-                error.setText("Enter a valid key.");
+                error.setText(UiTranslations.text(this, "Enter a valid key."));
                 error.setVisibility(View.VISIBLE);
                 return;
             }
@@ -630,7 +672,7 @@ public class SettingsActivity extends Activity {
                 dialog.dismiss();
                 buildUi();
             } catch (Exception ignored) {
-                error.setText("Could not save the key.");
+                error.setText(UiTranslations.text(this, "Could not save the key."));
                 error.setVisibility(View.VISIBLE);
             }
         });
@@ -679,9 +721,14 @@ public class SettingsActivity extends Activity {
             option.setClickable(true);
             option.setFocusable(true);
             option.setSelected(selected);
-            option.setContentDescription(labels[i] + (selected ? ", selected" : ", not selected"));
+            option.setContentDescription(UiTranslations.text(this, labels[i]) + ", "
+                    + getString(selected
+                    ? R.string.settings_selected
+                    : R.string.settings_not_selected));
             if (Build.VERSION.SDK_INT >= 30) {
-                option.setStateDescription(selected ? "Selected" : "Not selected");
+                option.setStateDescription(getString(selected
+                        ? R.string.settings_selected
+                        : R.string.settings_not_selected));
             }
 
             LinearLayout labelColumn = new LinearLayout(this);
@@ -701,7 +748,7 @@ public class SettingsActivity extends Activity {
             option.setOnClickListener(v -> {
                 onSelect.accept(index);
                 dialog.dismiss();
-                buildUi();
+                if (!AppLocaleManager.isContextStale(this)) buildUi();
             });
             LinearLayout.LayoutParams optionLp = new LinearLayout.LayoutParams(-1,
                     dp(helper.isEmpty() ? 52 : 64));
@@ -709,7 +756,7 @@ public class SettingsActivity extends Activity {
             options.addView(option, optionLp);
         }
 
-        Button cancel = sceneChip("Cancel");
+        Button cancel = sceneChip(getString(R.string.settings_cancel));
         cancel.setTextSize(14f);
         cancel.setBackground(sceneChipBackground(false));
         LinearLayout.LayoutParams cancelLp = new LinearLayout.LayoutParams(-1, dp(48));
@@ -900,7 +947,7 @@ public class SettingsActivity extends Activity {
 
     private EditText apiKeyEditText() {
         EditText field = new EditText(this);
-        field.setHint("API key");
+        field.setHint(UiTranslations.text(this, "API key"));
         field.setTextColor(PRIMARY);
         field.setHintTextColor(Color.argb(145, 220, 231, 244));
         field.setTextSize(16f);
@@ -957,7 +1004,8 @@ public class SettingsActivity extends Activity {
     }
 
     private void showApiKeySaveFailure(TextView error) {
-        error.setText("Could not save the key. Check the value and try again.");
+        error.setText(UiTranslations.text(this,
+                "Could not save the key. Check the value and try again."));
         error.setVisibility(View.VISIBLE);
     }
 
@@ -965,7 +1013,8 @@ public class SettingsActivity extends Activity {
         try {
             startActivity(new Intent(Intent.ACTION_VIEW, Uri.parse(address)));
         } catch (Exception ignored) {
-            Toast.makeText(this, "No browser is available to open this link.", Toast.LENGTH_SHORT).show();
+            Toast.makeText(this, UiTranslations.text(this,
+                    "No browser is available to open this link."), Toast.LENGTH_SHORT).show();
         }
     }
 
@@ -1071,7 +1120,7 @@ public class SettingsActivity extends Activity {
 
                 chip.setOnClickListener(v -> {
                     preview.setScene(sceneKeys[index], sceneLabels[index]);
-                    selectedLabel.setText(sceneLabels[index]);
+                    selectedLabel.setText(UiTranslations.text(this, sceneLabels[index]));
                     for (int i = 0; i < sceneButtons.length; i++) {
                         updateSceneChip(sceneButtons[i], sceneLabels[i], i == index);
                     }
@@ -1125,7 +1174,7 @@ public class SettingsActivity extends Activity {
 
     private Button sceneChip(String label) {
         Button button = new Button(this);
-        button.setText(label);
+        button.setText(UiTranslations.text(this, label));
         button.setAllCaps(false);
         button.setTextSize(12f);
         button.setTextColor(PRIMARY);
@@ -1176,7 +1225,7 @@ public class SettingsActivity extends Activity {
 
     private Button previewActionButton(String label) {
         Button button = new Button(this);
-        button.setText(label);
+        button.setText(UiTranslations.text(this, label));
         button.setAllCaps(false);
         button.setTextSize(13f);
         button.setTextColor(PRIMARY);
@@ -1761,6 +1810,46 @@ public class SettingsActivity extends Activity {
         page.addView(row, surfaceParams());
     }
 
+    private void addGitHubStarCard() {
+        LinearLayout card = surface();
+        card.setOrientation(LinearLayout.VERTICAL);
+        card.setPadding(dp(18), dp(15), dp(18), dp(14));
+
+        TextView title = text("Enjoying Zwerk Weather?", 17f, PRIMARY, true);
+        card.addView(title);
+
+        TextView description = text(
+                "Zwerk Weather is ad-free and open source. A GitHub star helps more people discover the project.",
+                13f, SECONDARY, false);
+        description.setLineSpacing(dp(2), 1f);
+        LinearLayout.LayoutParams descriptionLp = new LinearLayout.LayoutParams(-1, -2);
+        descriptionLp.topMargin = dp(5);
+        card.addView(description, descriptionLp);
+
+        TextView action = text("Star on GitHub ↗", 14f, PRIMARY, true);
+        action.setGravity(Gravity.CENTER);
+        action.setPadding(dp(14), 0, dp(14), 0);
+        action.setMinHeight(dp(44));
+        action.setBackground(tileBackground(dp(12)));
+        action.setClickable(true);
+        action.setFocusable(true);
+        action.setOnClickListener(v -> {
+            getSharedPreferences(UI_PREFS, MODE_PRIVATE).edit()
+                    .putBoolean(PREF_SUPPORT_PROMPT_HANDLED, true).apply();
+            try {
+                startActivity(new Intent(Intent.ACTION_VIEW, Uri.parse(PROJECT_GITHUB_URL)));
+            } catch (Exception ignored) {
+                Toast.makeText(this, UiTranslations.text(this,
+                        "No browser is available to open this link."), Toast.LENGTH_SHORT).show();
+            }
+        });
+        LinearLayout.LayoutParams actionLp = new LinearLayout.LayoutParams(-2, dp(44));
+        actionLp.topMargin = dp(11);
+        card.addView(action, actionLp);
+
+        page.addView(card, surfaceParams());
+    }
+
     private void addSwitchRow(
             String title,
             String subtitle,
@@ -1789,7 +1878,7 @@ public class SettingsActivity extends Activity {
         toggle.setContentDescription(title);
         applySwitchPalette(toggle);
         if (Build.VERSION.SDK_INT >= 30) {
-            toggle.setStateDescription(toggle.isChecked() ? "On" : "Off");
+            toggle.setStateDescription(toggle.isChecked() ? getString(R.string.settings_on) : getString(R.string.settings_off));
         }
         toggle.setOnCheckedChangeListener((buttonView, isChecked) -> {
             getSharedPreferences(UI_PREFS, MODE_PRIVATE)
@@ -1797,7 +1886,7 @@ public class SettingsActivity extends Activity {
                     .putBoolean(preferenceKey, isChecked)
                     .apply();
             if (Build.VERSION.SDK_INT >= 30) {
-                buttonView.setStateDescription(isChecked ? "On" : "Off");
+                buttonView.setStateDescription(isChecked ? getString(R.string.settings_on) : getString(R.string.settings_off));
             }
             if (PREF_ANIMATIONS.equals(preferenceKey) && backdrop != null) {
                 backdrop.setAnimationRunning(isChecked);
@@ -1841,15 +1930,15 @@ public class SettingsActivity extends Activity {
     private void addUnitRows(LinearLayout parent) {
         addTemperatureUnitRow(parent);
         addChoiceUnitRow(parent,
-                "Wind speed", "", PREF_WIND_UNIT,
+                getString(R.string.settings_wind_speed), "", PREF_WIND_UNIT,
                 new String[]{WIND_KMH, WIND_MPH, WIND_MS, WIND_KNOTS},
-                new String[]{"km/h", "mph", "m/s", "knots"}, WIND_KMH);
+                new String[]{"km/h", "mph", "m/s", getString(R.string.settings_knots)}, WIND_KMH);
         addChoiceUnitRow(parent,
-                "Air pressure", "", PREF_PRESSURE_UNIT,
+                getString(R.string.settings_air_pressure), "", PREF_PRESSURE_UNIT,
                 new String[]{PRESSURE_HPA, PRESSURE_INHG, PRESSURE_MMHG},
                 new String[]{"hPa", "inHg", "mmHg"}, PRESSURE_HPA);
         addChoiceUnitRow(parent,
-                "Visibility", "", PREF_VISIBILITY_UNIT,
+                getString(R.string.settings_visibility), "", PREF_VISIBILITY_UNIT,
                 new String[]{VISIBILITY_KM, VISIBILITY_MI},
                 new String[]{"km", "mi"}, VISIBILITY_KM);
     }
@@ -1859,7 +1948,7 @@ public class SettingsActivity extends Activity {
         row.setOrientation(LinearLayout.VERTICAL);
         row.setPadding(dp(16), dp(10), dp(14), dp(11));
 
-        TextView title = text("Temperature unit", 17f, PRIMARY, false);
+        TextView title = text(getString(R.string.settings_temperature_unit), 17f, PRIMARY, false);
         row.addView(title);
 
         LinearLayout selector = unitSelector();
@@ -1869,14 +1958,14 @@ public class SettingsActivity extends Activity {
 
         String current = normalizeTemperatureUnit(getSharedPreferences(UI_PREFS, MODE_PRIVATE)
                 .getString(PREF_TEMPERATURE_UNIT, TEMP_CELSIUS));
-        TextView celsius = unitOption("°C  Celsius", 13f);
-        TextView fahrenheit = unitOption("°F  Fahrenheit", 13f);
+        TextView celsius = unitOption(getString(R.string.settings_celsius_option), 13f);
+        TextView fahrenheit = unitOption(getString(R.string.settings_fahrenheit_option), 13f);
         TextView[] options = {celsius, fahrenheit};
         String[] values = {TEMP_CELSIUS, TEMP_FAHRENHEIT};
-        String[] labels = {"Celsius", "Fahrenheit"};
+        String[] labels = {getString(R.string.settings_celsius), getString(R.string.settings_fahrenheit)};
         selector.addView(celsius, new LinearLayout.LayoutParams(0, dp(44), 1f));
         selector.addView(fahrenheit, new LinearLayout.LayoutParams(0, dp(44), 1f));
-        updateChoiceOptions(options, values, labels, current, "temperature unit");
+        updateChoiceOptions(options, values, labels, current, getString(R.string.settings_temperature_unit).toLowerCase(Locale.getDefault()));
 
         celsius.setOnClickListener(v -> selectTemperatureUnit(
                 TEMP_CELSIUS, options, values, labels));
@@ -1914,7 +2003,7 @@ public class SettingsActivity extends Activity {
             options[i] = option;
             selector.addView(option, new LinearLayout.LayoutParams(0, dp(44), 1f));
         }
-        updateChoiceOptions(options, values, labels, current, titleText.toLowerCase(Locale.ROOT));
+        updateChoiceOptions(options, values, labels, current, titleText.toLowerCase(Locale.getDefault()));
 
         for (int i = 0; i < options.length; i++) {
             final int index = i;
@@ -1925,7 +2014,7 @@ public class SettingsActivity extends Activity {
                     options,
                     values,
                     labels,
-                    titleText.toLowerCase(Locale.ROOT)));
+                    titleText.toLowerCase(Locale.getDefault())));
         }
         parent.addView(row, surfaceParams());
     }
@@ -1960,7 +2049,7 @@ public class SettingsActivity extends Activity {
             prefs.edit().putString(PREF_TEMPERATURE_UNIT, next).apply();
             temperatureUnitChanged = true;
         }
-        updateChoiceOptions(options, values, labels, next, "temperature unit");
+        updateChoiceOptions(options, values, labels, next, getString(R.string.settings_temperature_unit).toLowerCase(Locale.getDefault()));
     }
 
     private void selectDisplayUnit(
@@ -1995,9 +2084,11 @@ public class SettingsActivity extends Activity {
             option.setAlpha(selected ? 1f : 0.80f);
             option.setBackground(unitOptionBackground(selected));
             option.setContentDescription(labels[i] + " " + accessibilityName + ", "
-                    + (selected ? "selected" : "not selected"));
+                    + getString(selected ? R.string.settings_selected : R.string.settings_not_selected));
             if (Build.VERSION.SDK_INT >= 30) {
-                option.setStateDescription(selected ? "Selected" : "Not selected");
+                option.setStateDescription(getString(selected
+                        ? R.string.settings_selected
+                        : R.string.settings_not_selected));
             }
         }
     }
@@ -2115,7 +2206,7 @@ public class SettingsActivity extends Activity {
 
     private TextView text(String value, float sp, int color, boolean bold) {
         TextView view = new TextView(this);
-        view.setText(value);
+        view.setText(UiTranslations.text(this, value));
         view.setTextSize(sp);
         view.setTextColor(color);
         view.setTypeface(Typeface.create("sans-serif", bold ? Typeface.BOLD : Typeface.NORMAL));

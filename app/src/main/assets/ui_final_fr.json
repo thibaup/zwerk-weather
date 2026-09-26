@@ -1,0 +1,23 @@
+{
+  "Enter a precise forecast point. Signed decimal coordinates are supported.": "Entrez un point de prévision précis. Les coordonnées décimales signées sont prises en charge.",
+  "City search isn't available on this device right now.": "La recherche de villes n’est pas disponible sur cet appareil pour le moment.",
+  "The selected result had coordinates outside the valid latitude/longitude range.": "Le résultat sélectionné contenait des coordonnées hors de la plage valide de latitude/longitude.",
+  "OFFICIAL WEATHER ALERT": "ALERTE MÉTÉO OFFICIELLE",
+  "%d active alerts": "%d alertes actives",
+  "Source: %s": "Source : %s",
+  "Open alert source %s": "Ouvrir la source de l’alerte %s",
+  "Tap for official details.": "Touchez pour consulter les détails officiels.",
+  "Edit  ›": "Modifier  ›",
+  "DAILY LIMIT": "LIMITE QUOTIDIENNE",
+  "MONTHLY LIMIT": "LIMITE MENSUELLE",
+  "Set the maximum requests Zwerk Weather may send. Saving switches the profile to Custom.": "Définissez le nombre maximal de requêtes que Zwerk Weather peut envoyer. L’enregistrement fait passer le profil à Personnalisé.",
+  "GOOGLE USAGE & LIMITS": "UTILISATION ET LIMITES GOOGLE",
+  "RADAR & MAP TILES": "RADAR ET TUILES DE CARTE",
+  "Weather/Air Quality 8,000/mo · Pollen 4,000/mo.": "Météo/qualité de l’air 8 000/mois · Pollen 4 000/mois.",
+  "Weather/Air Quality 10,000/mo · Pollen 5,000/mo · local pacing uses Pacific time.": "Météo/qualité de l’air 10 000/mois · Pollen 5 000/mois · le cadencement local utilise l’heure du Pacifique.",
+  "Open-Meteo limits ↗": "Limites Open-Meteo ↗",
+  "On-demand frames · app paced below 100 requests/IP/minute": "Images à la demande · l’application maintient le débit sous 100 requêtes/IP/minute",
+  "Visible map tiles only · locally cached for 14 days": "Uniquement les tuiles visibles · mises en cache localement pendant 14 jours",
+  "Google caps follow Pacific time. Counts cover this device only.": "Les plafonds Google suivent l’heure du Pacifique. Les compteurs concernent uniquement cet appareil.",
+  "View Google pricing ↗": "Voir les tarifs Google ↗"
+}
