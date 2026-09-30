@@ -1296,6 +1296,14 @@ public class MainActivity extends WeatherSettingsFlowActivity implements DeviceL
         title.setTypeface(Typeface.create("sans-serif-medium", Typeface.NORMAL));
         panel.addView(title);
 
+        Button useOpenMeteo = coordinateDialogButton("Use Open-Meteo without a key", true);
+        useOpenMeteo.setTextSize(15);
+        useOpenMeteo.setMinHeight(dp(56));
+        LinearLayout.LayoutParams openMeteoLp = new LinearLayout.LayoutParams(-1, -2);
+        openMeteoLp.topMargin = dp(16);
+        openMeteoLp.bottomMargin = dp(14);
+        panel.addView(useOpenMeteo, openMeteoLp);
+
         TextView explanation = text(
                 "Zwerk Weather uses Google Weather. Your key is saved only in this app's private storage and is never shown after saving.",
                 13,
@@ -1324,15 +1332,11 @@ public class MainActivity extends WeatherSettingsFlowActivity implements DeviceL
         errorLp.topMargin = dp(8);
         panel.addView(error, errorLp);
 
-        Button save = coordinateDialogButton("Save & continue", true);
+        Button save = coordinateDialogButton("Save & continue", false);
         LinearLayout.LayoutParams saveLp = new LinearLayout.LayoutParams(-1, dp(48));
         saveLp.topMargin = dp(16);
         panel.addView(save, saveLp);
 
-        Button useOpenMeteo = coordinateDialogButton("Use Open-Meteo without a key", false);
-        LinearLayout.LayoutParams openMeteoLp = new LinearLayout.LayoutParams(-1, dp(48));
-        openMeteoLp.topMargin = dp(8);
-        panel.addView(useOpenMeteo, openMeteoLp);
         useOpenMeteo.setOnClickListener(v -> {
             OpenMeteoConfig.setProvider(this, OpenMeteoConfig.OPEN_METEO);
             field.getText().clear();
