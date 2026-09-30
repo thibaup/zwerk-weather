@@ -34,6 +34,18 @@ final class DetailGlyphView extends View {
         p.setStyle(Paint.Style.STROKE);
 
         switch (kind) {
+            case "thunder": {
+                Path bolt = new Path();
+                bolt.moveTo(cx + s * 0.08f, cy - s * 0.42f);
+                bolt.lineTo(cx - s * 0.28f, cy + s * 0.04f);
+                bolt.lineTo(cx - s * 0.02f, cy + s * 0.04f);
+                bolt.lineTo(cx - s * 0.10f, cy + s * 0.42f);
+                bolt.lineTo(cx + s * 0.29f, cy - s * 0.09f);
+                bolt.lineTo(cx + s * 0.03f, cy - s * 0.09f);
+                bolt.close();
+                canvas.drawPath(bolt, p);
+                break;
+            }
             case "uv":
                 canvas.drawCircle(cx, cy, s * 0.18f, p);
                 for (int i = 0; i < 8; i++) {

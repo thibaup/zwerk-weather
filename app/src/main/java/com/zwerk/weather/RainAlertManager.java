@@ -35,7 +35,6 @@ import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.Locale;
 
-/** Background scheduling, fetching, deduplication and notification support for imminent rain. */
 public final class RainAlertManager {
     private static final String UI_PREFS = "WEATHER_UI";
     private static final String PREF_RAIN_ALERTS = "rain_alerts";
@@ -387,7 +386,7 @@ public final class RainAlertManager {
                 && lat >= -90d && lat <= 90d && lon >= -180d && lon <= 180d;
     }
 
-    private static String readApiKey(Context context) {
+    static String readApiKey(Context context) {
         File keyFile = new File(context.getFilesDir(), API_KEY_FILE);
         if (!keyFile.isFile()) return "";
         try (BufferedReader reader = new BufferedReader(new InputStreamReader(
@@ -408,7 +407,7 @@ public final class RainAlertManager {
                 + "&pageSize=" + MINUTE_PAGE_SIZE;
     }
 
-    private static void applyAndroidApiKeyRestrictionHeaders(
+    static void applyAndroidApiKeyRestrictionHeaders(
             Context context, HttpURLConnection connection) {
         if (connection == null) return;
         String certificate = signingCertificateSha1(context);

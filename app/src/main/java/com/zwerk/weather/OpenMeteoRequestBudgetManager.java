@@ -6,7 +6,6 @@ import android.content.SharedPreferences;
 import java.time.LocalDate;
 import java.time.YearMonth;
 
-/** Device-local Open-Meteo HTTP request counts and safety caps. */
 final class OpenMeteoRequestBudgetManager {
     private static final String PREFS = "open_meteo_request_budgets_v1";
     private static final String KEY_DAY = "day";
@@ -124,6 +123,12 @@ final class OpenMeteoRequestBudgetManager {
         synchronized (LOCK) {
             prefs(context).edit().putInt(KEY_DAILY_LIMIT, daily)
                     .putInt(KEY_MONTHLY_LIMIT, monthly).apply();
+        }
+    }
+
+    static void restoreDefaultLimits(Context context) {
+        synchronized (LOCK) {
+            prefs(context).edit().remove(KEY_DAILY_LIMIT).remove(KEY_MONTHLY_LIMIT).apply();
         }
     }
 

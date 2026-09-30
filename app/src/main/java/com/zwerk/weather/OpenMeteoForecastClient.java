@@ -21,12 +21,7 @@ import java.time.ZoneOffset;
 import java.time.format.DateTimeFormatter;
 import java.util.Locale;
 
-/**
- * Package-private Open-Meteo client that adapts forecast responses to the
- * Google Weather-shaped JSON objects consumed by the existing Zwerk Weather UI.
- *
- * Counts outbound requests against the device-local Open-Meteo budget.
- */
+/** Adapts Open-Meteo responses to the shared forecast JSON schema. */
 final class OpenMeteoForecastClient {
     private static final String FREE_ENDPOINT = "https://api.open-meteo.com/v1/forecast";
     private static final String CUSTOMER_ENDPOINT = "https://customer-api.open-meteo.com/v1/forecast";
@@ -35,7 +30,8 @@ final class OpenMeteoForecastClient {
     private static final int READ_TIMEOUT_MS = 20_000;
     private static final int MAX_SUCCESS_BODY_BYTES = 4 * 1024 * 1024;
     private static final int MAX_ERROR_BODY_BYTES = 32 * 1024;
-    private static final int MINUTE_FORECAST_STEPS = 180; // 45 hours at 15-minute resolution.
+    // Eight hours cover an exact six-hour view through the one-hour cache lifetime.
+    private static final int MINUTE_FORECAST_STEPS = 32;
     private static final int HOURLY_FORECAST_STEPS = 240; // Ten days from the current hour.
 
     private static final String META_KEY = "_openMeteo";
@@ -85,7 +81,6 @@ final class OpenMeteoForecastClient {
             "wind_direction_10m_dominant");
 
     private static final String MINUTELY_VARIABLES = join(
-            "precipitation_probability",
             "precipitation",
             "rain",
             "showers",
@@ -153,11 +148,18 @@ final class OpenMeteoForecastClient {
             String modelId,
             String paidApiKey) throws Exception {
         validateCoordinates(lat, lon);
-        ModelChoice model = modelChoice(modelId);
+        ModelChoice model = modelChoice(PrecipitationModelPolicy.resolve(modelId, lat, lon));
         Endpoint endpoint = endpoint(paidApiKey);
 
         StringBuilder url = baseQuery(endpoint, lat, lon, model);
         append(url, "minutely_15", MINUTELY_VARIABLES);
+        // Météo-France's deterministic seamless reader has no probability feed.
+        // Keep missing chance unavailable; amounts do not imply a percentage.
+        boolean requestProbability = !"meteofrance_seamless".equals(model.apiId);
+        if (requestProbability) {
+            append(url, "hourly", "precipitation_probability");
+            append(url, "forecast_hours", "9");
+        }
         append(url, "temperature_unit", "celsius");
         append(url, "wind_speed_unit", "kmh");
         append(url, "precipitation_unit", "mm");
@@ -182,6 +184,8 @@ final class OpenMeteoForecastClient {
         metadata.put("observation", false);
         metadata.put("resolutionSource", "OPEN_METEO_NATIVE_OR_INTERPOLATED");
         metadata.put("requested15MinuteSteps", MINUTE_FORECAST_STEPS);
+        if (requestProbability) metadata.put("probabilityResolutionMinutes", 60);
+        metadata.put("requestedModel", modelId == null ? "auto" : modelId);
         metadata.put("complete", true);
         out.put(META_KEY, metadata);
         out.put("forecastKind", "MODEL_FORECAST_15_MINUTE");
@@ -207,7 +211,7 @@ final class OpenMeteoForecastClient {
             Double rainMm = numberAt(source, "rain", i);
             Double showersMm = numberAt(source, "showers", i);
             Double snowfallCm = numberAt(source, "snowfall", i);
-            Double probabilityValue = numberAt(source, "precipitation_probability", i);
+            Double probabilityValue = precedingHourlyProbability(raw.optJSONObject("hourly"), end, clock);
             Integer code = integerAt(source, "weather_code", i);
             if (qpfMm == null && probabilityValue == null && code == null) continue;
 
@@ -246,6 +250,19 @@ final class OpenMeteoForecastClient {
         return out;
     }
 
+    private static Double precedingHourlyProbability(JSONObject hourly, Instant intervalEnd, ResponseClock clock) {
+        if (hourly == null || intervalEnd == null) return null;
+        JSONArray times = hourly.optJSONArray("time");
+        if (times == null) return null;
+        long[] hourEnds = new long[times.length()];
+        for (int i = 0; i < times.length(); i++) {
+            Instant hourEnd = localTimestampToInstant(stringAt(times, i), clock);
+            hourEnds[i] = hourEnd == null ? Long.MIN_VALUE : hourEnd.toEpochMilli();
+        }
+        int index = PrecipitationWindow.precedingProbabilityIndex(hourEnds, intervalEnd.toEpochMilli());
+        return index < 0 ? null : numberAt(hourly, "precipitation_probability", index);
+    }
+
     /** Keep cached and displayed Open-Meteo hours anchored to the live clock. */
     static boolean pruneElapsedHourly(JSONObject hourly, Instant now) {
         if (hourly == null || !hourly.has(META_KEY) || now == null) return false;
@@ -274,34 +291,8 @@ final class OpenMeteoForecastClient {
         return changed;
     }
 
-    /**
-     * Normalizes accepted model selectors to the current Open-Meteo Forecast API model id.
-     * "dwd_icon_seamless" is accepted as a compatibility alias and normalized to the
-     * currently documented OpenAPI enum "icon_seamless".
-     */
-    static String normalizeModelId(String modelId) {
-        return modelChoice(modelId).apiId;
-    }
-
     static String modelLabel(String modelId) {
         return modelChoice(modelId).label;
-    }
-
-    static String[] acceptedModelIds() {
-        return new String[] {
-                "auto",
-                "best_match",
-                "ecmwf_ifs",
-                "dwd_icon_seamless",
-                "icon_seamless",
-                "ncep_gfs_seamless",
-                "meteofrance_seamless",
-                "ukmo_seamless",
-                "knmi_seamless",
-                "dmi_seamless",
-                "jma_seamless",
-                "gem_seamless"
-        };
     }
 
     private static JSONObject adaptCurrent(
@@ -405,12 +396,14 @@ final class OpenMeteoForecastClient {
                     Double isDay = numberAt(source, "is_day", i);
                     if (isDay != null) hour.put("isDaytime", isDay >= 0.5d);
 
+                    // Accumulations and probability at T describe the preceding
+                    // hour. This UI interval starts at T, so use its end's value.
                     JSONObject precipitation = precipitation(
-                            numberAt(source, "precipitation_probability", i),
-                            numberAt(source, "precipitation", i),
-                            numberAt(source, "rain", i),
-                            numberAt(source, "showers", i),
-                            numberAt(source, "snowfall", i));
+                            numberAt(source, "precipitation_probability", i + 1),
+                            numberAt(source, "precipitation", i + 1),
+                            numberAt(source, "rain", i + 1),
+                            numberAt(source, "showers", i + 1),
+                            numberAt(source, "snowfall", i + 1));
                     if (precipitation.length() > 0) hour.put("precipitation", precipitation);
 
                     JSONObject wind = wind(

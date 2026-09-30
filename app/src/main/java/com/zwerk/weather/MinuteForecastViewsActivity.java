@@ -1,95 +1,35 @@
 package com.zwerk.weather;
 
-import android.animation.ValueAnimator;
-import android.app.Activity;
-import android.app.Dialog;
 import android.content.Context;
-import android.content.Intent;
-import android.content.pm.ApplicationInfo;
-import android.content.pm.PackageManager;
-import android.graphics.Bitmap;
-import android.graphics.BitmapFactory;
 import android.graphics.Canvas;
 import android.graphics.Color;
 import android.graphics.LinearGradient;
 import android.graphics.Paint;
 import android.graphics.Path;
-import android.graphics.RadialGradient;
-import android.graphics.Rect;
-import android.graphics.RectF;
 import android.graphics.Shader;
 import android.graphics.Typeface;
-import android.graphics.drawable.ColorDrawable;
-import android.graphics.drawable.GradientDrawable;
-import android.graphics.drawable.StateListDrawable;
-import android.location.Address;
-import android.location.Geocoder;
-import android.location.Location;
-import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
-import android.os.SystemClock;
-import android.util.Log;
-import android.text.InputType;
-import android.text.method.PasswordTransformationMethod;
-import android.view.Gravity;
 import android.view.KeyEvent;
 import android.view.MotionEvent;
 import android.view.ViewConfiguration;
 import android.view.View;
-import android.view.ViewGroup;
-import android.view.Window;
-import android.view.WindowInsets;
-import android.view.WindowInsetsController;
-import android.view.WindowManager;
 import android.view.accessibility.AccessibilityNodeInfo;
-import android.widget.Button;
-import android.widget.EditText;
-import android.widget.FrameLayout;
-import android.widget.HorizontalScrollView;
-import android.widget.LinearLayout;
-import android.widget.ProgressBar;
-import android.widget.ScrollView;
-import android.widget.TextView;
-import android.widget.Toast;
 
-import android.system.Os;
 
-import org.json.JSONArray;
-import org.json.JSONObject;
 
-import java.io.BufferedReader;
-import java.io.ByteArrayOutputStream;
-import java.io.File;
-import java.io.FileReader;
-import java.io.FileOutputStream;
-import java.io.InputStream;
-import java.lang.ref.WeakReference;
-import java.io.IOException;
-import java.net.HttpURLConnection;
-import java.net.SocketTimeoutException;
-import java.net.URL;
-import java.net.URLEncoder;
-import java.nio.charset.StandardCharsets;
-import java.security.MessageDigest;
-import java.time.Duration;
 import java.time.Instant;
-import java.time.LocalDate;
 import java.time.ZoneId;
-import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
-import java.util.HashSet;
 import java.util.List;
-import java.util.Locale;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.ThreadLocalRandom;
-import java.util.concurrent.Executors;
 
 
 abstract class MinuteForecastViewsActivity extends ForecastViewsActivity {
     final class MinutePrecipitationGraphView extends View {
         private final ArrayList<MinuteSegment> segments = new ArrayList<>();
         private final ZoneId zone;
+        private final long windowStartMillis;
+        private final long windowEndMillis;
         private final Paint bandPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
         private final Paint gridPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
         private final Paint areaPaint = new Paint(Paint.ANTI_ALIAS_FLAG | Paint.DITHER_FLAG);
@@ -106,11 +46,18 @@ abstract class MinuteForecastViewsActivity extends ForecastViewsActivity {
         private float plotRight;
         private float plotTop;
         private float plotBottom;
+        private final int touchSlop;
+        private float touchDownX, touchDownY;
+        private int touchAxis;
 
-        MinutePrecipitationGraphView(Context context, List<MinuteSegment> source, ZoneId zone) {
+        MinutePrecipitationGraphView(Context context, List<MinuteSegment> source, ZoneId zone,
+                Instant windowStart, Instant windowEnd) {
             super(context);
+            touchSlop = ViewConfiguration.get(context).getScaledTouchSlop();
             if (source != null) segments.addAll(source);
             this.zone = zone == null ? ZoneId.systemDefault() : zone;
+            windowStartMillis = windowStart.toEpochMilli();
+            windowEndMillis = windowEnd.toEpochMilli();
             setFocusable(true);
             setFocusableInTouchMode(true);
             setClickable(true);
@@ -151,6 +98,7 @@ abstract class MinuteForecastViewsActivity extends ForecastViewsActivity {
         }
 
         private int segmentIndexForTime(long epochMillis) {
+            if (epochMillis < windowStartMillis || epochMillis >= windowEndMillis) return -1;
             if (segments.isEmpty()) return -1;
             for (int i = 0; i < segments.size(); i++) {
                 MinuteSegment segment = segments.get(i);
@@ -163,8 +111,8 @@ abstract class MinuteForecastViewsActivity extends ForecastViewsActivity {
 
         private long nearestSelectableTime(long epochMillis) {
             if (segments.isEmpty()) return Long.MIN_VALUE;
-            long first = segments.get(0).start.toEpochMilli();
-            long lastExclusive = segments.get(segments.size() - 1).end.toEpochMilli();
+            long first = Math.max(windowStartMillis, segments.get(0).start.toEpochMilli());
+            long lastExclusive = Math.min(windowEndMillis, segments.get(segments.size() - 1).end.toEpochMilli());
             long last = Math.max(first, lastExclusive - 1L);
             long clamped = Math.max(first, Math.min(last, epochMillis));
             long roundedSteps = Math.round((clamped - first) / (double) MINUTE_SELECTION_STEP_MILLIS);
@@ -194,8 +142,8 @@ abstract class MinuteForecastViewsActivity extends ForecastViewsActivity {
             if (segments.isEmpty() || selectedTimeMillis == Long.MIN_VALUE || delta == 0) {
                 return selectedTimeMillis;
             }
-            long first = segments.get(0).start.toEpochMilli();
-            long last = segments.get(segments.size() - 1).end.toEpochMilli() - 1L;
+            long first = Math.max(windowStartMillis, segments.get(0).start.toEpochMilli());
+            long last = Math.min(windowEndMillis, segments.get(segments.size() - 1).end.toEpochMilli()) - 1L;
             long direction = delta < 0 ? -1L : 1L;
             long candidate = selectedTimeMillis
                     + direction * MINUTE_SELECTION_STEP_MILLIS;
@@ -220,8 +168,8 @@ abstract class MinuteForecastViewsActivity extends ForecastViewsActivity {
             drawIntensityBands(canvas);
             drawTimeTicks(canvas);
 
-            long minTime = segments.get(0).start.toEpochMilli();
-            long maxTime = segments.get(segments.size() - 1).end.toEpochMilli();
+            long minTime = windowStartMillis;
+            long maxTime = windowEndMillis;
             if (maxTime <= minTime) maxTime = minTime + 1L;
 
             areaPath.reset();
@@ -372,8 +320,8 @@ abstract class MinuteForecastViewsActivity extends ForecastViewsActivity {
         }
 
         private void drawTimeTicks(Canvas canvas) {
-            long minTime = segments.get(0).start.toEpochMilli();
-            long maxTime = segments.get(segments.size() - 1).end.toEpochMilli();
+            long minTime = windowStartMillis;
+            long maxTime = windowEndMillis;
             if (maxTime <= minTime) maxTime = minTime + 1L;
 
             textPaint.setColor(Color.argb(190, 255, 255, 255));
@@ -410,17 +358,35 @@ abstract class MinuteForecastViewsActivity extends ForecastViewsActivity {
             if (segments.isEmpty()) return false;
             switch (event.getActionMasked()) {
                 case MotionEvent.ACTION_DOWN:
-                    requestFocus();
-                    selectForX(event.getX(), false);
+                    // Focusing a partially visible graph asks ScrollView to bring it
+                    // into view. Defer selection so a vertical drag never jumps there.
+                    touchDownX = event.getX();
+                    touchDownY = event.getY();
+                    touchAxis = 0;
+                    if (getParent() != null) getParent().requestDisallowInterceptTouchEvent(true);
                     return true;
                 case MotionEvent.ACTION_MOVE:
-                    selectForX(event.getX(), false);
+                    if (touchAxis == 0) {
+                        float dx = Math.abs(event.getX() - touchDownX);
+                        float dy = Math.abs(event.getY() - touchDownY);
+                        if (Math.max(dx, dy) > touchSlop) touchAxis = dx > dy ? 1 : 2;
+                    }
+                    if (touchAxis == 1) {
+                        if (getParent() != null) getParent().requestDisallowInterceptTouchEvent(true);
+                        selectForX(event.getX(), false);
+                    } else if (touchAxis == 2 && getParent() != null) {
+                        getParent().requestDisallowInterceptTouchEvent(false);
+                    }
                     return true;
                 case MotionEvent.ACTION_UP:
-                    selectForX(event.getX(), false);
-                    performClick();
+                    if (touchAxis != 2) {
+                        selectForX(event.getX(), false);
+                        performClick();
+                    }
+                    if (getParent() != null) getParent().requestDisallowInterceptTouchEvent(false);
                     return true;
                 case MotionEvent.ACTION_CANCEL:
+                    if (getParent() != null) getParent().requestDisallowInterceptTouchEvent(false);
                     return true;
                 default:
                     return super.onTouchEvent(event);
@@ -429,8 +395,8 @@ abstract class MinuteForecastViewsActivity extends ForecastViewsActivity {
 
         private void selectForX(float x, boolean announce) {
             if (segments.isEmpty() || plotRight <= plotLeft) return;
-            long minTime = segments.get(0).start.toEpochMilli();
-            long maxTime = segments.get(segments.size() - 1).end.toEpochMilli();
+            long minTime = windowStartMillis;
+            long maxTime = windowEndMillis;
             float fraction = Math.max(0f, Math.min(1f, (x - plotLeft) / (plotRight - plotLeft)));
             long target = minTime + Math.round((maxTime - minTime) * fraction);
             long nextTime = nearestSelectableTime(target);

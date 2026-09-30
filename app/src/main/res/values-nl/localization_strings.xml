@@ -63,7 +63,7 @@
     <string name="settings_units_summary">Temperatuur, wind, druk en zicht</string>
     <string name="settings_weather_animations">Weeranimaties</string>
     <string name="settings_preview_weather_scenes">Weerscènes bekijken</string>
-    <string name="settings_version_format">Zwerk Weather %1$s</string>
+    <string name="settings_version_format">Zwerk Weather v%1$s</string>
     <string name="settings_measurement_units">Meeteenheden</string>
     <string name="settings_temperature_unit">Temperatuureenheid</string>
     <string name="settings_celsius">Celsius</string>
@@ -80,4 +80,7 @@
     <string name="settings_on">Aan</string>
     <string name="settings_off">Uit</string>
     <string name="weather_widget_description">Weersverwachting en huidige omstandigheden.</string>
+    <string name="forecast_saved_status">Opgeslagen voorspelling · %1$s</string>
+    <string name="forecast_temperature">Temperatuur</string>
+    <string name="hourly_day_graph_hint">Tik op de grafiek voor uurgegevens</string>
 </resources>

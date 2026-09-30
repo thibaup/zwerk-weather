@@ -63,7 +63,7 @@
     <string name="settings_units_summary">Температура, ветер, давление и видимость</string>
     <string name="settings_weather_animations">Анимации погоды</string>
     <string name="settings_preview_weather_scenes">Предпросмотр погодных сцен</string>
-    <string name="settings_version_format">Zwerk Weather %1$s</string>
+    <string name="settings_version_format">Zwerk Weather v%1$s</string>
     <string name="settings_measurement_units">Единицы измерения</string>
     <string name="settings_temperature_unit">Единица температуры</string>
     <string name="settings_celsius">Celsius</string>
@@ -80,4 +80,7 @@
     <string name="settings_on">Вкл.</string>
     <string name="settings_off">Выкл.</string>
     <string name="weather_widget_description">Прогноз погоды и текущие условия.</string>
+    <string name="forecast_saved_status">Сохранённый прогноз · %1$s</string>
+    <string name="forecast_temperature">Температура</string>
+    <string name="hourly_day_graph_hint">Нажмите на график, чтобы увидеть почасовые данные</string>
 </resources>

@@ -63,7 +63,7 @@
     <string name="settings_units_summary">Teplota, vietor, tlak a viditeľnosť</string>
     <string name="settings_weather_animations">Animácie počasia</string>
     <string name="settings_preview_weather_scenes">Náhľad scén počasia</string>
-    <string name="settings_version_format">Zwerk Weather %1$s</string>
+    <string name="settings_version_format">Zwerk Weather v%1$s</string>
     <string name="settings_measurement_units">Merné jednotky</string>
     <string name="settings_temperature_unit">Jednotka teploty</string>
     <string name="settings_celsius">Celsius</string>
@@ -80,4 +80,7 @@
     <string name="settings_on">Zapnuté</string>
     <string name="settings_off">Vypnuté</string>
     <string name="weather_widget_description">Predpoveď počasia a aktuálne podmienky.</string>
+    <string name="forecast_saved_status">Uložená predpoveď · %1$s</string>
+    <string name="forecast_temperature">Teplota</string>
+    <string name="hourly_day_graph_hint">Klepnutím na graf zobrazíte hodinové podrobnosti</string>
 </resources>

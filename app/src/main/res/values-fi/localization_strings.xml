@@ -63,7 +63,7 @@
     <string name="settings_units_summary">Lämpötila, tuuli, paine ja näkyvyys</string>
     <string name="settings_weather_animations">Sääanimaatiot</string>
     <string name="settings_preview_weather_scenes">Esikatsele säätilanteita</string>
-    <string name="settings_version_format">Zwerk Weather %1$s</string>
+    <string name="settings_version_format">Zwerk Weather v%1$s</string>
     <string name="settings_measurement_units">Mittayksiköt</string>
     <string name="settings_temperature_unit">Lämpötilayksikkö</string>
     <string name="settings_celsius">Celsius</string>
@@ -80,4 +80,7 @@
     <string name="settings_on">Päällä</string>
     <string name="settings_off">Pois</string>
     <string name="weather_widget_description">Sääennuste ja nykyiset olosuhteet.</string>
+    <string name="forecast_saved_status">Tallennettu ennuste · %1$s</string>
+    <string name="forecast_temperature">Lämpötila</string>
+    <string name="hourly_day_graph_hint">Näytä tuntitiedot napauttamalla kuvaajaa</string>
 </resources>

@@ -63,7 +63,7 @@
     <string name="settings_units_summary">Temperatur, vind, trykk og sikt</string>
     <string name="settings_weather_animations">Væranimasjoner</string>
     <string name="settings_preview_weather_scenes">Forhåndsvis værscener</string>
-    <string name="settings_version_format">Zwerk Weather %1$s</string>
+    <string name="settings_version_format">Zwerk Weather v%1$s</string>
     <string name="settings_measurement_units">Måleenheter</string>
     <string name="settings_temperature_unit">Temperaturenhet</string>
     <string name="settings_celsius">Celsius</string>
@@ -80,4 +80,7 @@
     <string name="settings_on">På</string>
     <string name="settings_off">Av</string>
     <string name="weather_widget_description">Værmelding og nåværende forhold.</string>
+    <string name="forecast_saved_status">Lagret værvarsel · %1$s</string>
+    <string name="forecast_temperature">Temperatur</string>
+    <string name="hourly_day_graph_hint">Trykk på grafen for timedetaljer</string>
 </resources>

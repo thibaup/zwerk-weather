@@ -63,7 +63,7 @@
     <string name="settings_units_summary">Температура, вітер, тиск і видимість</string>
     <string name="settings_weather_animations">Анімації погоди</string>
     <string name="settings_preview_weather_scenes">Перегляд погодних сцен</string>
-    <string name="settings_version_format">Zwerk Weather %1$s</string>
+    <string name="settings_version_format">Zwerk Weather v%1$s</string>
     <string name="settings_measurement_units">Одиниці вимірювання</string>
     <string name="settings_temperature_unit">Одиниця температури</string>
     <string name="settings_celsius">Celsius</string>
@@ -80,4 +80,7 @@
     <string name="settings_on">Увімк.</string>
     <string name="settings_off">Вимк.</string>
     <string name="weather_widget_description">Прогноз погоди та поточні умови.</string>
+    <string name="forecast_saved_status">Збережений прогноз · %1$s</string>
+    <string name="forecast_temperature">Температура</string>
+    <string name="hourly_day_graph_hint">Натисніть на графік, щоб побачити погодинні дані</string>
 </resources>

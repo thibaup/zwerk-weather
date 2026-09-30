@@ -63,7 +63,7 @@
     <string name="settings_units_summary">Θερμοκρασία, άνεμος, πίεση και ορατότητα</string>
     <string name="settings_weather_animations">Κινούμενα γραφικά καιρού</string>
     <string name="settings_preview_weather_scenes">Προεπισκόπηση καιρικών σκηνών</string>
-    <string name="settings_version_format">Zwerk Weather %1$s</string>
+    <string name="settings_version_format">Zwerk Weather v%1$s</string>
     <string name="settings_measurement_units">Μονάδες μέτρησης</string>
     <string name="settings_temperature_unit">Μονάδα θερμοκρασίας</string>
     <string name="settings_celsius">Celsius</string>
@@ -80,4 +80,7 @@
     <string name="settings_on">Ενεργό</string>
     <string name="settings_off">Ανενεργό</string>
     <string name="weather_widget_description">Πρόγνωση καιρού και τρέχουσες συνθήκες.</string>
+    <string name="forecast_saved_status">Αποθηκευμένη πρόγνωση · %1$s</string>
+    <string name="forecast_temperature">Θερμοκρασία</string>
+    <string name="hourly_day_graph_hint">Πατήστε το γράφημα για ωριαίες λεπτομέρειες</string>
 </resources>

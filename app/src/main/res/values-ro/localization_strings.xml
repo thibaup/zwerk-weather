@@ -63,7 +63,7 @@
     <string name="settings_units_summary">Temperatură, vânt, presiune și vizibilitate</string>
     <string name="settings_weather_animations">Animații meteo</string>
     <string name="settings_preview_weather_scenes">Previzualizează scenele meteo</string>
-    <string name="settings_version_format">Zwerk Weather %1$s</string>
+    <string name="settings_version_format">Zwerk Weather v%1$s</string>
     <string name="settings_measurement_units">Unități de măsură</string>
     <string name="settings_temperature_unit">Unitate de temperatură</string>
     <string name="settings_celsius">Celsius</string>
@@ -80,4 +80,7 @@
     <string name="settings_on">Activat</string>
     <string name="settings_off">Dezactivat</string>
     <string name="weather_widget_description">Prognoza meteo și condițiile actuale.</string>
+    <string name="forecast_saved_status">Prognoză salvată · %1$s</string>
+    <string name="forecast_temperature">Temperatură</string>
+    <string name="hourly_day_graph_hint">Atinge graficul pentru detalii orare</string>
 </resources>

@@ -54,9 +54,7 @@ import org.json.JSONArray;
 import org.json.JSONException;
 import org.json.JSONObject;
 
-import java.io.IOException;
 import java.nio.charset.StandardCharsets;
-import java.lang.ref.WeakReference;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
@@ -64,15 +62,13 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.UUID;
+import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 
-/**
- * Clean-room city manager for WeatherNext.
- *
- * This activity uses only Android platform APIs and programmatic drawing. It has no dependency on
- * vendor weather packages, AndroidX, Material Components, or third-party libraries.
- */
 public class CityManagerActivity extends Activity {
     public static final String PREFS_NAME = "WEATHER_LOCATIONS";
     public static final String KEY_LOCATIONS_JSON = "locations";
@@ -92,7 +88,8 @@ public class CityManagerActivity extends Activity {
     private static final String LEGACY_LON = "lon";
     private static final String LEGACY_NAME = "name";
 
-    private static final int MAX_GEOCODER_RESULTS = 8;
+    private static final int MAX_GEOCODER_RESULTS = 10;
+    private static final long GEOCODER_FALLBACK_TIMEOUT_MS = 4500L;
     private static final double COORD_EPSILON = 0.0015;
     private static final double NAME_COORD_EPSILON = 0.02;
     private static final Object STORE_LOCK = new Object();
@@ -104,8 +101,13 @@ public class CityManagerActivity extends Activity {
     private static final int COLOR_SEARCH_HINT = Color.rgb(116, 116, 116);
     private static final int COLOR_DELETE = Color.rgb(255, 111, 105);
 
-    private final ExecutorService geocoderExecutor = Executors.newSingleThreadExecutor(r -> {
-        Thread t = new Thread(r, "CityManager-Geocoder");
+    private final ExecutorService geocoderExecutor = Executors.newFixedThreadPool(2, r -> {
+        Thread t = new Thread(r, "CityManager-CitySearch");
+        t.setDaemon(true);
+        return t;
+    });
+    private final ExecutorService fallbackGeocoderExecutor = Executors.newSingleThreadExecutor(r -> {
+        Thread t = new Thread(r, "CityManager-GeocoderFallback");
         t.setDaemon(true);
         return t;
     });
@@ -125,7 +127,8 @@ public class CityManagerActivity extends Activity {
 
     private boolean editMode;
     private volatile boolean destroyed;
-    private int searchGeneration;
+    private volatile int searchGeneration;
+    private Future<?> activeCitySearch;
     private int lastIssuedGeneration = -1;
     private String lastIssuedQuery = "";
     private Runnable pendingSearch;
@@ -180,6 +183,7 @@ public class CityManagerActivity extends Activity {
         destroyed = true;
         searchGeneration++;
         geocoderExecutor.shutdownNow();
+        fallbackGeocoderExecutor.shutdownNow();
         mainHandler.removeCallbacksAndMessages(null);
         if (activeDialog != null) {
             activeDialog.dismiss();
@@ -192,9 +196,7 @@ public class CityManagerActivity extends Activity {
         Window window = getWindow();
         window.setStatusBarColor(Color.TRANSPARENT);
         window.setNavigationBarColor(Color.TRANSPARENT);
-        if (Build.VERSION.SDK_INT >= 28) {
-            window.setNavigationBarDividerColor(Color.TRANSPARENT);
-        }
+        window.setNavigationBarDividerColor(Color.TRANSPARENT);
         if (Build.VERSION.SDK_INT >= 29) {
             window.setStatusBarContrastEnforced(false);
             window.setNavigationBarContrastEnforced(false);
@@ -280,7 +282,7 @@ public class CityManagerActivity extends Activity {
         title.setSingleLine(true);
         LinearLayout.LayoutParams titleLp = new LinearLayout.LayoutParams(
                 0, ViewGroup.LayoutParams.MATCH_PARENT, 1f);
-        titleLp.leftMargin = dp(4);
+        titleLp.setMarginStart(dp(12));
         header.addView(title, titleLp);
 
         editButton = new GlyphButton(this, GlyphButton.EDIT);
@@ -510,6 +512,7 @@ public class CityManagerActivity extends Activity {
     }
 
     private void onSearchTextChanged(String query) {
+        if (activeCitySearch != null) activeCitySearch.cancel(true);
         searchGeneration++;
         if (pendingSearch != null) {
             mainHandler.removeCallbacks(pendingSearch);
@@ -558,55 +561,76 @@ public class CityManagerActivity extends Activity {
         lastIssuedGeneration = generation;
         lastIssuedQuery = query;
 
-        if (!Geocoder.isPresent()) {
-            setSearchState("City search isn't available on this device right now.", false);
-            renderSearchPlaceholder("You can still add a place with Coordinates.");
-            return;
-        }
-
         setSearchState("Searching…", true);
-        Geocoder geocoder = new Geocoder(getApplicationContext(), Locale.getDefault());
-        if (Build.VERSION.SDK_INT >= 33) {
-            WeakReference<CityManagerActivity> activityRef = new WeakReference<>(this);
+        final Locale locale = Locale.getDefault();
+        if (activeCitySearch != null) activeCitySearch.cancel(true);
+        activeCitySearch = geocoderExecutor.submit(() -> {
+            List<Address> primaryResults = Collections.emptyList();
+            boolean primaryFailed = false;
             try {
-                Api33Geocoder.search(geocoder, query, MAX_GEOCODER_RESULTS, new Api33Geocoder.ResultCallback() {
-                    @Override
-                    public void onSuccess(List<Address> addresses) {
-                        CityManagerActivity activity = activityRef.get();
-                        if (activity != null && !activity.destroyed) {
-                            activity.mainHandler.post(() -> activity.handleSearchResults(generation, query, addresses));
-                        }
-                    }
-
-                    @Override
-                    public void onFailure(String message) {
-                        CityManagerActivity activity = activityRef.get();
-                        if (activity != null && !activity.destroyed) {
-                            activity.mainHandler.post(() -> activity.handleSearchError(generation, message));
-                        }
-                    }
-                });
-            } catch (RuntimeException e) {
-                handleSearchError(generation, cleanString(e.getMessage()));
+                primaryResults = CitySearchClient.search(query, locale);
+            } catch (Exception ignored) {
+                primaryFailed = true;
             }
-        } else {
-            geocoderExecutor.execute(() -> {
+
+            if (destroyed || generation != searchGeneration || Thread.currentThread().isInterrupted()) {
+                return;
+            }
+            if (primaryResults != null && !primaryResults.isEmpty()) {
+                List<Address> results = primaryResults;
+                mainHandler.post(() -> handleSearchResults(generation, query, results, true));
+                return;
+            }
+
+            List<Address> fallbackResults = platformGeocoderFallback(query, locale, generation);
+            if (destroyed || generation != searchGeneration || Thread.currentThread().isInterrupted()) {
+                return;
+            }
+            if (fallbackResults != null && !fallbackResults.isEmpty()) {
+                List<Address> results = fallbackResults;
+                mainHandler.post(() -> handleSearchResults(generation, query, results, false));
+            } else if (primaryFailed) {
+                mainHandler.post(() -> handleSearchError(generation, ""));
+            } else {
+                mainHandler.post(() -> handleSearchResults(
+                        generation, query, Collections.emptyList(), false));
+            }
+        });
+    }
+
+    private List<Address> platformGeocoderFallback(String query, Locale locale, int generation) {
+        if (destroyed || generation != searchGeneration || !Geocoder.isPresent()) {
+            return Collections.emptyList();
+        }
+        final Future<List<Address>> future;
+        try {
+            future = fallbackGeocoderExecutor.submit(() -> {
+                Geocoder geocoder = new Geocoder(getApplicationContext(), locale);
                 try {
                     @SuppressWarnings("deprecation")
                     List<Address> results = geocoder.getFromLocationName(query, MAX_GEOCODER_RESULTS);
-                    if (!Thread.currentThread().isInterrupted()) {
-                        mainHandler.post(() -> handleSearchResults(generation, query, results));
-                    }
-                } catch (IOException | IllegalArgumentException e) {
-                    if (!Thread.currentThread().isInterrupted()) {
-                        mainHandler.post(() -> handleSearchError(generation, cleanString(e.getMessage())));
-                    }
+                    return results == null ? Collections.emptyList() : results;
+                } catch (Exception ignored) {
+                    return Collections.emptyList();
                 }
             });
+        } catch (RuntimeException ignored) {
+            return Collections.emptyList();
+        }
+        try {
+            return future.get(GEOCODER_FALLBACK_TIMEOUT_MS, TimeUnit.MILLISECONDS);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return Collections.emptyList();
+        } catch (ExecutionException | TimeoutException ignored) {
+            return Collections.emptyList();
+        } finally {
+            future.cancel(true);
         }
     }
 
     private void clearSearchAndShowSaved(boolean hideIme) {
+        if (activeCitySearch != null) activeCitySearch.cancel(true);
         searchGeneration++;
         if (pendingSearch != null) {
             mainHandler.removeCallbacks(pendingSearch);
@@ -633,7 +657,8 @@ public class CityManagerActivity extends Activity {
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
     }
 
-    private void handleSearchResults(int generation, String query, List<Address> addresses) {
+    private void handleSearchResults(
+            int generation, String query, List<Address> addresses, boolean openMeteoResults) {
         if (!isSearchCurrent(generation)) return;
         setSearchState("", false);
         List<Address> candidates = sanitizeCandidates(addresses);
@@ -643,7 +668,7 @@ public class CityManagerActivity extends Activity {
             renderSearchPlaceholder("Try a nearby city name or use Coordinates.");
             return;
         }
-        renderSearchResults(query, candidates);
+        renderSearchResults(query, candidates, openMeteoResults);
     }
 
     private void handleSearchError(int generation, String message) {
@@ -688,8 +713,8 @@ public class CityManagerActivity extends Activity {
             }
             boolean duplicate = false;
             for (Address prior : result) {
-                String a = normalizeName(bestCityName(address, ""));
-                String b = normalizeName(bestCityName(prior, ""));
+                String a = normalizeName(LocationNaming.cityName(address, ""));
+                String b = normalizeName(LocationNaming.cityName(prior, ""));
                 if ((Math.abs(lat - prior.getLatitude()) <= COORD_EPSILON
                         && Math.abs(lon - prior.getLongitude()) <= COORD_EPSILON)
                         || (!a.isEmpty() && a.equals(b)
@@ -709,11 +734,18 @@ public class CityManagerActivity extends Activity {
         return result;
     }
 
-    private void renderSearchResults(String query, List<Address> candidates) {
+    private void renderSearchResults(String query, List<Address> candidates, boolean openMeteoResults) {
         cityList.removeAllViews();
         TextView heading = makeText("Search results", 13f, Color.rgb(145, 154, 168), true);
         heading.setPadding(dp(22), dp(6), dp(22), dp(10));
         cityList.addView(heading);
+
+        if (openMeteoResults) {
+            TextView attribution = makeText("Source:", 11f, Color.rgb(126, 138, 154), false);
+            attribution.append(" Open-Meteo / GeoNames");
+            attribution.setPadding(dp(22), 0, dp(22), dp(10));
+            cityList.addView(attribution);
+        }
 
         for (Address address : candidates) {
             LinearLayout row = new LinearLayout(this);
@@ -726,13 +758,13 @@ public class CityManagerActivity extends Activity {
                     Color.argb(218, 34, 52, 72),
                     dp(18)));
 
-            String primary = bestCityName(address, query);
+            String primary = LocationNaming.cityName(address, query);
             TextView name = makeText(primary, 20f, COLOR_PRIMARY_TEXT, false);
             name.setSingleLine(true);
             name.setEllipsize(TextUtils.TruncateAt.END);
             row.addView(name);
 
-            String secondary = candidateSecondary(address, primary);
+            String secondary = LocationNaming.regionLabel(address, primary);
             if (!secondary.isEmpty()) {
                 TextView detail = makeText(secondary, 14f, Color.rgb(174, 184, 198), false);
                 detail.setPadding(0, dp(4), 0, 0);
@@ -752,14 +784,6 @@ public class CityManagerActivity extends Activity {
         }
     }
 
-    private static String candidateSecondary(Address address, String primary) {
-        ArrayList<String> parts = new ArrayList<>();
-        addDistinctPart(parts, primary, cleanString(address == null ? null : address.getSubAdminArea()));
-        addDistinctPart(parts, primary, cleanString(address == null ? null : address.getAdminArea()));
-        addDistinctPart(parts, primary, cleanString(address == null ? null : address.getCountryName()));
-        return TextUtils.join(" · ", parts);
-    }
-
     private void chooseCandidate(String query, Address address) {
         if (address == null || !address.hasLatitude() || !address.hasLongitude()) {
             showSearchFailure("Invalid result", "The selected result did not include usable coordinates.", true);
@@ -771,7 +795,7 @@ public class CityManagerActivity extends Activity {
             showSearchFailure("Invalid result", "The selected result had coordinates outside the valid latitude/longitude range.", true);
             return;
         }
-        String name = bestCityName(address, query);
+        String name = LocationNaming.cityName(address, query);
         String id = upsertLocation(this, null, name, lat, lon, false, "", "", true);
         LocationSnapshot selected = getLocationById(this, id);
         if (selected == null) {
@@ -1156,42 +1180,6 @@ public class CityManagerActivity extends Activity {
         return Math.round(value * getResources().getDisplayMetrics().density);
     }
 
-    private static void addDistinctPart(List<String> parts, String city, String candidate) {
-        String clean = cleanString(candidate);
-        if (clean.isEmpty() || normalizeName(clean).equals(normalizeName(city))) {
-            return;
-        }
-        for (String prior : parts) {
-            if (normalizeName(prior).equals(normalizeName(clean))) {
-                return;
-            }
-        }
-        parts.add(clean);
-    }
-
-    private static String bestCityName(Address address, String fallback) {
-        if (address != null) {
-            String[] candidates = new String[]{
-                    address.getLocality(),
-                    address.getSubAdminArea(),
-                    address.getAdminArea(),
-                    address.getFeatureName()
-            };
-            for (String candidate : candidates) {
-                String clean = cleanString(candidate);
-                if (!clean.isEmpty() && !looksLikeCoordinate(clean)) {
-                    return clean;
-                }
-            }
-        }
-        String cleanFallback = cleanString(fallback);
-        return cleanFallback.isEmpty() ? "Saved location" : cleanFallback;
-    }
-
-    private static boolean looksLikeCoordinate(String value) {
-        return value.matches("[-+]?\\d+(?:\\.\\d+)?\\s*[,;]\\s*[-+]?\\d+(?:\\.\\d+)?");
-    }
-
     private static Double parseFiniteDouble(String value) {
         try {
             double parsed = Double.parseDouble(cleanString(value).replace(',', '.'));
@@ -1405,10 +1393,7 @@ public class CityManagerActivity extends Activity {
         }
     }
 
-    /**
-     * Updates only cached weather presentation for the currently selected location. No network
-     * request is made. Returns false if no location is selected.
-     */
+    /** Updates the selected location's cached weather without a network request. */
     public static boolean updateSelectedLocationSnapshot(
             Context context,
             String cachedTemp,
@@ -1436,10 +1421,7 @@ public class CityManagerActivity extends Activity {
         }
     }
 
-    /**
-     * Upserts the selected location and its cached weather snapshot in one call. MainActivity can
-     * call this after it resolves/loads its active location. The selected/surviving id is returned.
-     */
+    /** Saves the location and its weather snapshot, returning the surviving location id. */
     public static String updateSelectedLocationSnapshot(
             Context context,
             String name,
@@ -1474,11 +1456,7 @@ public class CityManagerActivity extends Activity {
         }
     }
 
-    /**
-     * Migrates MainActivity's historical private lat/lon/name preference once data exists. The
-     * no-argument variant conservatively treats the old entry as a normal saved city because the
-     * legacy preference did not record whether it came from the device location provider.
-     */
+    /** Legacy coordinates lack device-location metadata, so migrate them as a saved city. */
     public static boolean migrateLegacyMainActivityPreferences(Context context) {
         return migrateLegacyMainActivityPreferences(context, false);
     }
@@ -2214,29 +2192,6 @@ public class CityManagerActivity extends Activity {
             setAlpha(pressed ? 0.88f : 1f);
             setScaleX(pressed ? 0.96f : 1f);
             setScaleY(pressed ? 0.96f : 1f);
-        }
-    }
-
-    /** API-33 Geocoder bridge isolated so older devices never resolve callback-only API classes. */
-    @TargetApi(33)
-    private static final class Api33Geocoder {
-        interface ResultCallback {
-            void onSuccess(List<Address> addresses);
-            void onFailure(String message);
-        }
-
-        static void search(Geocoder geocoder, String query, int maxResults, ResultCallback callback) {
-            geocoder.getFromLocationName(query, maxResults, new Geocoder.GeocodeListener() {
-                @Override
-                public void onGeocode(List<Address> addresses) {
-                    callback.onSuccess(addresses == null ? Collections.emptyList() : addresses);
-                }
-
-                @Override
-                public void onError(String errorMessage) {
-                    callback.onFailure(cleanString(errorMessage));
-                }
-            });
         }
     }
 

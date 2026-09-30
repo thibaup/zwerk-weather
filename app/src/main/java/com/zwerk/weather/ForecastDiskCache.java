@@ -3,7 +3,6 @@ package com.zwerk.weather;
 import android.content.Context;
 import android.system.Os;
 
-import org.json.JSONArray;
 import org.json.JSONObject;
 
 import java.io.BufferedReader;
@@ -12,18 +11,17 @@ import java.io.FileOutputStream;
 import java.io.FileReader;
 import java.nio.charset.StandardCharsets;
 import java.util.Locale;
+import java.util.UUID;
 
-/** Owns the base forecast cache file identity, schema, serialization and cleanup policy. */
 final class ForecastDiskCache {
     private static final String LEGACY_PREFIX = "weather_forecast_cache_v1_";
     private static final String FILE_PREFIX = "weather_forecast_cache_v2_";
     private static final String FILE_SUFFIX = ".json";
-    private static final long MAX_AGE_MILLIS = 60L * 60L * 1000L;
     private static final double COORDINATE_TOLERANCE = 0.00001d;
-    private static final int HOURLY_PAGE_SIZE = 24;
-    private static final String HOURLY_DIAGNOSTIC = "_weatherNextHourlyDiagnostic";
-    private static final String HOURLY_PARTIAL = "_weatherNextHourlyPartial";
-    private static final String HOURLY_LOAD_ERROR = "_weatherNextHourlyLoadError";
+    static final String HOURLY_NEXT_TOKEN = "_cacheHourlyNextPageToken";
+    static final String HOURLY_TERMINAL = "_cacheHourlyTerminal";
+    static final String HOURLY_RESTART = "_cacheHourlyRestart";
+    static final String BASE_REVISION = "_cacheForecastRevision";
 
     static final class Snapshot {
         final JSONObject current;
@@ -45,7 +43,7 @@ final class ForecastDiskCache {
         this.context = context;
     }
 
-    void cleanup() {
+    synchronized void cleanup() {
         File[] files = context.getFilesDir().listFiles();
         if (files == null) return;
         long now = System.currentTimeMillis();
@@ -59,22 +57,38 @@ final class ForecastDiskCache {
             if (name.startsWith(FILE_PREFIX)
                     && (name.endsWith(FILE_SUFFIX) || name.endsWith(FILE_SUFFIX + ".tmp"))) {
                 long modified = file.lastModified();
-                if (modified <= 0L || now - modified >= MAX_AGE_MILLIS) file.delete();
+                if (modified <= 0L || modified > now
+                        || now - modified >= ForecastClock.OFFLINE_MILLIS
+                        || (name.endsWith(".tmp") && now - modified >= ForecastClock.FRESH_MILLIS)) {
+                    file.delete();
+                } else if (now - modified >= ForecastClock.FRESH_MILLIS) {
+                    try {
+                        JSONObject root = readRoot(file);
+                        boolean openMeteo = root.optString("locationId", "")
+                                .contains("|" + OpenMeteoConfig.OPEN_METEO + ":");
+                        if (!ForecastClock.withinAge(root.optLong("updatedAtMillis", 0L),
+                                now, ForecastClock.retentionMillis(openMeteo))) file.delete();
+                    } catch (Exception ignored) { file.delete(); }
+                }
             }
         }
     }
 
     Snapshot readFresh(double lat, double lon, String language, String requestLocationId) {
+        return read(lat, lon, language, requestLocationId, false);
+    }
+
+    Snapshot readLastKnown(double lat, double lon, String language, String requestLocationId) {
+        return read(lat, lon, language, requestLocationId, true);
+    }
+
+    private synchronized Snapshot read(double lat, double lon, String language, String requestLocationId,
+            boolean allowStale) {
         cleanup();
         File cacheFile = cacheFile(lat, lon, language, requestLocationId);
         if (!cacheFile.isFile()) return null;
-        try (BufferedReader reader = new BufferedReader(new FileReader(cacheFile))) {
-            StringBuilder body = new StringBuilder();
-            String line;
-            while ((line = reader.readLine()) != null) body.append(line);
-            if (body.length() == 0) return null;
-
-            JSONObject root = new JSONObject(body.toString());
+        try {
+            JSONObject root = readRoot(cacheFile);
             if (root.optInt("schema", -1) != 2) {
                 cacheFile.delete();
                 return null;
@@ -89,9 +103,13 @@ final class ForecastDiskCache {
             if (!requestLocationId.equals(root.optString("locationId", ""))) return null;
 
             long updatedAt = root.optLong("updatedAtMillis", 0L);
-            long age = System.currentTimeMillis() - updatedAt;
-            if (updatedAt <= 0L || age < 0L || age >= MAX_AGE_MILLIS) {
+            long now = System.currentTimeMillis();
+            boolean openMeteo = requestLocationId.contains("|" + OpenMeteoConfig.OPEN_METEO + ":");
+            if (!ForecastClock.withinAge(updatedAt, now, ForecastClock.retentionMillis(openMeteo))) {
                 cacheFile.delete();
+                return null;
+            }
+            if (!allowStale && !ForecastClock.withinAge(updatedAt, now, ForecastClock.FRESH_MILLIS)) {
                 return null;
             }
 
@@ -111,6 +129,15 @@ final class ForecastDiskCache {
         }
     }
 
+    private static JSONObject readRoot(File file) throws Exception {
+        try (BufferedReader reader = new BufferedReader(new FileReader(file))) {
+            StringBuilder body = new StringBuilder();
+            String line;
+            while ((line = reader.readLine()) != null) body.append(line);
+            return new JSONObject(body.toString());
+        }
+    }
+
     void persist(
             double lat,
             double lon,
@@ -119,7 +146,19 @@ final class ForecastDiskCache {
             JSONObject current,
             JSONObject hourly,
             JSONObject daily) {
+        persist(lat, lon, language, requestLocationId, current, hourly, daily,
+                System.currentTimeMillis());
+    }
+
+    synchronized void persist(double lat, double lon, String language, String requestLocationId,
+            JSONObject current, JSONObject hourly, JSONObject daily, long fetchedAtMillis) {
         if (current == null || hourly == null || daily == null) return;
+        try { hourly.put(BASE_REVISION, UUID.randomUUID().toString()); } catch (Exception ignored) { }
+        writeSnapshot(lat, lon, language, requestLocationId, current, hourly, daily, fetchedAtMillis);
+    }
+
+    private void writeSnapshot(double lat, double lon, String language, String requestLocationId,
+            JSONObject current, JSONObject hourly, JSONObject daily, long fetchedAtMillis) {
         File cacheFile = cacheFile(lat, lon, language, requestLocationId);
         File tempFile = new File(cacheFile.getParentFile(), cacheFile.getName() + ".tmp");
         try {
@@ -129,7 +168,7 @@ final class ForecastDiskCache {
             root.put("longitude", lon);
             root.put("language", language);
             root.put("locationId", requestLocationId);
-            root.put("updatedAtMillis", System.currentTimeMillis());
+            root.put("updatedAtMillis", fetchedAtMillis);
             root.put("current", current);
             root.put("hourly", hourlyCacheCopy(hourly));
             root.put("daily", daily);
@@ -149,37 +188,36 @@ final class ForecastDiskCache {
         }
     }
 
-    private JSONObject hourlyCacheCopy(JSONObject hourly) {
-        if (hourly != null && hourly.has("_openMeteo")) {
-            try {
-                return new JSONObject(hourly.toString());
-            } catch (Exception ignored) { }
-        }
-        JSONObject copy = new JSONObject();
+    synchronized void persistContinuation(double lat, double lon, String language, String locationId,
+            JSONObject current, JSONObject hourly, JSONObject daily, long fetchedAt) {
+        if (current == null || hourly == null || daily == null) return;
+        File file = cacheFile(lat, lon, language, locationId);
         try {
-            JSONObject zone = firstJSONObject(hourly, "timeZone", "time_zone", "timezone");
-            if (zone != null) copy.put("timeZone", zone);
-            JSONArray source = hourly == null ? null : hourly.optJSONArray("forecastHours");
-            JSONArray firstPage = new JSONArray();
-            if (source != null) {
-                for (int i = 0; i < Math.min(HOURLY_PAGE_SIZE, source.length()); i++) {
-                    JSONObject hour = source.optJSONObject(i);
-                    if (hour != null) firstPage.put(hour);
-                }
-            }
-            copy.put("forecastHours", firstPage);
-            copy.put(HOURLY_PARTIAL, true);
-            copy.put(HOURLY_LOAD_ERROR, hourly != null && hourly.optBoolean(HOURLY_LOAD_ERROR, false));
-            String diagnostic = boundedDiagnostic(hourly == null ? "" : hourly.optString(HOURLY_DIAGNOSTIC, ""));
-            if (!diagnostic.isEmpty()) copy.put(HOURLY_DIAGNOSTIC, diagnostic);
+            JSONObject existing = readRoot(file);
+            JSONObject oldHourly = existing.optJSONObject("hourly");
+            String revision = oldHourly == null ? "" : oldHourly.optString(BASE_REVISION, "");
+            String expected = hourly.optString(BASE_REVISION, "");
+            if (revision.isEmpty()) {
+                // Accept a legacy cache once, without using its timestamp as a new base version.
+                if (existing.optLong("updatedAtMillis", 0L) != fetchedAt) return;
+            } else if (!revision.equals(expected)) return;
+            boolean openMeteo = locationId.contains("|" + OpenMeteoConfig.OPEN_METEO + ":");
+            if (!ForecastClock.withinAge(fetchedAt, System.currentTimeMillis(),
+                    ForecastClock.retentionMillis(openMeteo))) return;
+            writeSnapshot(lat, lon, language, locationId, current, hourly, daily, fetchedAt);
         } catch (Exception ignored) { }
-        return copy;
     }
 
-    private static String boundedDiagnostic(String value) {
-        String safe = value == null ? "" : value.replaceAll("[\\r\\n\\t]+", " ").trim();
-        if (safe.length() > 220) safe = safe.substring(0, 217) + "…";
-        return safe;
+    static void ensureBaseRevision(JSONObject hourly) {
+        if (hourly == null || !hourly.optString(BASE_REVISION, "").isEmpty()) return;
+        try { hourly.put(BASE_REVISION, UUID.randomUUID().toString()); } catch (Exception ignored) { }
+    }
+
+    private JSONObject hourlyCacheCopy(JSONObject hourly) {
+        try {
+            // Keep all fetched pages and their cursor so reopening a day reuses them.
+            return new JSONObject(hourly.toString());
+        } catch (Exception ignored) { return new JSONObject(); }
     }
 
     private File cacheFile(double lat, double lon, String language, String requestLocationId) {
@@ -187,12 +225,4 @@ final class ForecastDiskCache {
         return new File(context.getFilesDir(), FILE_PREFIX + Integer.toHexString(identity.hashCode()) + FILE_SUFFIX);
     }
 
-    private static JSONObject firstJSONObject(JSONObject object, String... keys) {
-        if (object == null || keys == null) return null;
-        for (String key : keys) {
-            JSONObject value = object.optJSONObject(key);
-            if (value != null) return value;
-        }
-        return null;
-    }
 }

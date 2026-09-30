@@ -1,62 +1,14 @@
 package com.zwerk.weather;
 
-import android.animation.ValueAnimator;
 import android.Manifest;
-import android.app.Activity;
-import android.app.Dialog;
 import android.app.Notification;
 import android.app.NotificationChannel;
 import android.app.NotificationManager;
 import android.app.PendingIntent;
-import android.content.Context;
 import android.content.Intent;
-import android.content.pm.ApplicationInfo;
 import android.content.pm.PackageManager;
-import android.graphics.Bitmap;
-import android.graphics.BitmapFactory;
-import android.graphics.Canvas;
-import android.graphics.Color;
-import android.graphics.LinearGradient;
-import android.graphics.Paint;
-import android.graphics.Path;
-import android.graphics.RadialGradient;
-import android.graphics.Rect;
-import android.graphics.RectF;
-import android.graphics.Shader;
-import android.graphics.Typeface;
-import android.graphics.drawable.ColorDrawable;
-import android.graphics.drawable.GradientDrawable;
-import android.graphics.drawable.StateListDrawable;
-import android.location.Address;
-import android.location.Geocoder;
-import android.location.Location;
-import android.net.Uri;
 import android.os.Build;
-import android.os.Bundle;
-import android.os.SystemClock;
 import android.util.Log;
-import android.text.InputType;
-import android.text.method.PasswordTransformationMethod;
-import android.view.Gravity;
-import android.view.KeyEvent;
-import android.view.MotionEvent;
-import android.view.ViewConfiguration;
-import android.view.View;
-import android.view.ViewGroup;
-import android.view.Window;
-import android.view.WindowInsets;
-import android.view.WindowInsetsController;
-import android.view.WindowManager;
-import android.view.accessibility.AccessibilityNodeInfo;
-import android.widget.Button;
-import android.widget.EditText;
-import android.widget.FrameLayout;
-import android.widget.HorizontalScrollView;
-import android.widget.LinearLayout;
-import android.widget.ProgressBar;
-import android.widget.ScrollView;
-import android.widget.TextView;
-import android.widget.Toast;
 
 import android.system.Os;
 
@@ -64,32 +16,22 @@ import org.json.JSONArray;
 import org.json.JSONObject;
 
 import java.io.BufferedReader;
-import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.io.FileReader;
 import java.io.FileOutputStream;
-import java.io.InputStream;
-import java.lang.ref.WeakReference;
 import java.io.IOException;
 import java.net.HttpURLConnection;
 import java.net.SocketTimeoutException;
 import java.net.URL;
 import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
-import java.security.MessageDigest;
 import java.time.Duration;
 import java.time.Instant;
-import java.time.LocalDate;
-import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
-import java.util.List;
 import java.util.Locale;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.ThreadLocalRandom;
-import java.util.concurrent.Executors;
 
 
 abstract class OptionalWeatherDataActivity extends WeatherApiActivity {
@@ -109,8 +51,7 @@ abstract class OptionalWeatherDataActivity extends WeatherApiActivity {
     }
 
     boolean airQualityEnabled() {
-        return getSharedPreferences(UI_PREFS, MODE_PRIVATE)
-                .getBoolean(PREF_AIR_QUALITY, false);
+        return weatherPreferences.airQualityEnabled();
     }
 
     boolean pollenEnabled() {
@@ -847,14 +788,12 @@ abstract class OptionalWeatherDataActivity extends WeatherApiActivity {
 
         NotificationManager manager = (NotificationManager) getSystemService(NOTIFICATION_SERVICE);
         if (manager == null) return;
-        if (Build.VERSION.SDK_INT >= 26) {
-            NotificationChannel channel = new NotificationChannel(
-                    ALERT_CHANNEL_ID, UiTranslations.text(this, "Official weather alerts"),
-                    NotificationManager.IMPORTANCE_HIGH);
-            channel.setDescription(UiTranslations.text(this,
-                    "Public warnings from official weather authorities"));
-            manager.createNotificationChannel(channel);
-        }
+        NotificationChannel channel = new NotificationChannel(
+                ALERT_CHANNEL_ID, UiTranslations.text(this, "Official weather alerts"),
+                NotificationManager.IMPORTANCE_HIGH);
+        channel.setDescription(UiTranslations.text(this,
+                "Public warnings from official weather authorities"));
+        manager.createNotificationChannel(channel);
         Intent open = new Intent(this, MainActivity.class)
                 .addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP | Intent.FLAG_ACTIVITY_SINGLE_TOP);
         PendingIntent pending = PendingIntent.getActivity(

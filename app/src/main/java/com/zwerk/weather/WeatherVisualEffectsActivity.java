@@ -1,12 +1,6 @@
 package com.zwerk.weather;
 
-import android.animation.ValueAnimator;
-import android.app.Activity;
-import android.app.Dialog;
 import android.content.Context;
-import android.content.Intent;
-import android.content.pm.ApplicationInfo;
-import android.content.pm.PackageManager;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
 import android.graphics.Canvas;
@@ -14,84 +8,28 @@ import android.graphics.Color;
 import android.graphics.LinearGradient;
 import android.graphics.Paint;
 import android.graphics.Path;
-import android.graphics.RadialGradient;
 import android.graphics.Rect;
 import android.graphics.RectF;
 import android.graphics.Shader;
-import android.graphics.Typeface;
-import android.graphics.drawable.ColorDrawable;
-import android.graphics.drawable.GradientDrawable;
-import android.graphics.drawable.StateListDrawable;
-import android.location.Address;
-import android.location.Geocoder;
-import android.location.Location;
-import android.net.Uri;
 import android.os.Build;
-import android.os.Bundle;
 import android.os.SystemClock;
 import android.util.Log;
-import android.text.InputType;
-import android.text.method.PasswordTransformationMethod;
-import android.view.Gravity;
-import android.view.KeyEvent;
 import android.view.MotionEvent;
-import android.view.ViewConfiguration;
 import android.view.View;
-import android.view.ViewGroup;
-import android.view.Window;
-import android.view.WindowInsets;
-import android.view.WindowInsetsController;
-import android.view.WindowManager;
-import android.view.accessibility.AccessibilityNodeInfo;
-import android.widget.Button;
-import android.widget.EditText;
 import android.widget.FrameLayout;
-import android.widget.HorizontalScrollView;
-import android.widget.LinearLayout;
-import android.widget.ProgressBar;
-import android.widget.ScrollView;
-import android.widget.TextView;
-import android.widget.Toast;
-
-import android.system.Os;
-
-import org.json.JSONArray;
-import org.json.JSONObject;
-
-import java.io.BufferedReader;
-import java.io.ByteArrayOutputStream;
-import java.io.File;
-import java.io.FileReader;
-import java.io.FileOutputStream;
-import java.io.InputStream;
-import java.lang.ref.WeakReference;
-import java.io.IOException;
-import java.net.HttpURLConnection;
-import java.net.SocketTimeoutException;
-import java.net.URL;
-import java.net.URLEncoder;
-import java.nio.charset.StandardCharsets;
-import java.security.MessageDigest;
-import java.time.Duration;
-import java.time.Instant;
-import java.time.LocalDate;
-import java.time.ZoneId;
-import java.time.format.DateTimeFormatter;
-import java.util.ArrayList;
-import java.util.HashSet;
-import java.util.List;
-import java.util.Locale;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.ThreadLocalRandom;
-import java.util.concurrent.Executors;
-
 
 abstract class WeatherVisualEffectsActivity extends WeatherActivityFoundation {
     SkyLayout skyLayout;
     HeaderGlassView headerGlass;
+    HeaderGlassView bottomGlass;
 
     final class HeaderGlassView extends View {
         private final View source;
+        private final boolean floating;
+        private final int[] glassLocation = new int[2];
+        private final int[] sourceLocation = new int[2];
+        private final RectF glassBounds = new RectF();
+        private final Path glassClip = new Path();
         private final View.OnLayoutChangeListener sourceLayoutListener;
         private final Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG | Paint.DITHER_FLAG);
         private final Paint edgePaint = new Paint(Paint.ANTI_ALIAS_FLAG);
@@ -101,11 +39,9 @@ abstract class WeatherVisualEffectsActivity extends WeatherActivityFoundation {
         private final RectF portableBlurDestination = new RectF();
         private final android.graphics.PorterDuffXfermode portableBlurMaskMode =
                 new android.graphics.PorterDuffXfermode(android.graphics.PorterDuff.Mode.DST_IN);
-        private Shader topHighlightShader;
-        private Shader sideSheenShader;
-        private Shader depthShader;
         private Shader blurMaskShader;
-        private float scrollDepth;
+        private Shader pinnedTintShader;
+        private int pinnedTintColour;
         private int fromTint = Color.rgb(20, 85, 164);
         private int toTint = fromTint;
         private long tintStarted;
@@ -115,14 +51,19 @@ abstract class WeatherVisualEffectsActivity extends WeatherActivityFoundation {
         private boolean blurDirty = true;
         private Object blurNode;
         private Object blurEffect;
-        private Object blurCoverEffect;
         private Bitmap portableBlurBitmap;
         private Canvas portableBlurCanvas;
+        private final SoftwareBlur portableBlur = new SoftwareBlur();
         private boolean genericBlurLogged;
 
         HeaderGlassView(Context context, View source) {
+            this(context, source, false);
+        }
+
+        HeaderGlassView(Context context, View source, boolean floating) {
             super(context);
             this.source = source;
+            this.floating = floating;
             this.sourceLayoutListener = (v, left, top, right, bottom,
                     oldLeft, oldTop, oldRight, oldBottom) -> requestBlurRefresh();
             if (source != null) source.addOnLayoutChangeListener(sourceLayoutListener);
@@ -134,6 +75,7 @@ abstract class WeatherVisualEffectsActivity extends WeatherActivityFoundation {
 
         void setScene(SceneSpec scene, boolean animate) {
             int target = headerTint(scene == null ? "day" : scene.headerScene());
+            if (target == toTint) return;
             int visual = currentTint(SystemClock.uptimeMillis());
             if (visual == target && !tintAnimating) return;
             fromTint = visual;
@@ -141,15 +83,7 @@ abstract class WeatherVisualEffectsActivity extends WeatherActivityFoundation {
             tintStarted = SystemClock.uptimeMillis();
             tintAnimating = animate && animationsAllowed();
             if (!tintAnimating) fromTint = toTint;
-            blurCoverEffect = null;
-            invalidate();
-        }
-
-        void setScrollDepth(float depth) {
-            float next = Math.max(0f, Math.min(1f, depth));
-            if (Math.abs(next - scrollDepth) < 0.004f) return;
-            scrollDepth = next;
-            invalidate();
+            requestBlurRefresh();
         }
 
         void requestBlurRefresh() {
@@ -157,8 +91,16 @@ abstract class WeatherVisualEffectsActivity extends WeatherActivityFoundation {
             invalidate();
         }
 
+        void resetBackdropCapture() {
+            // Invalidate derived captures when the visible page changes.
+            discardRenderNode(blurNode);
+            blurNode = null;
+            blurEffect = null;
+            requestBlurRefresh();
+        }
+
         void requestAnimatedBackdropRefresh() {
-            if (oemBackdropBlurActive || scrollDepth <= 0.002f) return;
+            if (oemBackdropBlurActive || getVisibility() != VISIBLE) return;
             blurDirty = true;
             postInvalidateOnAnimation();
         }
@@ -168,25 +110,30 @@ abstract class WeatherVisualEffectsActivity extends WeatherActivityFoundation {
             if (oemBackdropBlurActive) Api31OplusHeaderBlur.clear(this);
             oemBackdropBlurActive = false;
             blurPermanentlyDisabled = true;
+            discardRenderNode(blurNode);
             blurNode = null;
             blurEffect = null;
-            blurCoverEffect = null;
             releasePortableBlurBuffer();
-            topHighlightShader = null;
-            sideSheenShader = null;
-            depthShader = null;
             blurMaskShader = null;
+            pinnedTintShader = null;
         }
 
         @Override
         protected void onAttachedToWindow() {
             super.onAttachedToWindow();
-            if (BuildConfig.FORCE_GENERIC_HEADER_BLUR) {
-                Log.d(LOG_TAG, "header blur=oem-bypassed-for-test");
-            } else if (Build.VERSION.SDK_INT >= 31 && !oemBackdropBlurActive) {
+            // Use portable blur for the dock; Oplus cannot reliably clip its rounded outline.
+            if (!floating && !BuildConfig.FORCE_GENERIC_HEADER_BLUR
+                    && Build.VERSION.SDK_INT >= 31 && !oemBackdropBlurActive) {
                 oemBackdropBlurActive = Api31OplusHeaderBlur.apply(this);
                 if (oemBackdropBlurActive) Log.d(LOG_TAG, "header blur=oem-gradient");
             }
+        }
+
+        @Override
+        protected void onDetachedFromWindow() {
+            if (oemBackdropBlurActive) Api31OplusHeaderBlur.clear(this);
+            oemBackdropBlurActive = false;
+            super.onDetachedFromWindow();
         }
 
         private int headerTint(String scene) {
@@ -224,161 +171,175 @@ abstract class WeatherVisualEffectsActivity extends WeatherActivityFoundation {
                     Math.round(Color.blue(a) + (Color.blue(b) - Color.blue(a)) * clamped));
         }
 
-        private int mixWith(int color, int other, float amount) {
-            return blendColor(color, other, amount);
-        }
-
         @Override
         protected void onSizeChanged(int w, int h, int oldw, int oldh) {
             super.onSizeChanged(w, h, oldw, oldh);
             blurDirty = true;
+            pinnedTintShader = null;
+            glassClip.reset();
+            if (floating) glassClip.addRoundRect(0, 0, w, h, dp(28), dp(28), Path.Direction.CW);
             if (w != oldw || h != oldh) releasePortableBlurBuffer();
             if (w <= 0 || h <= 0) {
-                topHighlightShader = null;
-                sideSheenShader = null;
-                depthShader = null;
                 blurMaskShader = null;
                 return;
             }
-            topHighlightShader = new LinearGradient(
-                    0, 0, w, 0,
-                    new int[]{
-                            Color.argb(40, 255, 255, 255),
-                            Color.argb(13, 255, 255, 255),
-                            Color.argb(30, 255, 255, 255),
-                            Color.argb(5, 255, 255, 255)},
-                    new float[]{0f, 0.35f, 0.73f, 1f},
-                    Shader.TileMode.CLAMP);
-            sideSheenShader = new RadialGradient(
-                    0, h * 0.28f, Math.max(dp(44), w * 0.54f),
-                    new int[]{Color.argb(30, 255, 255, 255), Color.TRANSPARENT},
-                    new float[]{0f, 1f},
-                    Shader.TileMode.CLAMP);
-            depthShader = new LinearGradient(
-                    0, 0, 0, h,
-                    new int[]{Color.TRANSPARENT, Color.argb(7, 0, 0, 0), Color.argb(30, 0, 0, 0)},
-                    new float[]{0f, 0.58f, 1f},
-                    Shader.TileMode.CLAMP);
             blurMaskShader = new LinearGradient(
                     0, 0, 0, h,
-                    new int[]{Color.argb(224, 255, 255, 255),
-                            Color.argb(216, 255, 255, 255),
-                            Color.argb(154, 255, 255, 255), Color.TRANSPARENT},
-                    new float[]{0f, 0.46f, 0.82f, 1f},
+                    new int[]{Color.WHITE, Color.WHITE,
+                            Color.argb(234, 255, 255, 255),
+                            Color.argb(104, 255, 255, 255), Color.TRANSPARENT},
+                    new float[]{0f, 0.60f, 0.76f, 0.90f, 1f},
                     Shader.TileMode.CLAMP);
+            if (floating) blurMaskShader = new LinearGradient(0, 0, 0, h,
+                    Color.WHITE, Color.WHITE, Shader.TileMode.CLAMP);
         }
 
         @Override
         protected void onDraw(Canvas canvas) {
             super.onDraw(canvas);
+            // Extra tint layers hide ColorOS's native progressive blur.
+            if (oemBackdropBlurActive) return;
+            // Layer bounds do not clip; constrain the padded dock blur explicitly.
+            int clipSave = canvas.save();
+            if (floating) canvas.clipPath(glassClip);
+            else {
+                canvas.clipRect(0, 0, getWidth(), getHeight());
+            }
             int tint = currentTint(SystemClock.uptimeMillis());
             boolean blurDrawn = false;
-            if (!oemBackdropBlurActive
-                    && !blurPermanentlyDisabled
-                    && Build.VERSION.SDK_INT >= 31) {
-                if (!canvas.isHardwareAccelerated()) {
+            if (!oemBackdropBlurActive && !blurPermanentlyDisabled && Build.VERSION.SDK_INT >= 31
+                    && canvas.isHardwareAccelerated()
+                    && source != null && getWidth() > 0 && getHeight() > 0) {
+                try {
+                    blurDrawn = Api31HeaderBlur.draw(this, canvas, blurDirty);
+                    blurDirty = false;
+                } catch (Throwable ignored) {
                     blurPermanentlyDisabled = true;
                     blurNode = null;
                     blurEffect = null;
-                } else if (source != null && getWidth() > 0 && getHeight() > 0) {
-                    try {
-                        blurDrawn = Api31HeaderBlur.draw(
-                                this, canvas, blurDirty, scrollDepth);
-                        blurDirty = false;
-                    } catch (Throwable ignored) {
-                        blurPermanentlyDisabled = true;
-                        blurNode = null;
-                        blurEffect = null;
-                    }
                 }
             }
-            if (!oemBackdropBlurActive && !blurDrawn && scrollDepth > 0.002f) {
+            if (!oemBackdropBlurActive && !blurDrawn && (floating || source != null)) {
                 blurDrawn = drawPortableHeaderBlur(canvas);
             }
-            if (blurDrawn && !genericBlurLogged) {
+            if (!oemBackdropBlurActive && blurDrawn && !genericBlurLogged) {
                 genericBlurLogged = true;
                 Log.d(LOG_TAG, Build.VERSION.SDK_INT >= 31 && !blurPermanentlyDisabled
                         ? "header blur=platform-gradient"
                         : "header blur=portable-gradient");
             }
 
-            int tintAlpha = 14;
+            if (!floating) {
+                if (pinnedTintShader == null || pinnedTintColour != tint) {
+                    pinnedTintColour = tint;
+                    pinnedTintShader = new LinearGradient(0, 0, 0, getHeight(),
+                            new int[]{Color.argb(18, Color.red(tint), Color.green(tint), Color.blue(tint)),
+                                    Color.argb(7, Color.red(tint), Color.green(tint), Color.blue(tint)),
+                                    Color.TRANSPARENT, Color.TRANSPARENT},
+                            new float[]{0f, 0.58f, 0.96f, 1f}, Shader.TileMode.CLAMP);
+                }
+                paint.setShader(pinnedTintShader);
+                canvas.drawRect(0, 0, getWidth(), getHeight(), paint);
+                paint.setShader(null);
+                canvas.restoreToCount(clipSave);
+                if (tintAnimating) postInvalidateOnAnimation();
+                return;
+            }
+
             paint.setShader(null);
             paint.setStyle(Paint.Style.FILL);
             paint.setColor(Color.argb(
-                    Math.min(248, tintAlpha),
+                    76,
                     Color.red(tint), Color.green(tint), Color.blue(tint)));
             canvas.drawRect(0, 0, getWidth(), getHeight(), paint);
 
-            int frost = mixWith(tint, Color.WHITE, 0.54f);
-            int frostAlpha = 5;
-            paint.setColor(Color.argb(
-                    Math.min(72, frostAlpha),
-                    Color.red(frost), Color.green(frost), Color.blue(frost)));
+            paint.setColor(Color.argb(16, 255, 255, 255));
             canvas.drawRect(0, 0, getWidth(), getHeight(), paint);
 
-            if (topHighlightShader != null) {
-                paint.setShader(topHighlightShader);
-                canvas.drawRect(0, 0, getWidth(), Math.max(dp(18), getHeight() * 0.40f), paint);
-            }
-            if (sideSheenShader != null) {
-                paint.setShader(sideSheenShader);
-                canvas.drawRect(0, 0, getWidth() * 0.62f, getHeight(), paint);
-            }
-            if (depthShader != null) {
-                paint.setShader(depthShader);
-                canvas.drawRect(0, 0, getWidth(), getHeight(), paint);
-            }
-            paint.setShader(null);
-
             float density = getResources().getDisplayMetrics().density;
-            float bottom = getHeight() - Math.max(1f, density * 0.5f);
             edgePaint.setStyle(Paint.Style.STROKE);
             edgePaint.setStrokeWidth(Math.max(1f, density * 0.55f));
-            edgePaint.setColor(Color.argb(12, 248, 252, 255));
-            canvas.drawLine(0, bottom, getWidth(), bottom, edgePaint);
+            float inset = Math.max(1f, density * 0.5f);
+            glassBounds.set(inset, inset, getWidth() - inset, getHeight() - inset);
+            edgePaint.setColor(Color.argb(64, 248, 252, 255));
+            canvas.drawRoundRect(glassBounds, dp(28), dp(28), edgePaint);
 
+            canvas.restoreToCount(clipSave);
             if (tintAnimating) postInvalidateOnAnimation();
         }
 
         private void drawBackdropSource(Canvas target) {
-            if (skyLayout != null) skyLayout.drawBackdropForHeader(target);
-            if (source != null) source.draw(target);
+            // Capture in this strip's coordinates to sample the content behind the dock.
+            getLocationInWindow(glassLocation);
+            // Include the sky so the header fade joins the background smoothly.
+            drawSkyBackdrop(target, true);
+            if (source != null) {
+                source.getLocationInWindow(sourceLocation);
+                int saved = target.save();
+                target.translate(sourceLocation[0] - glassLocation[0], sourceLocation[1] - glassLocation[1]);
+                // Use published raw content; redrawing live views can consume their invalidation during transitions.
+                target.translate(-source.getScrollX(), -source.getScrollY());
+                if (source instanceof GlassSourceScrollView) {
+                    // Use sky/tint for unpublished content; redrawing the live scroller breaks native stretch.
+                    ((GlassSourceScrollView) source).drawGlassContent(target);
+                } else {
+                    source.draw(target);
+                }
+                target.restoreToCount(saved);
+            }
+        }
+
+        private void drawSkyBackdrop(Canvas target, boolean unblurred) {
+            if (skyLayout != null) {
+                getLocationInWindow(glassLocation);
+                skyLayout.getLocationInWindow(sourceLocation);
+                int saved = target.save();
+                target.translate(sourceLocation[0] - glassLocation[0], sourceLocation[1] - glassLocation[1]);
+                skyLayout.drawBackdropForHeader(target, unblurred);
+                target.restoreToCount(saved);
+            }
         }
 
         private boolean drawPortableHeaderBlur(Canvas canvas) {
             if (blurMaskShader == null || getWidth() <= 0 || getHeight() <= 0) return false;
             if (!ensurePortableBlurBuffer()) return false;
 
-            portableBlurBitmap.eraseColor(Color.TRANSPARENT);
-            int offscreenSave = portableBlurCanvas.save();
-            portableBlurCanvas.scale(
-                    portableBlurBitmap.getWidth() / (float) getWidth(),
-                    portableBlurBitmap.getHeight() / (float) getHeight());
-            drawBackdropSource(portableBlurCanvas);
-            portableBlurCanvas.restoreToCount(offscreenSave);
+            try {
+                if (blurDirty) {
+                    portableBlurBitmap.eraseColor(Color.TRANSPARENT);
+                    int offscreenSave = portableBlurCanvas.save();
+                    try {
+                        portableBlurCanvas.scale(
+                                portableBlurBitmap.getWidth() / portableBlurDestination.width(),
+                                portableBlurBitmap.getHeight() / portableBlurDestination.height());
+                        portableBlurCanvas.translate(-portableBlurDestination.left, -portableBlurDestination.top);
+                        drawBackdropSource(portableBlurCanvas);
+                    } finally {
+                        portableBlurCanvas.restoreToCount(offscreenSave);
+                    }
+                    float radius = backdropBlurRadius();
+                    portableBlur.apply(portableBlurBitmap,
+                            radius * portableBlurBitmap.getWidth() / portableBlurDestination.width(),
+                            radius * portableBlurBitmap.getHeight() / portableBlurDestination.height());
+                    blurDirty = false;
+                }
+            } catch (RuntimeException | OutOfMemoryError unavailable) {
+                releasePortableBlurBuffer();
+                return false;
+            }
 
             int layer = canvas.saveLayer(0, 0, getWidth(), getHeight(), null);
-            portableBlurDestination.set(0, 0, getWidth(), getHeight());
-            portableBlurPaint.setAlpha(255);
+            portableBlurPaint.setAlpha(floating ? 244 : 255);
             canvas.drawBitmap(
                     portableBlurBitmap, null, portableBlurDestination, portableBlurPaint);
 
-            float horizontalShift = Math.max(1f,
-                    getResources().getDisplayMetrics().density * 6f);
-            portableBlurPaint.setAlpha(64);
-            portableBlurDestination.set(
-                    -horizontalShift, 0, getWidth() - horizontalShift, getHeight());
-            canvas.drawBitmap(
-                    portableBlurBitmap, null, portableBlurDestination, portableBlurPaint);
-            portableBlurDestination.set(
-                    horizontalShift, 0, getWidth() + horizontalShift, getHeight());
-            canvas.drawBitmap(
-                    portableBlurBitmap, null, portableBlurDestination, portableBlurPaint);
-            portableBlurPaint.setAlpha(255);
+            if (floating) {
+                portableBlurPaint.setAlpha(255);
+                canvas.restoreToCount(layer);
+                return true;
+            }
 
-            float strength = Math.max(0f, Math.min(1f, scrollDepth));
-            strength = strength * strength * (3f - 2f * strength);
+            float strength = backdropBlurStrength();
             blurMaskPaint.setShader(blurMaskShader);
             blurMaskPaint.setAlpha(Math.round(255f * strength));
             blurMaskPaint.setXfermode(portableBlurMaskMode);
@@ -391,8 +352,13 @@ abstract class WeatherVisualEffectsActivity extends WeatherActivityFoundation {
         }
 
         private boolean ensurePortableBlurBuffer() {
-            int width = Math.max(1, (getWidth() + 9) / 10);
-            int height = Math.max(1, (getHeight() + 2) / 3);
+            float radius = backdropBlurRadius();
+            int gutter = (int) Math.ceil(radius * 3f);
+            if (floating) portableBlurDestination.set(-gutter, -gutter,
+                    getWidth() + gutter, getHeight() + gutter);
+            else portableBlurDestination.set(0, 0, getWidth(), getHeight() + gutter);
+            int width = Math.max(1, (int) Math.ceil(portableBlurDestination.width() / 10f));
+            int height = Math.max(1, (int) Math.ceil(portableBlurDestination.height() / 10f));
             if (portableBlurBitmap != null
                     && !portableBlurBitmap.isRecycled()
                     && portableBlurBitmap.getWidth() == width
@@ -404,6 +370,7 @@ abstract class WeatherVisualEffectsActivity extends WeatherActivityFoundation {
             try {
                 portableBlurBitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888);
                 portableBlurCanvas = new Canvas(portableBlurBitmap);
+                blurDirty = true;
                 return true;
             } catch (Throwable ignored) {
                 releasePortableBlurBuffer();
@@ -412,14 +379,24 @@ abstract class WeatherVisualEffectsActivity extends WeatherActivityFoundation {
         }
 
         private void releasePortableBlurBuffer() {
+            portableBlur.release();
             portableBlurCanvas = null;
-            if (portableBlurBitmap != null) {
-                try { portableBlurBitmap.recycle(); } catch (Exception ignored) { }
-                portableBlurBitmap = null;
-            }
+            // A recorded hardware canvas may still reference the previous bitmap.
+            portableBlurBitmap = null;
+            blurDirty = true;
+        }
+
+        private float backdropBlurRadius() {
+            return Math.min(80f, getResources().getDisplayMetrics().density * (floating ? 20f : 18f));
+        }
+
+        private float backdropBlurStrength() {
+            // Keep coverage steady as content enters the strip when scrolling up.
+            return floating ? 1f : 0.94f;
         }
     }
 
+    @android.annotation.TargetApi(31)
     static final class Api31OplusHeaderBlur {
         private static java.lang.reflect.Method setBackgroundEffect;
 
@@ -439,8 +416,11 @@ abstract class WeatherVisualEffectsActivity extends WeatherActivityFoundation {
                 Class<?> backgroundRenderer = Class.forName(
                         "com.oplus.view.OplusViewBackgroundRenderEffect");
                 for (java.lang.reflect.Method method : backgroundRenderer.getMethods()) {
+                    Class<?>[] parameters = method.getParameterTypes();
                     if ("setBackgroundRenderEffect".equals(method.getName())
-                            && method.getParameterTypes().length == 2) {
+                            && java.lang.reflect.Modifier.isStatic(method.getModifiers())
+                            && parameters.length == 2 && parameters[0].isInstance(effect)
+                            && parameters[1].isInstance(target)) {
                         setBackgroundEffect = method;
                         method.invoke(null, effect, target);
                         return true;
@@ -464,97 +444,47 @@ abstract class WeatherVisualEffectsActivity extends WeatherActivityFoundation {
         }
     }
 
+    @android.annotation.TargetApi(31)
     static final class Api31HeaderBlur {
         private Api31HeaderBlur() { }
 
         static boolean draw(
-                HeaderGlassView owner,
-                Canvas canvas,
-                boolean refresh,
-                float scrollDepth) {
+                HeaderGlassView owner, Canvas canvas, boolean refresh) {
             if (Build.VERSION.SDK_INT < 31) return false;
-            float strength = Math.max(0f, Math.min(1f, scrollDepth));
-            strength = strength * strength * (3f - 2f * strength);
-            if (strength <= 0.002f || owner.blurMaskShader == null) return false;
-            android.graphics.RenderNode node = owner.blurNode instanceof android.graphics.RenderNode
-                    ? (android.graphics.RenderNode) owner.blurNode
-                    : null;
-            if (node == null) {
-                node = new android.graphics.RenderNode("ZwerkWeatherHeaderStrip");
-                owner.blurNode = node;
-                refresh = true;
-            }
-
-            android.graphics.RenderEffect effect =
-                    owner.blurEffect instanceof android.graphics.RenderEffect
-                            ? (android.graphics.RenderEffect) owner.blurEffect
-                            : null;
-            if (effect == null) {
-                float density = owner.getResources().getDisplayMetrics().density;
-                // Keep vertical detail readable while spreading edges farther sideways.
-                float radiusX = Math.min(96f, density * 26f);
-                float radiusY = Math.min(22f, density * 5.5f);
-                android.graphics.RenderEffect blur = android.graphics.RenderEffect.createBlurEffect(
-                        radiusX, radiusY, Shader.TileMode.CLAMP);
-                android.graphics.ColorMatrix matrix = new android.graphics.ColorMatrix();
-                matrix.setSaturation(1.06f);
-                float[] values = matrix.getArray();
-                values[4] += 4f;
-                values[9] += 4f;
-                values[14] += 4f;
-                android.graphics.ColorMatrixColorFilter filter =
-                        new android.graphics.ColorMatrixColorFilter(matrix);
-                effect = android.graphics.RenderEffect.createColorFilterEffect(filter, blur);
-                owner.blurEffect = effect;
-            }
-
-            android.graphics.RenderEffect coverEffect =
-                    owner.blurCoverEffect instanceof android.graphics.RenderEffect
-                            ? (android.graphics.RenderEffect) owner.blurCoverEffect
-                            : null;
-            if (coverEffect == null) {
-                int cover = owner.currentTint(SystemClock.uptimeMillis());
-                android.graphics.ColorMatrix coverMatrix = new android.graphics.ColorMatrix(
-                        new float[]{
-                                0f, 0f, 0f, 0f, Color.red(cover),
-                                0f, 0f, 0f, 0f, Color.green(cover),
-                                0f, 0f, 0f, 0f, Color.blue(cover),
-                                0f, 0f, 0f, 0.10f, 0f});
-                coverEffect = android.graphics.RenderEffect.createColorFilterEffect(
-                        new android.graphics.ColorMatrixColorFilter(coverMatrix));
-                owner.blurCoverEffect = coverEffect;
-            }
-
+            if (owner.floating) return drawFloating(owner, canvas, refresh);
+            float strength = owner.backdropBlurStrength();
+            if (owner.blurMaskShader == null) return false;
             int width = owner.getWidth();
             int height = owner.getHeight();
             if (width <= 0 || height <= 0) return false;
-            if (refresh || node.getWidth() != width || node.getHeight() != height) {
-                node.setPosition(0, 0, width, height);
-                android.graphics.RecordingCanvas recording = node.beginRecording(width, height);
-                int save = recording.save();
-                recording.clipRect(0, 0, width, height);
-                owner.drawBackdropSource(recording);
-                recording.restoreToCount(save);
-                node.endRecording();
+            // Blur both axes so content under the title washes out instead of
+            // retaining vertical letter shapes through a horizontal smear.
+            float radius = owner.backdropBlurRadius();
+            int gutter = Math.max(2, (int) Math.ceil(radius * 2f));
+            android.graphics.RenderNode node = (android.graphics.RenderNode) owner.blurNode;
+            if (node == null) {
+                node = new android.graphics.RenderNode("ZwerkWeatherHeaderStrip");
+                owner.blurNode = node;
+                node.setRenderEffect(android.graphics.RenderEffect.createBlurEffect(
+                        radius, radius, Shader.TileMode.CLAMP));
+                refresh = true;
+            }
+            // The strip touches the screen's top/side edges. Padding there captures
+            // transparent sky and offscreen text; CLAMP must extend visible pixels.
+            // Keep bottom padding so the lower fade can sample the page below it.
+            int captureWidth = width;
+            int captureHeight = height + gutter;
+            if (refresh || node.getWidth() != captureWidth || node.getHeight() != captureHeight) {
+                node.setPosition(0, 0, width, height + gutter);
+                android.graphics.RecordingCanvas recording = node.beginRecording(captureWidth, captureHeight);
+                try {
+                    owner.drawBackdropSource(recording);
+                } finally {
+                    node.endRecording();
+                }
             }
             int layer = canvas.saveLayer(0, 0, width, height, null);
-            node.setRenderEffect(coverEffect);
             canvas.drawRenderNode(node);
-            node.setRenderEffect(effect);
-            canvas.drawRenderNode(node);
-
-            float density = owner.getResources().getDisplayMetrics().density;
-            float shift = Math.max(2f, density * 6f);
-            int save = canvas.saveLayerAlpha(0, 0, width, height, 64);
-            canvas.translate(-shift, 0f);
-            canvas.drawRenderNode(node);
-            canvas.restoreToCount(save);
-
-            save = canvas.saveLayerAlpha(0, 0, width, height, 64);
-            canvas.translate(shift, 0f);
-            canvas.drawRenderNode(node);
-            canvas.restoreToCount(save);
-
             owner.blurMaskPaint.setShader(owner.blurMaskShader);
             owner.blurMaskPaint.setAlpha(Math.round(255f * strength));
             owner.blurMaskPaint.setBlendMode(android.graphics.BlendMode.DST_IN);
@@ -565,16 +495,101 @@ abstract class WeatherVisualEffectsActivity extends WeatherActivityFoundation {
             canvas.restoreToCount(layer);
             return true;
         }
+
+        private static boolean drawFloating(HeaderGlassView owner, Canvas canvas, boolean refresh) {
+            int width = owner.getWidth();
+            int height = owner.getHeight();
+            if (width <= 0 || height <= 0) return false;
+            float radius = owner.backdropBlurRadius();
+            int gutter = Math.round(radius * 2f);
+            android.graphics.RenderNode node = owner.blurNode instanceof android.graphics.RenderNode
+                    ? (android.graphics.RenderNode) owner.blurNode : null;
+            if (node == null) {
+                node = new android.graphics.RenderNode("ZwerkWeatherNavigationGlass");
+                owner.blurNode = node;
+                node.setRenderEffect(android.graphics.RenderEffect.createBlurEffect(
+                        radius, radius, Shader.TileMode.CLAMP));
+                refresh = true;
+            }
+            int captureWidth = width + gutter * 2;
+            int captureHeight = height + gutter * 2;
+            if (refresh || node.getWidth() != captureWidth || node.getHeight() != captureHeight) {
+                node.setPosition(-gutter, -gutter, width + gutter, height + gutter);
+                android.graphics.RecordingCanvas recording = node.beginRecording(captureWidth, captureHeight);
+                try {
+                    recording.translate(gutter, gutter);
+                    owner.drawBackdropSource(recording);
+                } finally {
+                    node.endRecording();
+                }
+            }
+            // Use one isotropic blur pass to avoid ghosting text.
+            int layer = canvas.saveLayerAlpha(0, 0, width, height, 244);
+            canvas.drawRenderNode(node);
+            canvas.restoreToCount(layer);
+            return true;
+        }
     }
 
+    private static void discardRenderNode(Object node) {
+        if (Build.VERSION.SDK_INT >= 29 && node != null) Api29RenderNodes.discard(node);
+    }
 
+    @android.annotation.TargetApi(29)
+    private static final class Api29RenderNodes {
+        static void discard(Object node) {
+            if (node instanceof android.graphics.RenderNode) {
+                ((android.graphics.RenderNode) node).discardDisplayList();
+            }
+        }
+    }
 
+    @android.annotation.TargetApi(29)
+    static final class Api29SkyComposite {
+        private Api29SkyComposite() { }
 
+        static void record(SkyLayout owner, long now) {
+            android.graphics.RenderNode node = (android.graphics.RenderNode) owner.sceneNode;
+            if (node == null) {
+                node = new android.graphics.RenderNode("ZwerkWeatherSky");
+                owner.sceneNode = node;
+            }
+            int width = owner.getWidth();
+            int height = owner.getHeight();
+            node.setPosition(0, 0, width, height);
+            android.graphics.RecordingCanvas recording = node.beginRecording(width, height);
+            try {
+                // Record the sky separately to keep header and dock captures free of view-tree cycles.
+                owner.drawComposite(recording, now, true);
+            } finally {
+                node.endRecording();
+            }
+        }
 
+        static boolean drawBackdrop(SkyLayout owner, Canvas canvas) {
+            android.graphics.RenderNode node = (android.graphics.RenderNode) owner.sceneNode;
+            if (node == null || !node.hasDisplayList()
+                    || node.getWidth() != owner.getWidth() || node.getHeight() != owner.getHeight()) {
+                return false;
+            }
+            canvas.drawRenderNode(node);
+            return true;
+        }
+    }
 
+    @android.annotation.TargetApi(36)
+    static final class Api36SkyFrameRate {
+        private Api36SkyFrameRate() { }
+
+        static void setAnimating(View view, boolean animating) {
+            view.setRequestedFrameRate(animating ? View.REQUESTED_FRAME_RATE_CATEGORY_HIGH
+                    : View.REQUESTED_FRAME_RATE_CATEGORY_NO_PREFERENCE);
+        }
+    }
 
     final class SkyLayout extends FrameLayout {
-        private final Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG | Paint.DITHER_FLAG);
+        private final Paint paint = new Paint(
+                Paint.ANTI_ALIAS_FLAG | Paint.DITHER_FLAG | Paint.FILTER_BITMAP_FLAG);
         private final WeatherAtmosphereRenderer atmosphere = new WeatherAtmosphereRenderer(
                 getResources().getDisplayMetrics().density);
         private final Paint portableBlurPaint = new Paint(
@@ -595,6 +610,8 @@ abstract class WeatherVisualEffectsActivity extends WeatherActivityFoundation {
         private SceneSpec currentSpec = new SceneSpec("day", "none", true, "Clear");
         private SceneSpec outgoingSpec;
         private Bitmap outgoingSnapshot;
+        private Object sceneNode;
+        private boolean platformSceneCacheDisabled;
         private long transitionStarted;
         private long thunderStarted;
         private boolean animationRunning = true;
@@ -636,8 +653,9 @@ abstract class WeatherVisualEffectsActivity extends WeatherActivityFoundation {
 
         String setScene(SceneSpec target) {
             if (target == null) return currentSpec.paletteScene();
-            if (target.equals(currentSpec) && outgoingSpec == null && outgoingSnapshot == null) {
-                invalidate();
+            if (target.hasSameVisuals(currentSpec)) {
+                // Keep the particle clock and fade when only hour labels change.
+                currentSpec = target;
                 return target.paletteScene();
             }
             long now = visualNow();
@@ -656,7 +674,7 @@ abstract class WeatherVisualEffectsActivity extends WeatherActivityFoundation {
                 Bitmap snapshot = captureCurrentVisual(now);
                 clearOutgoingSnapshot();
                 outgoingSnapshot = snapshot;
-                outgoingSpec = null;
+                outgoingSpec = snapshot == null ? currentSpec : null;
             } else {
                 clearOutgoingSnapshot();
                 outgoingSpec = currentSpec;
@@ -672,6 +690,7 @@ abstract class WeatherVisualEffectsActivity extends WeatherActivityFoundation {
 
         void setAnimationRunning(boolean running) {
             boolean allowed = running && animationsAllowed();
+            if (Build.VERSION.SDK_INT >= 36) Api36SkyFrameRate.setAnimating(this, allowed);
             if (animationRunning == allowed) {
                 if (allowed) postInvalidateOnAnimation();
                 return;
@@ -710,16 +729,20 @@ abstract class WeatherVisualEffectsActivity extends WeatherActivityFoundation {
             if (outgoingSpec == null && outgoingSnapshot == null) return 1f;
             float linear = Math.max(0f, Math.min(1f,
                     (now - transitionStarted) / (float) SCENE_TRANSITION_MILLIS));
-            // Fast-Out-Slow-In compatible smoothstep without introducing an Animator lifecycle.
             return linear * linear * (3f - 2f * linear);
         }
 
         private Bitmap captureCurrentVisual(long now) {
             if (getWidth() <= 0 || getHeight() <= 0) return null;
             try {
+                // Snapshot only interrupted fades and cap the bitmap size.
+                float scale = Math.min(1f, 512f / Math.max(getWidth(), getHeight()));
+                int width = Math.max(1, Math.round(getWidth() * scale));
+                int height = Math.max(1, Math.round(getHeight() * scale));
                 Bitmap bitmap = Bitmap.createBitmap(
-                        getWidth(), getHeight(), Bitmap.Config.ARGB_8888);
+                        width, height, Bitmap.Config.ARGB_8888);
                 Canvas canvas = new Canvas(bitmap);
+                canvas.scale(width / (float) getWidth(), height / (float) getHeight());
                 drawComposite(canvas, now, false);
                 return bitmap;
             } catch (Throwable ignored) {
@@ -728,18 +751,20 @@ abstract class WeatherVisualEffectsActivity extends WeatherActivityFoundation {
         }
 
         private void clearOutgoingSnapshot() {
-            if (outgoingSnapshot != null) {
-                try { outgoingSnapshot.recycle(); } catch (Exception ignored) { }
-                outgoingSnapshot = null;
-            }
+            // RenderNode may hold the old bitmap; let it be collected after that reference is released.
+            outgoingSnapshot = null;
         }
 
         void release() {
             animationRunning = false;
+            if (Build.VERSION.SDK_INT >= 36) Api36SkyFrameRate.setAnimating(this, false);
+            discardRenderNode(sceneNode);
+            sceneNode = null;
             outgoingSpec = null;
             transitionStarted = 0L;
             clearOutgoingSnapshot();
             releasePortableBackgroundBlurBuffer();
+            discardRenderNode(backgroundBlurNode);
             backgroundBlurNode = null;
             backgroundBlurEffect = null;
             backgroundBlurEffectRadius = -1f;
@@ -749,6 +774,7 @@ abstract class WeatherVisualEffectsActivity extends WeatherActivityFoundation {
         protected void onSizeChanged(int w, int h, int oldw, int oldh) {
             super.onSizeChanged(w, h, oldw, oldh);
             if (w != oldw || h != oldh) {
+                sceneNode = null;
                 releasePortableBackgroundBlurBuffer();
                 backgroundBlurNode = null;
                 backgroundBlurEffect = null;
@@ -806,7 +832,6 @@ abstract class WeatherVisualEffectsActivity extends WeatherActivityFoundation {
 
         @Override
         public boolean onInterceptTouchEvent(MotionEvent event) {
-            // Sky animation is background-only. Child controls own all pointer handling.
             return false;
         }
 
@@ -818,6 +843,17 @@ abstract class WeatherVisualEffectsActivity extends WeatherActivityFoundation {
                 setAnimationRunning(false);
             }
             long now = visualNow();
+            boolean cached = false;
+            if (Build.VERSION.SDK_INT >= 29 && canvas.isHardwareAccelerated()
+                    && !platformSceneCacheDisabled) {
+                try {
+                    Api29SkyComposite.record(this, now);
+                    cached = true;
+                } catch (Throwable ignored) {
+                    platformSceneCacheDisabled = true;
+                    sceneNode = null;
+                }
+            }
             boolean backgroundDrawn = false;
             if (backgroundBlurDepth > 0.002f
                     && Build.VERSION.SDK_INT >= 31
@@ -836,21 +872,31 @@ abstract class WeatherVisualEffectsActivity extends WeatherActivityFoundation {
                 if (backgroundBlurDepth > 0.002f) {
                     drawPortableBlurredComposite(canvas, now);
                 } else {
-                    drawComposite(canvas, now, true);
+                    if (cached) Api29SkyComposite.drawBackdrop(this, canvas);
+                    else drawComposite(canvas, now, true);
                 }
             }
             if (animationRunning && isAttachedToWindow()) {
                 if (headerGlass != null) headerGlass.requestAnimatedBackdropRefresh();
-                boolean fast = transitionActive(now)
-                        || "rain".equals(currentSpec.effect)
-                        || "thunder".equals(currentSpec.effect)
-                        || "snow".equals(currentSpec.effect);
-                postInvalidateDelayed(fast ? 33L : 55L);
+                if (bottomGlass != null) bottomGlass.requestAnimatedBackdropRefresh();
+                postInvalidateOnAnimation();
             }
         }
 
-        void drawBackdropForHeader(Canvas canvas) {
+        void drawBackdropForHeader(Canvas canvas, boolean unblurred) {
             if (canvas == null || getWidth() <= 0 || getHeight() <= 0) return;
+            // Capture raw leaves so the dock never feeds its blurred output back into itself.
+            if (!unblurred && backgroundBlurDepth > 0.002f) {
+                if (Build.VERSION.SDK_INT >= 31 && canvas.isHardwareAccelerated()
+                        && !platformBackgroundBlurDisabled
+                        && Api31BackgroundBlur.drawPublished(this, canvas)) return;
+                drawPortableBlurredComposite(canvas, visualNow());
+                return;
+            }
+            if (Build.VERSION.SDK_INT >= 29 && canvas.isHardwareAccelerated()
+                    && !platformSceneCacheDisabled && Api29SkyComposite.drawBackdrop(this, canvas)) {
+                return;
+            }
             drawComposite(canvas, visualNow(), false);
         }
 
@@ -913,8 +959,7 @@ abstract class WeatherVisualEffectsActivity extends WeatherActivityFoundation {
 
         @Override
         protected void dispatchDraw(Canvas canvas) {
-            // All scene/effect rendering happens in onDraw(), before FrameLayout dispatches any
-            // weather cards, text, toolbar, or controls. Never add effect drawing below this call.
+            // Keep effects in onDraw so child controls stay above them.
             super.dispatchDraw(canvas);
         }
 
@@ -922,6 +967,7 @@ abstract class WeatherVisualEffectsActivity extends WeatherActivityFoundation {
             float w = getWidth();
             float h = getHeight();
             float progress = transitionProgress(now);
+            if (cleanupFinished && progress >= 1f) finishCompositeTransition();
             boolean transitioning = outgoingSpec != null || outgoingSnapshot != null;
 
             if (outgoingSnapshot != null) {
@@ -930,9 +976,7 @@ abstract class WeatherVisualEffectsActivity extends WeatherActivityFoundation {
                 destinationRect.set(0, 0, w, h);
                 canvas.drawBitmap(outgoingSnapshot, null, destinationRect, paint);
             } else if (outgoingSpec != null) {
-                // Existing thunder flashes are part of the outgoing visual and therefore fade
-                // with that layer. Only flashes belonging to an incoming thunder target wait
-                // until the transition is mostly complete.
+                // Outgoing lightning fades with its scene; incoming flashes wait until the fade is nearly complete.
                 drawSceneLayer(canvas, outgoingSpec, 255, now,
                         "thunder".equals(outgoingSpec.effect));
             }
@@ -941,7 +985,6 @@ abstract class WeatherVisualEffectsActivity extends WeatherActivityFoundation {
                 drawSceneLayer(canvas, currentSpec, 255, now, true);
             } else {
                 drawSceneLayer(canvas, currentSpec, Math.round(progress * 255f), now, progress >= 0.88f);
-                if (cleanupFinished && progress >= 1f) finishCompositeTransition();
             }
         }
 
@@ -954,8 +997,8 @@ abstract class WeatherVisualEffectsActivity extends WeatherActivityFoundation {
         private void drawSceneLayer(
                 Canvas canvas, SceneSpec spec, int layerAlpha, long now, boolean allowLightning) {
             if (spec == null || layerAlpha <= 0) return;
-            int save = canvas.saveLayerAlpha(
-                    0, 0, getWidth(), getHeight(),
+            int save = layerAlpha >= 255 ? canvas.save() : canvas.saveLayerAlpha(
+                0, 0, getWidth(), getHeight(),
                     Math.max(0, Math.min(255, layerAlpha)));
             Bitmap base = bitmapFor(spec.base);
             if (base != null) drawCover(canvas, base, getWidth(), getHeight(), 255, now);
@@ -1017,7 +1060,7 @@ abstract class WeatherVisualEffectsActivity extends WeatherActivityFoundation {
                 int top = (bitmap.getHeight() - sourceHeight) / 2;
                 sourceRect.set(0, top, bitmap.getWidth(), top + sourceHeight);
             }
-            // Slow overscanned movement gives the original sky art depth without exposing an edge.
+            // Overscan the moving sky so its edges stay offscreen.
             float marginX = w * 0.018f;
             float marginY = h * 0.018f;
             float driftX = (float) Math.sin(now * 0.000045) * marginX * 0.70f;
@@ -1090,8 +1133,19 @@ abstract class WeatherVisualEffectsActivity extends WeatherActivityFoundation {
 
     }
 
+    @android.annotation.TargetApi(31)
     static final class Api31BackgroundBlur {
         private Api31BackgroundBlur() { }
+
+        static boolean drawPublished(SkyLayout owner, Canvas canvas) {
+            android.graphics.RenderNode node = (android.graphics.RenderNode) owner.backgroundBlurNode;
+            if (node == null || !node.hasDisplayList()
+                    || node.getWidth() != owner.getWidth() || node.getHeight() != owner.getHeight()) {
+                return false;
+            }
+            canvas.drawRenderNode(node);
+            return true;
+        }
 
         static boolean draw(SkyLayout owner, Canvas canvas, long now) {
             if (Build.VERSION.SDK_INT < 31 || owner == null || !canvas.isHardwareAccelerated()) {
@@ -1111,10 +1165,14 @@ abstract class WeatherVisualEffectsActivity extends WeatherActivityFoundation {
             }
             node.setPosition(0, 0, width, height);
             android.graphics.RecordingCanvas recording = node.beginRecording(width, height);
-            // RenderNode recording defers the bitmap reads until drawRenderNode(). Keep any
-            // outgoing transition snapshot alive until after that draw has been submitted.
-            owner.drawComposite(recording, now, false);
-            node.endRecording();
+            // Keep outgoing bitmaps alive until drawRenderNode submits the deferred recording.
+            try {
+                if (!Api29SkyComposite.drawBackdrop(owner, recording)) {
+                    owner.drawComposite(recording, now, false);
+                }
+            } finally {
+                node.endRecording();
+            }
 
             float density = owner.getResources().getDisplayMetrics().density;
             float radius = Math.max(0.1f,
@@ -1141,8 +1199,6 @@ abstract class WeatherVisualEffectsActivity extends WeatherActivityFoundation {
             return true;
         }
     }
-
-
 
     final class WeatherGlyphView extends View {
         private final String condition;
@@ -1297,7 +1353,5 @@ abstract class WeatherVisualEffectsActivity extends WeatherActivityFoundation {
         canvas.drawCircle(cx + size * 0.07f, cy - h * 0.28f, h * 0.88f, p);
         canvas.drawCircle(cx + size * 0.28f, cy - h * 0.03f, h * 0.58f, p);
     }
-
-
 
 }

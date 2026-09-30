@@ -12,11 +12,7 @@ import android.os.CancellationSignal;
 import android.os.Handler;
 import android.os.Looper;
 
-/**
- * Serializes device-location checks that must happen before MainActivity starts a weather refresh.
- * Normal refreshes never replace a deliberately selected manual location. Explicit "device
- * location" actions are allowed to switch back to the device location.
- */
+/** Checks device location before refreshes while preserving manually selected cities. */
 final class DeviceLocationRefreshCoordinator {
     static final float LOCATION_CHANGE_THRESHOLD_METERS = 250f;
     private static final long LOCATION_TIMEOUT_MILLIS = 7000L;
@@ -82,6 +78,10 @@ final class DeviceLocationRefreshCoordinator {
         cancelLookup();
         clearActiveState();
         clearPendingState();
+    }
+
+    boolean isCheckingLocation() {
+        return active && !awaitingPermission;
     }
 
     void destroy() {

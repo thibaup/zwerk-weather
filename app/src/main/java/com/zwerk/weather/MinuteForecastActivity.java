@@ -1,57 +1,8 @@
 package com.zwerk.weather;
 
-import android.animation.ValueAnimator;
-import android.app.Activity;
-import android.app.Dialog;
-import android.content.Context;
-import android.content.Intent;
-import android.content.pm.ApplicationInfo;
-import android.content.pm.PackageManager;
-import android.graphics.Bitmap;
-import android.graphics.BitmapFactory;
-import android.graphics.Canvas;
-import android.graphics.Color;
-import android.graphics.LinearGradient;
-import android.graphics.Paint;
-import android.graphics.Path;
-import android.graphics.RadialGradient;
-import android.graphics.Rect;
-import android.graphics.RectF;
-import android.graphics.Shader;
-import android.graphics.Typeface;
-import android.graphics.drawable.ColorDrawable;
-import android.graphics.drawable.GradientDrawable;
-import android.graphics.drawable.StateListDrawable;
-import android.location.Address;
-import android.location.Geocoder;
-import android.location.Location;
-import android.net.Uri;
-import android.os.Build;
-import android.os.Bundle;
 import android.os.SystemClock;
 import android.util.Log;
-import android.text.InputType;
-import android.text.method.PasswordTransformationMethod;
-import android.view.Gravity;
-import android.view.KeyEvent;
-import android.view.MotionEvent;
-import android.view.ViewConfiguration;
 import android.view.View;
-import android.view.ViewGroup;
-import android.view.Window;
-import android.view.WindowInsets;
-import android.view.WindowInsetsController;
-import android.view.WindowManager;
-import android.view.accessibility.AccessibilityNodeInfo;
-import android.widget.Button;
-import android.widget.EditText;
-import android.widget.FrameLayout;
-import android.widget.HorizontalScrollView;
-import android.widget.LinearLayout;
-import android.widget.ProgressBar;
-import android.widget.ScrollView;
-import android.widget.TextView;
-import android.widget.Toast;
 
 import android.system.Os;
 
@@ -59,32 +10,14 @@ import org.json.JSONArray;
 import org.json.JSONObject;
 
 import java.io.BufferedReader;
-import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.io.FileReader;
 import java.io.FileOutputStream;
-import java.io.InputStream;
-import java.lang.ref.WeakReference;
-import java.io.IOException;
-import java.net.HttpURLConnection;
-import java.net.SocketTimeoutException;
-import java.net.URL;
 import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
-import java.security.MessageDigest;
-import java.time.Duration;
 import java.time.Instant;
-import java.time.LocalDate;
-import java.time.ZoneId;
-import java.time.format.DateTimeFormatter;
-import java.util.ArrayList;
-import java.util.HashSet;
-import java.util.List;
 import java.util.Locale;
-import java.util.concurrent.ExecutorService;
 import java.util.concurrent.ThreadLocalRandom;
-import java.util.concurrent.Executors;
-
 
 abstract class MinuteForecastActivity extends OptionalWeatherDataActivity {
     /** Renders the prepared precipitation page for the current minute-forecast state. */
@@ -123,7 +56,7 @@ abstract class MinuteForecastActivity extends OptionalWeatherDataActivity {
         String identity = Double.toHexString(lat)
                 + "|" + Double.toHexString(lon)
                 + "|" + (language == null ? "" : language)
-                + "|" + OpenMeteoConfig.cacheScope(this);
+                + "|rain-v2|" + OpenMeteoConfig.precipitationCacheScope(this);
         String name = MINUTE_CACHE_FILE_PREFIX
                 + Integer.toHexString(identity.hashCode())
                 + MINUTE_CACHE_FILE_SUFFIX;
@@ -287,9 +220,7 @@ abstract class MinuteForecastActivity extends OptionalWeatherDataActivity {
             }
         }
 
-        // Even when an already-loading/fresh/error state means no new request is needed,
-        // synchronize the prepared precipitation page with that state. This prevents a
-        // stale pre-rendered "Load precipitation" card from surviving a mode switch.
+        // Synchronize the offscreen page even when the current state needs no new request.
         rerenderPrecipitationPreservingScroll();
         notifyActiveForecastStatusChanged();
         if (pendingRequestState == null) return;
@@ -318,7 +249,7 @@ abstract class MinuteForecastActivity extends OptionalWeatherDataActivity {
                     throw new SupersededWeatherRequestException();
                 }
                 JSONObject raw;
-                if (OpenMeteoConfig.isOpenMeteo(this)) {
+                if (OpenMeteoConfig.isPrecipitationOpenMeteo(this)) {
                     raw = OpenMeteoForecastClient.loadMinute(
                             this, lat, lon, OpenMeteoConfig.model(this),
                             OpenMeteoConfig.readCustomerKey(this));
@@ -381,6 +312,10 @@ abstract class MinuteForecastActivity extends OptionalWeatherDataActivity {
         if (resultState.response != null && RainAlertManager.isEnabled(this)) {
             RainAlertManager.evaluateMinuteForecast(
                     this, resultState.response, latitude, longitude, locationName);
+        }
+        if (resultState.response != null) {
+            PrecipitationWidgetProvider.publishMinute(this, resultState.response,
+                    resultState.fetchedAtMillis, latitude, longitude);
         }
         scheduleMinuteExpiration(resultState);
         rerenderPrecipitationPreservingScroll();
@@ -545,9 +480,7 @@ abstract class MinuteForecastActivity extends OptionalWeatherDataActivity {
         int scrollY = precipitationPageActive && mainScroll != null
                 ? mainScroll.getScrollY() : 0;
 
-        // Render the precipitation page itself, including while it is prepared off-screen.
-        // State changes can therefore never leave a stale action card waiting for the next
-        // mode switch. The active page pointer is restored by rerenderPrecipitationPage().
+        // Update the offscreen page now so switching tabs cannot reveal stale controls.
         rerenderPrecipitationPage();
 
         if (precipitationPageActive && mainScroll != null) {
@@ -562,6 +495,5 @@ abstract class MinuteForecastActivity extends OptionalWeatherDataActivity {
             });
         }
     }
-
 
 }

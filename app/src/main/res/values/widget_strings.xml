@@ -2,4 +2,8 @@
 <resources>
     <string name="weather_widget_name" translatable="false">Zwerk Weather</string>
     <string name="weather_widget_description">Weather forecast and current conditions.</string>
+    <string name="weather_widget_loading">Refreshing…</string>
+    <string name="precipitation_widget_name" translatable="false">Zwerk Precipitation</string>
+    <string name="precipitation_widget_description" translatable="false">Precipitation amounts for the next six hours.</string>
+    <string name="precipitation_widget_preview_title" translatable="false">Next 6 hours</string>
 </resources>

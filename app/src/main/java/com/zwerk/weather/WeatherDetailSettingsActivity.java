@@ -23,7 +23,6 @@ import android.view.Gravity;
 import android.view.View;
 import android.view.ViewGroup;
 import android.view.Window;
-import android.view.WindowInsets;
 import android.view.WindowInsetsController;
 import android.view.WindowManager;
 import android.widget.FrameLayout;
@@ -36,14 +35,8 @@ import android.widget.Toast;
 import java.util.LinkedHashMap;
 import java.util.Map;
 
-/**
- * Settings screen controlling which secondary values are shown in weather details.
- *
- * <p>Built entirely with Android platform views so it remains compatible with minSdk 28.
- */
 public class WeatherDetailSettingsActivity extends Activity {
 
-    // Package-visible preference contract for the rest of com.zwerk.weather.
     static final String WEATHER_UI = "WEATHER_UI";
 
     static final String PREF_UV_INDEX = "weather_detail_uv_index";
@@ -61,6 +54,8 @@ public class WeatherDetailSettingsActivity extends Activity {
     static final String PREF_WIND_CHILL = "weather_detail_wind_chill";
     static final String PREF_TEMPERATURE_CHANGE_24H = "weather_detail_temperature_change_24h";
     static final String PREF_PRECIPITATION_24H = "weather_detail_precipitation_24h";
+    static final String PREF_AIR_QUALITY = "google_air_quality_enabled";
+    static final String PREF_POLLEN = "google_pollen_enabled";
 
     static final class DetailOption {
         final String key;
@@ -86,7 +81,9 @@ public class WeatherDetailSettingsActivity extends Activity {
             new DetailOption(PREF_HEAT_INDEX, false),
             new DetailOption(PREF_WIND_CHILL, false),
             new DetailOption(PREF_TEMPERATURE_CHANGE_24H, false),
-            new DetailOption(PREF_PRECIPITATION_24H, false)
+            new DetailOption(PREF_PRECIPITATION_24H, false),
+            new DetailOption(PREF_AIR_QUALITY, true),
+            new DetailOption(PREF_POLLEN, true)
     };
 
     // These mirror SettingsActivity's scene/style hand-off without creating a source dependency.
@@ -109,6 +106,7 @@ public class WeatherDetailSettingsActivity extends Activity {
 
     private SharedPreferences prefs;
     private LinearLayout page;
+    private LinearLayout detailSection;
     private boolean syncingSwitches;
 
     private String scene = "day";
@@ -278,6 +276,11 @@ public class WeatherDetailSettingsActivity extends Activity {
 
         addHeader();
 
+        addSectionHeading(getString(OpenMeteoConfig.isOpenMeteo(this)
+                ? R.string.settings_optional_open_meteo_data : R.string.settings_optional_google_data));
+        addSwitchRow("Air quality", "Show air quality for this location.", PREF_AIR_QUALITY, true);
+        addSwitchRow("Pollen", "Show pollen levels for this location.", PREF_POLLEN, true);
+
         addSectionHeading("Essentials");
         addSwitchRow(
                 "UV index",
@@ -389,14 +392,22 @@ public class WeatherDetailSettingsActivity extends Activity {
         TextView title = text("Weather details", 25f, PRIMARY, false);
         title.setGravity(Gravity.CENTER_VERTICAL);
         LinearLayout.LayoutParams titleLp = new LinearLayout.LayoutParams(0, dp(60), 1f);
-        titleLp.leftMargin = dp(4);
+        titleLp.setMarginStart(dp(12));
         header.addView(title, titleLp);
     }
 
     private void addSectionHeading(String value) {
+        detailSection = new LinearLayout(this);
+        detailSection.setOrientation(LinearLayout.VERTICAL);
+        detailSection.setBackground(surfaceBackground(false));
+        detailSection.setPadding(0, dp(5), 0, dp(5));
         TextView heading = text(value, 13f, SECONDARY, true);
-        heading.setPadding(dp(4), dp(page.getChildCount() <= 1 ? 8 : 16), dp(4), dp(7));
-        page.addView(heading);
+        heading.setPadding(dp(16), dp(10), dp(16), dp(5));
+        detailSection.addView(heading);
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-1, -2);
+        lp.topMargin = dp(10);
+        lp.bottomMargin = dp(5);
+        page.addView(detailSection, lp);
     }
 
     private void addSwitchRow(
@@ -404,7 +415,7 @@ public class WeatherDetailSettingsActivity extends Activity {
             String subtitle,
             String preferenceKey,
             boolean defaultValue) {
-        LinearLayout row = surface(false);
+        LinearLayout row = new LinearLayout(this);
         row.setGravity(Gravity.CENTER_VERTICAL);
         row.setPadding(dp(16), dp(10), dp(11), dp(10));
 
@@ -439,7 +450,15 @@ public class WeatherDetailSettingsActivity extends Activity {
 
         switches.put(preferenceKey, toggle);
         row.addView(toggle, new LinearLayout.LayoutParams(dp(62), dp(48)));
-        page.addView(row, surfaceParams());
+        if (detailSection.getChildCount() > 1) {
+            View divider = new View(this);
+            divider.setBackgroundColor(Color.argb(25, 255, 255, 255));
+            LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-1, Math.max(1, dp(0.5f)));
+            lp.setMarginStart(dp(16));
+            lp.setMarginEnd(dp(16));
+            detailSection.addView(divider, lp);
+        }
+        detailSection.addView(row, new LinearLayout.LayoutParams(-1, -2));
     }
 
     private void addRestoreAction() {
@@ -495,6 +514,8 @@ public class WeatherDetailSettingsActivity extends Activity {
         editor.putBoolean(PREF_WIND_CHILL, false);
         editor.putBoolean(PREF_TEMPERATURE_CHANGE_24H, false);
         editor.putBoolean(PREF_PRECIPITATION_24H, false);
+        editor.putBoolean(PREF_AIR_QUALITY, true);
+        editor.putBoolean(PREF_POLLEN, true);
         editor.apply();
 
         syncingSwitches = true;
@@ -512,6 +533,8 @@ public class WeatherDetailSettingsActivity extends Activity {
         setSwitch(PREF_WIND_CHILL, false);
         setSwitch(PREF_TEMPERATURE_CHANGE_24H, false);
         setSwitch(PREF_PRECIPITATION_24H, false);
+        setSwitch(PREF_AIR_QUALITY, true);
+        setSwitch(PREF_POLLEN, true);
         syncingSwitches = false;
 
         Toast.makeText(this, "Recommended defaults restored", Toast.LENGTH_SHORT).show();
@@ -548,27 +571,30 @@ public class WeatherDetailSettingsActivity extends Activity {
     }
 
     private StateListDrawable surfaceBackground(boolean interactive) {
+        int transparency = Math.max(0, Math.min(100, prefs.getInt(
+                WeatherPreferences.PREF_TILE_TRANSPARENCY, WeatherPreferences.DEFAULT_TILE_TRANSPARENCY)));
         GradientDrawable normal = new GradientDrawable(
                 GradientDrawable.Orientation.TOP_BOTTOM,
-                new int[]{surfaceTop, surfaceBottom});
-        normal.setCornerRadius(dp(20));
+                new int[]{WeatherPreferences.surfaceColor(surfaceTop, transparency),
+                        WeatherPreferences.surfaceColor(surfaceBottom, transparency)});
+        normal.setCornerRadius(dp(27));
         normal.setStroke(dp(1), Color.argb(42, 255, 255, 255));
 
         GradientDrawable pressed = new GradientDrawable(
                 GradientDrawable.Orientation.TOP_BOTTOM,
                 new int[]{
-                        Color.argb(
+                        WeatherPreferences.surfaceColor(Color.argb(
                                 Math.min(255, Color.alpha(surfaceTop) + 30),
                                 Color.red(surfaceTop),
                                 Color.green(surfaceTop),
-                                Color.blue(surfaceTop)),
-                        Color.argb(
+                                Color.blue(surfaceTop)), transparency),
+                        WeatherPreferences.surfaceColor(Color.argb(
                                 Math.min(255, Color.alpha(surfaceBottom) + 30),
                                 Color.red(surfaceBottom),
                                 Color.green(surfaceBottom),
-                                Color.blue(surfaceBottom))
+                                Color.blue(surfaceBottom)), transparency)
                 });
-        pressed.setCornerRadius(dp(20));
+        pressed.setCornerRadius(dp(27));
         pressed.setStroke(dp(1), Color.argb(72, 255, 255, 255));
 
         StateListDrawable states = new StateListDrawable();
@@ -720,7 +746,6 @@ public class WeatherDetailSettingsActivity extends Activity {
             canvas.drawRect(0, 0, w, h, paint);
             paint.setShader(null);
 
-            // Soft atmospheric layers keep the background weather-like without drawable resources.
             paint.setColor(Color.argb(
                     "snow".equals(sceneKey) ? 32 : 18,
                     225,

@@ -8,7 +8,6 @@ import android.os.LocaleList;
 
 import java.util.Locale;
 
-/** Platform-only app locale persistence and Activity context wrapping for API 28+. */
 final class AppLocaleManager {
     private static final String PREFS_NAME = "APP_LOCALE";
     private static final String PREF_LANGUAGE_TAG = "language_tag";

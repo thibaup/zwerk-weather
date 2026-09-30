@@ -10,17 +10,20 @@ import java.io.FileOutputStream;
 import java.io.FileReader;
 import java.nio.charset.StandardCharsets;
 
-/** Persisted forecast source, model and optional customer API credential. */
 final class OpenMeteoConfig {
     static final String GOOGLE = "google";
     static final String OPEN_METEO = "open_meteo";
     static final String PREF_PROVIDER = "weather_provider";
+    static final String PREF_PRECIPITATION_PROVIDER = "precipitation_provider";
     static final String PREF_MODEL = "open_meteo_model";
+    private static final String PREF_PROVIDER_DEFAULT_MIGRATED =
+            "weather_provider_default_migrated_v1";
+    private static final String PREF_GLOBAL_DEFAULT_RESTORED =
+            "weather_provider_global_default_restored_v2";
     private static final String PREFS = "WEATHER_UI";
     private static final String KEY_FILE = "open_meteo_customer_key";
     private static final String KEY_TEMP_FILE = "open_meteo_customer_key.tmp";
 
-    // These request IDs have been checked against Open-Meteo's live Forecast API.
     static final String[] MODEL_IDS = {
             "auto", "ecmwf_ifs", "dwd_icon_seamless", "ncep_gfs_seamless",
             "meteofrance_seamless", "ukmo_seamless", "knmi_seamless",
@@ -35,7 +38,17 @@ final class OpenMeteoConfig {
 
     static String provider(Context context) {
         SharedPreferences prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE);
-        return OPEN_METEO.equals(prefs.getString(PREF_PROVIDER, GOOGLE)) ? OPEN_METEO : GOOGLE;
+        // Retire the temporary Open-Meteo migration; Rain has its own provider preference.
+        if (prefs.getBoolean(PREF_PROVIDER_DEFAULT_MIGRATED, false)
+                && !prefs.getBoolean(PREF_GLOBAL_DEFAULT_RESTORED, false)) {
+            prefs.edit()
+                    .putString(PREF_PROVIDER, GOOGLE)
+                    .putBoolean(PREF_GLOBAL_DEFAULT_RESTORED, true)
+                    .remove(PREF_PROVIDER_DEFAULT_MIGRATED)
+                    .apply();
+        }
+        return OPEN_METEO.equals(prefs.getString(PREF_PROVIDER, GOOGLE))
+                ? OPEN_METEO : GOOGLE;
     }
 
     static boolean isOpenMeteo(Context context) {
@@ -44,7 +57,27 @@ final class OpenMeteoConfig {
 
     static void setProvider(Context context, String provider) {
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
-                .putString(PREF_PROVIDER, OPEN_METEO.equals(provider) ? OPEN_METEO : GOOGLE).apply();
+                .putString(PREF_PROVIDER, OPEN_METEO.equals(provider) ? OPEN_METEO : GOOGLE)
+                .putBoolean(PREF_GLOBAL_DEFAULT_RESTORED, true)
+                .remove(PREF_PROVIDER_DEFAULT_MIGRATED)
+                .apply();
+    }
+
+    static String precipitationProvider(Context context) {
+        SharedPreferences prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE);
+        return OPEN_METEO.equals(prefs.getString(PREF_PRECIPITATION_PROVIDER, OPEN_METEO))
+                ? OPEN_METEO : GOOGLE;
+    }
+
+    static boolean isPrecipitationOpenMeteo(Context context) {
+        return OPEN_METEO.equals(precipitationProvider(context));
+    }
+
+    static void setPrecipitationProvider(Context context, String provider) {
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
+                .putString(PREF_PRECIPITATION_PROVIDER,
+                        OPEN_METEO.equals(provider) ? OPEN_METEO : GOOGLE)
+                .apply();
     }
 
     static String model(Context context) {
@@ -74,6 +107,14 @@ final class OpenMeteoConfig {
 
     static String cacheScope(Context context) {
         return isOpenMeteo(context) ? OPEN_METEO + ":" + model(context) : GOOGLE;
+    }
+
+    static String precipitationCacheScope(Context context) {
+        if (!isPrecipitationOpenMeteo(context)) return GOOGLE;
+        String chosen = model(context);
+        // The Rain default can change independently of the general forecast.
+        // Retire old automatic-model data in both the page and widget caches.
+        return OPEN_METEO + ":" + chosen + ("auto".equals(chosen) ? ":rain-v3" : "");
     }
 
     static String readCustomerKey(Context context) {

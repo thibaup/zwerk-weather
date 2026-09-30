@@ -63,7 +63,7 @@
     <string name="settings_units_summary">Temperatura, vjetar, tlak i vidljivost</string>
     <string name="settings_weather_animations">Vremenske animacije</string>
     <string name="settings_preview_weather_scenes">Pregled vremenskih scena</string>
-    <string name="settings_version_format">Zwerk Weather %1$s</string>
+    <string name="settings_version_format">Zwerk Weather v%1$s</string>
     <string name="settings_measurement_units">Mjerne jedinice</string>
     <string name="settings_temperature_unit">Jedinica temperature</string>
     <string name="settings_celsius">Celsius</string>
@@ -80,4 +80,7 @@
     <string name="settings_on">Uključeno</string>
     <string name="settings_off">Isključeno</string>
     <string name="weather_widget_description">Vremenska prognoza i trenutačni uvjeti.</string>
+    <string name="forecast_saved_status">Spremljena prognoza · %1$s</string>
+    <string name="forecast_temperature">Temperatura</string>
+    <string name="hourly_day_graph_hint">Dodirnite grafikon za pojedinosti po satu</string>
 </resources>

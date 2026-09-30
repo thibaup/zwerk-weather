@@ -7,7 +7,6 @@ import android.os.Looper;
 
 import java.util.concurrent.atomic.AtomicBoolean;
 
-/** Periodic network-constrained worker for imminent rain checks. */
 public final class RainAlertJobService extends JobService {
     private static final AtomicBoolean RUNNING = new AtomicBoolean(false);
 

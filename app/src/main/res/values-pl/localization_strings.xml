@@ -63,7 +63,7 @@
     <string name="settings_units_summary">Temperatura, wiatr, ciśnienie i widoczność</string>
     <string name="settings_weather_animations">Animacje pogody</string>
     <string name="settings_preview_weather_scenes">Podgląd scen pogodowych</string>
-    <string name="settings_version_format">Zwerk Weather %1$s</string>
+    <string name="settings_version_format">Zwerk Weather v%1$s</string>
     <string name="settings_measurement_units">Jednostki miary</string>
     <string name="settings_temperature_unit">Jednostka temperatury</string>
     <string name="settings_celsius">Celsius</string>
@@ -80,4 +80,7 @@
     <string name="settings_on">Wł.</string>
     <string name="settings_off">Wył.</string>
     <string name="weather_widget_description">Prognoza pogody i aktualne warunki.</string>
+    <string name="forecast_saved_status">Zapisana prognoza · %1$s</string>
+    <string name="forecast_temperature">Temperatura</string>
+    <string name="hourly_day_graph_hint">Dotknij wykresu, aby zobaczyć szczegóły godzinowe</string>
 </resources>

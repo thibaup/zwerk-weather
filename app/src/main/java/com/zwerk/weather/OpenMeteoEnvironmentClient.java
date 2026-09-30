@@ -12,7 +12,6 @@ import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
 import java.util.Locale;
 
-/** Open-Meteo/CAMS air quality and seasonal European pollen, without invented indexes. */
 final class OpenMeteoEnvironmentClient {
     private static final String[] POLLEN_KEYS = {
             "alder_pollen", "birch_pollen", "grass_pollen", "mugwort_pollen",

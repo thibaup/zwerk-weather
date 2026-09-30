@@ -63,7 +63,7 @@
     <string name="settings_units_summary">Temperature, wind, pressure, and visibility</string>
     <string name="settings_weather_animations">Weather animations</string>
     <string name="settings_preview_weather_scenes">Preview weather scenes</string>
-    <string name="settings_version_format">Zwerk Weather %1$s</string>
+    <string name="settings_version_format">Zwerk Weather v%1$s</string>
     <string name="settings_measurement_units">Measurement units</string>
     <string name="settings_temperature_unit">Temperature unit</string>
     <string name="settings_celsius">Celsius</string>
@@ -79,4 +79,7 @@
     <string name="settings_not_selected">not selected</string>
     <string name="settings_on">On</string>
     <string name="settings_off">Off</string>
+    <string name="forecast_saved_status">Saved forecast · %1$s</string>
+    <string name="forecast_temperature">Temperature</string>
+    <string name="hourly_day_graph_hint">Tap the graph for hourly details</string>
 </resources>

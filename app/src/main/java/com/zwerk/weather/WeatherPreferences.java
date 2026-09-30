@@ -3,9 +3,14 @@ package com.zwerk.weather;
 import android.content.Context;
 import android.content.SharedPreferences;
 
-/** Centralizes persisted weather-display preferences and value translation. */
 final class WeatherPreferences {
     static final String PREFS_NAME = "WEATHER_UI";
+    static final String PREF_TILE_TRANSPARENCY = "tile_transparency";
+    static final int DEFAULT_TILE_TRANSPARENCY = 70;
+    static final String PREF_RADAR_MAP_THEME = "radar_map_theme";
+    static final String MAP_AUTOMATIC = "automatic";
+    static final String MAP_LIGHT = "light";
+    static final String MAP_DARK = "dark";
     static final String TEMP_CELSIUS = "C";
     static final String TEMP_FAHRENHEIT = "F";
     static final String WIND_KMH = "km/h";
@@ -47,11 +52,33 @@ final class WeatherPreferences {
     }
 
     boolean airQualityEnabled() {
-        return preferences.getBoolean("google_air_quality_enabled", false);
+        return preferences.getBoolean("google_air_quality_enabled", true);
     }
 
     boolean pollenEnabled() {
-        return preferences.getBoolean("google_pollen_enabled", false);
+        return preferences.getBoolean("google_pollen_enabled", true);
+    }
+
+    int tileTransparency() {
+        return Math.max(0, Math.min(100, preferences.getInt(
+                PREF_TILE_TRANSPARENCY, DEFAULT_TILE_TRANSPARENCY)));
+    }
+
+    String radarMapTheme() {
+        String value = preferences.getString(PREF_RADAR_MAP_THEME, MAP_AUTOMATIC);
+        return MAP_LIGHT.equals(value) || MAP_DARK.equals(value) ? value : MAP_AUTOMATIC;
+    }
+
+    static int surfaceColor(int color, int transparency) {
+        int base = color >>> 24;
+        int value = Math.max(0, Math.min(100, transparency));
+        // Preserve each scene's existing gradient at the default; both ends reach
+        // fully opaque at 0 and fully transparent at 100.
+        int alpha = value <= DEFAULT_TILE_TRANSPARENCY
+                ? Math.round(base + (255 - base)
+                        * (DEFAULT_TILE_TRANSPARENCY - value) / (float) DEFAULT_TILE_TRANSPARENCY)
+                : Math.round(base * (100 - value) / (float) (100 - DEFAULT_TILE_TRANSPARENCY));
+        return (color & 0x00ffffff) | (alpha << 24);
     }
 
     static String normalizeTemperatureUnit(String value) {

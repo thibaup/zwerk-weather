@@ -1,12 +1,13 @@
 package com.zwerk.weather;
 
 import android.content.Context;
-import android.content.pm.PackageInfo;
-import android.content.pm.PackageManager;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
+import android.graphics.Canvas;
+import android.graphics.Rect;
 import android.os.Handler;
 import android.os.Looper;
+import android.os.SystemClock;
 import android.util.AtomicFile;
 import android.util.LruCache;
 
@@ -21,9 +22,9 @@ import java.net.HttpURLConnection;
 import java.net.URL;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
-import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.Map;
 import java.util.Locale;
 import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.ExecutorService;
@@ -31,25 +32,23 @@ import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 
-/** On-demand RainViewer frames and viewport-only OpenStreetMap tiles. */
 final class RadarDataClient {
     private static final String TIMELINE_URL =
             "https://api.rainviewer.com/public/weather-maps.json";
     private static final String OSM_TILE_ROOT = "https://tile.openstreetmap.org/";
-    private static final String GOOGLE_TILE_ROOT = "https://weather.googleapis.com/v1/mapTypes/";
     private static final String USER_AGENT =
-            "ZwerkWeather/1.2.0 (+https://github.com/thibaup/zwerk-weather)";
+            "ZwerkWeather/1.5 (+https://github.com/thibaup/zwerk-weather)";
     private static final long TIMELINE_AGE_MS = 10L * 60L * 1000L;
     private static final long RADAR_TILE_AGE_MS = 3L * 60L * 60L * 1000L;
-    private static final long GOOGLE_TILE_AGE_MS = 10L * 60L * 1000L;
     // OSM requires at least seven days if HTTP cache headers are not interpreted.
     private static final long OSM_TILE_AGE_MS = 14L * 24L * 60L * 60L * 1000L;
     private static final int MAX_RADAR_REQUESTS_PER_MINUTE = 80;
+    private static final RadarRequestLimiter RADAR_LIMITER =
+            new RadarRequestLimiter(MAX_RADAR_REQUESTS_PER_MINUTE, 60_000L);
     private static final int MAX_IMAGE_BYTES = 1024 * 1024;
     private static final int CONNECT_TIMEOUT_MS = 6_000;
     private static final int READ_TIMEOUT_MS = 9_000;
     private static final long TRANSIENT_IMAGE_BACKOFF_MS = 3_000L;
-    private static final int IMAGE_WORKERS = 4;
     private static final int IMAGE_QUEUE_CAPACITY = 64;
     private static final int METADATA_QUEUE_CAPACITY = 2;
 
@@ -85,7 +84,7 @@ final class RadarDataClient {
     }
 
     private static final class PendingImageRequest {
-        final int generation;
+        int generation;
         final ArrayList<Runnable> callbacks = new ArrayList<>();
 
         PendingImageRequest(int generation) {
@@ -103,9 +102,10 @@ final class RadarDataClient {
     }
 
     private final Context context;
-    private final String androidCertificate;
-    private final ExecutorService imageIo =
-            newBoundedExecutor(IMAGE_WORKERS, IMAGE_QUEUE_CAPACITY);
+    private final TileRequestScheduler radarIo =
+            new TileRequestScheduler("RadarTiles", 2, IMAGE_QUEUE_CAPACITY);
+    private final TileRequestScheduler baseIo =
+            new TileRequestScheduler("MapTiles", 2, IMAGE_QUEUE_CAPACITY);
     private final ExecutorService metadataIo =
             newBoundedExecutor(1, METADATA_QUEUE_CAPACITY);
     private final Handler main = new Handler(Looper.getMainLooper());
@@ -115,10 +115,15 @@ final class RadarDataClient {
             return Math.max(1, bitmap.getByteCount() / 1024);
         }
     };
+    // Radar animation must not evict the map underneath it. Both caches are bounded.
+    private final LruCache<String, Bitmap> baseMemory = new LruCache<String, Bitmap>(24 * 1024) {
+        @Override protected int sizeOf(String key, Bitmap bitmap) {
+            return Math.max(1, bitmap.getByteCount() / 1024);
+        }
+    };
     private final HashMap<String, PendingImageRequest> pendingImages = new HashMap<>();
     private final HashMap<String, Long> failedImagesUntil = new HashMap<>();
     private final ArrayList<TimelineCallback> pendingTimelines = new ArrayList<>();
-    private final ArrayDeque<Long> radarRequestTimes = new ArrayDeque<>();
     private final File tileDirectory;
     private final File timelineFile;
     private Timeline timeline;
@@ -127,19 +132,16 @@ final class RadarDataClient {
     private volatile int viewportGeneration;
     private double locationLatitude = Double.NaN;
     private double locationLongitude = Double.NaN;
-    private String source = RadarProviderConfig.RAINVIEWER;
-    private String googleMapType = "";
-    private long googleCacheEpoch;
     private int sourceGeneration;
     private volatile String lastRadarError = "";
 
     RadarDataClient(Context context) {
         this.context = context.getApplicationContext();
-        androidCertificate = signingCertificateSha1(this.context);
+        this.context.getSharedPreferences("WEATHER_UI", Context.MODE_PRIVATE).edit().remove("radar_source").apply();
         tileDirectory = new File(this.context.getFilesDir(), "radar_tiles_v1");
         timelineFile = new File(this.context.getFilesDir(), "radar_timeline_v1.json");
         try {
-            imageIo.execute(this::cleanupTiles);
+            metadataIo.execute(this::cleanupTiles);
         } catch (RejectedExecutionException ignored) {
             // The cache cleanup is opportunistic; normal reads remain safe without it.
         }
@@ -161,59 +163,57 @@ final class RadarDataClient {
             this.active = active;
             if (!active) {
                 viewportGeneration++;
-                pendingImages.clear();
+                setTileDemand(new HashMap<>(), new HashMap<>());
             }
-        }
-    }
-
-    void setSource(String next) {
-        String normalized = RadarProviderConfig.GOOGLE.equals(next)
-                ? RadarProviderConfig.GOOGLE : RadarProviderConfig.RAINVIEWER;
-        synchronized (lock) {
-            if (source.equals(normalized)) return;
-            source = normalized;
-            sourceGeneration++;
-            viewportGeneration++;
-            timeline = null;
-            timelineLoading = false;
-            pendingImages.clear();
-            pendingTimelines.clear();
         }
     }
 
     void setLocation(double latitude, double longitude) {
-        String next = googleMapType(latitude, longitude);
         synchronized (lock) {
             boolean moved = Double.isNaN(locationLatitude)
                     || Math.abs(locationLatitude - latitude) > 0.00001d
                     || Math.abs(locationLongitude - longitude) > 0.00001d;
-            if (!moved && googleMapType.equals(next)) return;
+            if (!moved) return;
             locationLatitude = latitude;
             locationLongitude = longitude;
             if (moved) {
                 viewportGeneration++;
-                pendingImages.clear();
+                setTileDemand(new HashMap<>(), new HashMap<>());
             }
-            googleMapType = next;
-            if (RadarProviderConfig.GOOGLE.equals(source)) timeline = null;
-        }
-    }
-
-    void invalidateViewportRequests() {
-        synchronized (lock) {
-            viewportGeneration++;
-            pendingImages.clear();
         }
     }
 
     String lastRadarError() {
+        String wait = radarWaitMessage();
+        if (!wait.isEmpty()) return wait;
         return lastRadarError;
+    }
+
+    int viewportGeneration() { return viewportGeneration; }
+
+    long radarCooldownMillis() { return RADAR_LIMITER.delayMillis(SystemClock.elapsedRealtime()); }
+
+    String radarWaitMessage() {
+        long now = SystemClock.elapsedRealtime();
+        long delay = RADAR_LIMITER.delayMillis(now);
+        if (delay <= 0L) return "";
+        String message = RADAR_LIMITER.isServerLimited(now)
+                ? "Radar service rate limit · retrying in %d s"
+                : "Radar request limit · retrying in %d s";
+        return String.format(Locale.getDefault(), UiTranslations.text(context, message), (delay + 999L) / 1000L);
+    }
+
+    void setTileDemand(Map<String, Integer> base, Map<String, Integer> radar) {
+        synchronized (lock) {
+            for (String url : baseIo.setDemand(base)) pendingImages.remove(url);
+            for (String url : radarIo.setDemand(radar)) pendingImages.remove(url);
+            failedImagesUntil.keySet().removeIf(url -> !base.containsKey(url) && !radar.containsKey(url));
+        }
     }
 
     void retryFailedRadarTiles() {
         synchronized (lock) {
-            failedImagesUntil.keySet().removeIf(url -> url.contains("rainviewer.com")
-                    || url.startsWith(GOOGLE_TILE_ROOT));
+            failedImagesUntil.keySet().removeIf(url -> url.contains("rainviewer.com"));
             lastRadarError = "";
         }
     }
@@ -233,32 +233,15 @@ final class RadarDataClient {
             pendingImages.clear();
             pendingTimelines.clear();
             memory.evictAll();
+            baseMemory.evictAll();
         }
-        imageIo.shutdownNow();
+        baseIo.shutdownNow();
+        radarIo.shutdownNow();
         metadataIo.shutdownNow();
+        main.removeCallbacksAndMessages(null);
     }
 
     void loadTimeline(boolean force, TimelineCallback callback) {
-        if (RadarProviderConfig.GOOGLE.equals(source)) {
-            lastRadarError = "";
-            if (googleMapType.isEmpty()) {
-                callback.onTimeline(null,
-                        "Google precipitation maps currently cover supported US and European areas.");
-                return;
-            }
-            if (RadarProviderConfig.readGoogleKey(context).isEmpty()) {
-                callback.onTimeline(null, "Add your Google API key in Settings to use this radar.");
-                return;
-            }
-            if (force) googleCacheEpoch = System.currentTimeMillis();
-            ArrayList<Frame> frames = new ArrayList<>();
-            frames.add(new Frame(System.currentTimeMillis() / 1000L,
-                    "/" + googleMapType));
-            Timeline current = new Timeline("https://weather.googleapis.com",
-                    frames, System.currentTimeMillis());
-            callback.onTimeline(current, null);
-            return;
-        }
         final int generation;
         synchronized (lock) {
             if (!force && timeline != null && timeline.fresh()) {
@@ -280,7 +263,8 @@ final class RadarDataClient {
                     result = parseTimeline(raw, System.currentTimeMillis());
                     saveTimeline(raw, result.fetchedAtMillis);
                 } catch (Exception ignored) {
-                    error = "Radar frames could not be loaded. Tap retry to try again.";
+                    error = radarWaitMessage();
+                    if (error.isEmpty()) error = "Radar frames could not be loaded. Tap retry to try again.";
                     synchronized (lock) {
                         if (generation == sourceGeneration && timeline != null) {
                             result = timeline;
@@ -323,42 +307,30 @@ final class RadarDataClient {
 
     Bitmap baseTile(int zoom, int tileX, int tileY, Runnable onReady,
             boolean allowLoad) {
+        String url = baseTileUrl(zoom, tileX, tileY);
+        return url == null ? null : image(url, OSM_TILE_AGE_MS, false, onReady, allowLoad);
+    }
+
+    static String baseTileUrl(int zoom, int tileX, int tileY) {
         int count = 1 << zoom;
         if (tileY < 0 || tileY >= count) return null;
         int wrappedX = ((tileX % count) + count) % count;
-        String url = OSM_TILE_ROOT + zoom + "/" + wrappedX + "/" + tileY + ".png";
-        return image(url, OSM_TILE_AGE_MS, false, onReady, allowLoad);
+        return OSM_TILE_ROOT + zoom + "/" + wrappedX + "/" + tileY + ".png";
     }
 
     Bitmap radarTile(Timeline timeline, Frame frame, int zoom,
             int tileX, int tileY, Runnable onReady, boolean allowLoad) {
+        String url = radarTileUrl(timeline, frame, zoom, tileX, tileY);
+        return url == null ? null : image(url, RADAR_TILE_AGE_MS, true, onReady, allowLoad);
+    }
+
+    static String radarTileUrl(Timeline timeline, Frame frame, int zoom, int tileX, int tileY) {
         if (timeline == null || frame == null) return null;
         int count = 1 << zoom;
         if (tileY < 0 || tileY >= count) return null;
         int wrappedX = ((tileX % count) + count) % count;
-        if ("https://weather.googleapis.com".equals(timeline.host)) {
-            if (OpenMeteoConfig.isOpenMeteo(context)) return null;
-            String key = RadarProviderConfig.readGoogleKey(context);
-            if (!key.matches("[A-Za-z0-9_-]+")) return null;
-            String url = GOOGLE_TILE_ROOT + frame.path.substring(1)
-                    + "/mapTiles/" + zoom + "/" + wrappedX + "/" + tileY
-                    + "?key=" + key
-                    + "#" + googleCacheEpoch;
-            return image(url, GOOGLE_TILE_AGE_MS, true, onReady, allowLoad);
-        }
-        String url = timeline.host + frame.path + "/256/" + zoom + "/"
+        return timeline.host + frame.path + "/512/" + zoom + "/"
                 + wrappedX + "/" + tileY + "/2/1_1.png";
-        return image(url, RADAR_TILE_AGE_MS, true, onReady, allowLoad);
-    }
-
-    private static String googleMapType(double lat, double lon) {
-        if (lat >= 34d && lat <= 72d && lon >= -12d && lon <= 40d) {
-            return "EU_PRECIPITATION_CURRENT";
-        }
-        if (lat >= 15d && lat <= 72d && lon >= -170d && lon <= -50d) {
-            return "US_PRECIPITATION_CURRENT";
-        }
-        return "";
     }
 
     private Bitmap image(String url, long maxAge, boolean radar, Runnable onReady) {
@@ -370,9 +342,9 @@ final class RadarDataClient {
         final int requestGeneration;
         final PendingImageRequest request;
         synchronized (lock) {
-            Bitmap cached = memory.get(url);
+            Bitmap cached = (radar ? memory : baseMemory).get(url);
             if (cached != null && !cached.isRecycled()) return cached;
-            if (!active || !allowLoad) return null;
+            if (!active || !allowLoad || !(radar ? radarIo : baseIo).isNeeded(url)) return null;
 
             long now = System.currentTimeMillis();
             Long blockedUntil = failedImagesUntil.get(url);
@@ -383,8 +355,12 @@ final class RadarDataClient {
 
             requestGeneration = viewportGeneration;
             PendingImageRequest pending = pendingImages.get(url);
-            if (pending != null && pending.generation == requestGeneration) {
-                if (onReady != null && pending.callbacks.size() < 4) {
+            if (pending != null) {
+                if (pending.generation != requestGeneration) {
+                    pending.generation = requestGeneration;
+                    pending.callbacks.clear();
+                }
+                if (onReady != null && pending.callbacks.size() < 4 && !pending.callbacks.contains(onReady)) {
                     pending.callbacks.add(onReady);
                 }
                 return null;
@@ -400,11 +376,18 @@ final class RadarDataClient {
             long retryDelayMillis = TRANSIENT_IMAGE_BACKOFF_MS;
             boolean failed = false;
             try {
-                if (active && requestGeneration == viewportGeneration) {
+                if (active && (radar ? radarIo : baseIo).isNeeded(url)) {
                     File file = imageFile(url, radar);
                     byte[] bytes = readFreshImage(file, maxAge);
-                    if (bytes == null && active
-                            && requestGeneration == viewportGeneration) {
+                    if (bytes == null && radar) {
+                        bitmap = readLegacyRadarTile(url, maxAge);
+                        if (bitmap != null) {
+                            ByteArrayOutputStream encoded = new ByteArrayOutputStream();
+                            if (bitmap.compress(Bitmap.CompressFormat.PNG, 100, encoded))
+                                saveImage(file, encoded.toByteArray());
+                        }
+                    }
+                    if (bytes == null && bitmap == null && active && (radar ? radarIo : baseIo).isNeeded(url)) {
                         try {
                             bytes = fetch(url, MAX_IMAGE_BYTES, radar);
                             saveImage(file, bytes);
@@ -426,18 +409,14 @@ final class RadarDataClient {
                             file.delete();
                         }
                     }
+                    if (bitmap != null) bitmap.prepareToDraw();
                 }
-            } catch (Exception ignored) {
+            } catch (Exception | OutOfMemoryError ignored) {
                 failed = true;
             }
 
-            if (failed && radar && active && requestGeneration == viewportGeneration) {
-                if (url.startsWith(GOOGLE_TILE_ROOT)) {
-                    if (lastRadarError.isEmpty()) {
-                        lastRadarError =
-                                "Google radar could not load. Check your connection and key.";
-                    }
-                } else if (lastRadarError.isEmpty()) {
+            if (failed && radar && active && radarCooldownMillis() == 0L) {
+                if (lastRadarError.isEmpty()) {
                     lastRadarError = "Radar tiles could not load. Tap retry to try again.";
                 }
             }
@@ -445,9 +424,7 @@ final class RadarDataClient {
                     url, radar, request, bitmap, failed, retryDelayMillis);
         };
 
-        try {
-            imageIo.execute(load);
-        } catch (RejectedExecutionException ignored) {
+        if (!(radar ? radarIo : baseIo).submit(url, load)) {
             completeImageRequest(
                     url, radar, request, null, true, TRANSIENT_IMAGE_BACKOFF_MS);
         }
@@ -469,10 +446,15 @@ final class RadarDataClient {
             boolean currentGeneration = request.generation == viewportGeneration;
             if (ownsPendingEntry) pendingImages.remove(url);
 
+            // Tiles are keyed by their complete URL, so a successful old viewport
+            // request remains useful after a pan. Only its callbacks are stale.
+            if (active && loaded != null && !loaded.isRecycled()) {
+                (radar ? memory : baseMemory).put(url, loaded);
+            }
+
             if (!active || !ownsPendingEntry || !currentGeneration) return;
 
             if (loaded != null && !loaded.isRecycled()) {
-                memory.put(url, loaded);
                 failedImagesUntil.remove(url);
                 if (radar) lastRadarError = "";
             } else if (failed) {
@@ -556,8 +538,7 @@ final class RadarDataClient {
     private File imageFile(String url, boolean radar) throws Exception {
         MessageDigest digest = MessageDigest.getInstance("SHA-256");
         byte[] hash = digest.digest(url.getBytes(StandardCharsets.UTF_8));
-        StringBuilder name = new StringBuilder(url.startsWith(GOOGLE_TILE_ROOT)
-                ? "google_" : radar ? "radar_" : "osm_");
+        StringBuilder name = new StringBuilder(radar ? "radar_" : "osm_");
         for (byte value : hash) name.append(String.format(Locale.US, "%02x", value & 0xff));
         return new File(tileDirectory, name + ".png");
     }
@@ -567,6 +548,45 @@ final class RadarDataClient {
         long age = System.currentTimeMillis() - file.lastModified();
         if (age < 0L || age >= maxAge) return null;
         return readCachedImage(file);
+    }
+
+    /** Four cached 256px children contain exactly the pixels needed for their 512px parent. */
+    private Bitmap readLegacyRadarTile(String url, long maxAge) {
+        int split = url.lastIndexOf("/512/");
+        if (split < 0) return null;
+        Bitmap[] children = new Bitmap[4];
+        Bitmap combined = null;
+        boolean complete = false;
+        try {
+            String[] coordinates = url.substring(split + 5).split("/", 4);
+            int zoom = Integer.parseInt(coordinates[0]);
+            int x = Integer.parseInt(coordinates[1]);
+            int y = Integer.parseInt(coordinates[2]);
+            if (zoom >= 7) return null;
+            String root = url.substring(0, split) + "/256/" + (zoom + 1) + "/";
+            for (int i = 0; i < 4; i++) {
+                String childUrl = root + (x * 2 + i % 2) + "/" + (y * 2 + i / 2)
+                        + "/" + coordinates[3];
+                byte[] bytes = readFreshImage(imageFile(childUrl, true), maxAge);
+                if (bytes == null) return null;
+                children[i] = BitmapFactory.decodeByteArray(bytes, 0, bytes.length);
+                if (children[i] == null) return null;
+            }
+            combined = Bitmap.createBitmap(512, 512, Bitmap.Config.ARGB_8888);
+            Canvas canvas = new Canvas(combined);
+            for (int i = 0; i < 4; i++) {
+                int left = i % 2 * 256;
+                int top = i / 2 * 256;
+                canvas.drawBitmap(children[i], null, new Rect(left, top, left + 256, top + 256), null);
+            }
+            complete = true;
+            return combined;
+        } catch (Exception | OutOfMemoryError ignored) {
+            return null;
+        } finally {
+            for (Bitmap child : children) if (child != null) child.recycle();
+            if (!complete && combined != null) combined.recycle();
+        }
     }
 
     private byte[] readCachedImage(File file) {
@@ -598,51 +618,33 @@ final class RadarDataClient {
         long now = System.currentTimeMillis();
         for (File file : files) {
             if (!file.isFile()) continue;
+            if (file.getName().startsWith("google_")) { file.delete(); continue; }
             long maxAge = file.getName().startsWith("osm_")
-                    ? OSM_TILE_AGE_MS : file.getName().startsWith("google_")
-                    ? GOOGLE_TILE_AGE_MS : RADAR_TILE_AGE_MS;
+                    ? OSM_TILE_AGE_MS : RADAR_TILE_AGE_MS;
             long age = now - file.lastModified();
             if (age < 0L || age >= maxAge) file.delete();
         }
     }
 
     private byte[] fetch(String urlText, int maxBytes, boolean radar) throws Exception {
-        boolean google = urlText.startsWith(GOOGLE_TILE_ROOT);
-        if (google && OpenMeteoConfig.isOpenMeteo(context)) {
-            throw new IllegalStateException("Google radar is disabled for Open-Meteo");
-        }
-        if (radar && !google && !TIMELINE_URL.equals(urlText)) acquireRadarSlot();
+        if (radar) acquireRadarSlot();
         if (!active) throw new IllegalStateException("Radar page closed");
         HttpURLConnection connection = (HttpURLConnection) new URL(urlText).openConnection();
         connection.setConnectTimeout(CONNECT_TIMEOUT_MS);
         connection.setReadTimeout(READ_TIMEOUT_MS);
         connection.setRequestProperty("User-Agent", USER_AGENT);
-        if (google && !androidCertificate.isEmpty()) {
-            connection.setRequestProperty("X-Android-Package", context.getPackageName());
-            connection.setRequestProperty("X-Android-Cert", androidCertificate.replace(":", ""));
-        }
         connection.setRequestProperty("Accept", radar && urlText.endsWith(".json")
                 ? "application/json" : "image/png");
         try {
-            if (google) {
-                ApiRequestBudgetManager.Decision budget = ApiRequestBudgetManager.tryAcquire(
-                        context, ApiRequestBudgetManager.Category.WEATHER);
-                if (!budget.allowed) {
-                    lastRadarError = "Weather API request cap reached. Check API limits.";
-                    throw new IllegalStateException("Weather API request cap reached");
-                }
-            } else {
-                RadarUsageCounter.record(context, radar);
-            }
+            RadarUsageCounter.record(context, radar);
             int responseCode = connection.getResponseCode();
+            if (radar && responseCode == 429) {
+                long delay = RadarRequestLimiter.retryAfterMillis(
+                        connection.getHeaderField("Retry-After"), System.currentTimeMillis());
+                RADAR_LIMITER.serverLimited(SystemClock.elapsedRealtime(), delay);
+                throw new RadarRateLimitException(delay);
+            }
             if (responseCode != 200) {
-                if (google) {
-                    lastRadarError = responseCode == 401 || responseCode == 403
-                            ? "Google radar access was denied. Check the Weather API, key restrictions, and billing."
-                            : responseCode == 404
-                            ? "Google precipitation tiles are unavailable for this area."
-                            : "Google radar returned HTTP " + responseCode + ". Tap refresh to retry.";
-                }
                 throw new IllegalStateException("Radar/map HTTP " + responseCode);
             }
             try (InputStream input = connection.getInputStream();
@@ -661,40 +663,8 @@ final class RadarDataClient {
     }
 
     private void acquireRadarSlot() throws RadarRateLimitException {
-        synchronized (radarRequestTimes) {
-            long now = System.currentTimeMillis();
-            while (!radarRequestTimes.isEmpty()
-                    && now - radarRequestTimes.peekFirst() >= 60_000L) {
-                radarRequestTimes.removeFirst();
-            }
-            if (radarRequestTimes.size() < MAX_RADAR_REQUESTS_PER_MINUTE) {
-                radarRequestTimes.addLast(now);
-                return;
-            }
-            long retryAfter = Math.max(
-                    500L,
-                    60_000L - (now - radarRequestTimes.peekFirst()));
-            throw new RadarRateLimitException(retryAfter);
-        }
+        long delay = RADAR_LIMITER.acquire(SystemClock.elapsedRealtime());
+        if (delay > 0L) throw new RadarRateLimitException(delay);
     }
 
-    private static String signingCertificateSha1(Context context) {
-        try {
-            PackageInfo info = context.getPackageManager().getPackageInfo(
-                    context.getPackageName(), PackageManager.GET_SIGNING_CERTIFICATES);
-            if (info.signingInfo == null) return "";
-            android.content.pm.Signature[] signatures = info.signingInfo.getApkContentsSigners();
-            if (signatures == null || signatures.length == 0) return "";
-            byte[] digest = MessageDigest.getInstance("SHA-1")
-                    .digest(signatures[0].toByteArray());
-            StringBuilder value = new StringBuilder();
-            for (byte part : digest) {
-                if (value.length() > 0) value.append(':');
-                value.append(String.format(Locale.US, "%02X", part & 0xff));
-            }
-            return value.toString();
-        } catch (Exception ignored) {
-            return "";
-        }
-    }
 }

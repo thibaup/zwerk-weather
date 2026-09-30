@@ -7,7 +7,6 @@ import java.time.LocalDate;
 import java.time.ZoneOffset;
 import java.time.format.DateTimeFormatter;
 
-/** Local, informational counters for the free radar and map tile providers. */
 final class RadarUsageCounter {
     private static final String PREFS = "radar_request_usage_v1";
     private static final DateTimeFormatter DAY = DateTimeFormatter.BASIC_ISO_DATE;

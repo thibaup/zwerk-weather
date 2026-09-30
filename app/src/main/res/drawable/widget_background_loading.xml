@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Neutral initial surface at the default 15% transparency. The provider
+     replaces this drawable with the user's chosen appearance. -->
+<shape xmlns:android="http://schemas.android.com/apk/res/android" android:shape="rectangle">
+    <gradient android:angle="270" android:startColor="#D91A5CA5" android:endColor="#D9284068" />
+    <corners android:radius="26dp" />
+</shape>

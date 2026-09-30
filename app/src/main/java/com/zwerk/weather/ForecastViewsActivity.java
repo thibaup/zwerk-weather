@@ -1,12 +1,6 @@
 package com.zwerk.weather;
 
-import android.animation.ValueAnimator;
-import android.app.Activity;
-import android.app.Dialog;
 import android.content.Context;
-import android.content.Intent;
-import android.content.pm.ApplicationInfo;
-import android.content.pm.PackageManager;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
 import android.graphics.Canvas;
@@ -19,72 +13,23 @@ import android.graphics.Rect;
 import android.graphics.RectF;
 import android.graphics.Shader;
 import android.graphics.Typeface;
-import android.graphics.drawable.ColorDrawable;
-import android.graphics.drawable.GradientDrawable;
 import android.graphics.drawable.StateListDrawable;
-import android.location.Address;
-import android.location.Geocoder;
-import android.location.Location;
-import android.net.Uri;
 import android.os.Build;
-import android.os.Bundle;
 import android.os.SystemClock;
-import android.util.Log;
-import android.text.InputType;
-import android.text.method.PasswordTransformationMethod;
-import android.view.Gravity;
 import android.view.KeyEvent;
 import android.view.MotionEvent;
 import android.view.ViewConfiguration;
 import android.view.View;
-import android.view.ViewGroup;
-import android.view.Window;
-import android.view.WindowInsets;
-import android.view.WindowInsetsController;
-import android.view.WindowManager;
-import android.view.accessibility.AccessibilityNodeInfo;
-import android.widget.Button;
-import android.widget.EditText;
-import android.widget.FrameLayout;
-import android.widget.HorizontalScrollView;
-import android.widget.LinearLayout;
-import android.widget.ProgressBar;
-import android.widget.ScrollView;
-import android.widget.TextView;
-import android.widget.Toast;
-
-import android.system.Os;
 
 import org.json.JSONArray;
 import org.json.JSONObject;
 
-import java.io.BufferedReader;
-import java.io.ByteArrayOutputStream;
-import java.io.File;
-import java.io.FileReader;
-import java.io.FileOutputStream;
-import java.io.InputStream;
 import java.lang.ref.WeakReference;
-import java.io.IOException;
-import java.net.HttpURLConnection;
-import java.net.SocketTimeoutException;
-import java.net.URL;
-import java.net.URLEncoder;
-import java.nio.charset.StandardCharsets;
-import java.security.MessageDigest;
 import java.time.Duration;
 import java.time.Instant;
-import java.time.LocalDate;
 import java.time.ZoneId;
-import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
-import java.util.HashSet;
-import java.util.List;
 import java.util.Locale;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.ThreadLocalRandom;
-import java.util.concurrent.Executors;
-
 
 abstract class ForecastViewsActivity extends WeatherInteractionViewsActivity {
     final ArrayList<SunTrackView> sunTrackViews = new ArrayList<>();
@@ -112,6 +57,7 @@ abstract class ForecastViewsActivity extends WeatherInteractionViewsActivity {
         private JSONObject previewWeather;
         private final ArrayList<PreviewBinding> bindings = new ArrayList<>();
         private final ArrayList<WeakReference<ForecastChartView>> charts = new ArrayList<>();
+        private final ArrayList<WeakReference<HourlyDayChartView>> hourlyCharts = new ArrayList<>();
 
         void setCurrentScene(SceneSpec scene) {
             currentScene = scene == null ? new SceneSpec("day", "none", true, "Clear") : scene;
@@ -123,11 +69,16 @@ abstract class ForecastViewsActivity extends WeatherInteractionViewsActivity {
             previewWeather = null;
             bindings.clear();
             charts.clear();
+            hourlyCharts.clear();
             updatePreviewSubtitle();
         }
 
         SceneSpec currentScene() {
             return currentScene;
+        }
+
+        SceneSpec activeScene() {
+            return isPreviewing() ? previewScene : currentScene;
         }
 
         boolean isPreviewing() {
@@ -167,11 +118,14 @@ abstract class ForecastViewsActivity extends WeatherInteractionViewsActivity {
             previewUvIndex = uvIndex;
             previewUvDaily = dailyUv;
             previewWeather = weather;
-            if (skyLayout != null) skyLayout.setScene(scene);
-            if (headerGlass != null) headerGlass.setScene(scene, animationsAllowed());
             updatePreviewSubtitle();
             refreshSelectionVisuals();
             onForecastPreviewChanged();
+            if (skyLayout != null) skyLayout.setScene(scene);
+            if (headerGlass != null) headerGlass.setScene(scene, animationsAllowed());
+            if (bottomGlass != null) bottomGlass.setScene(scene, animationsAllowed());
+            if (headerGlass != null) headerGlass.requestBlurRefresh();
+            if (bottomGlass != null) bottomGlass.requestBlurRefresh();
             announcePreview(previewLabel + ", " + scene.condition + ". Previewing forecast. Tap again or the location to return to now.");
             return true;
         }
@@ -184,11 +138,14 @@ abstract class ForecastViewsActivity extends WeatherInteractionViewsActivity {
             previewUvIndex = -1;
             previewUvDaily = false;
             previewWeather = null;
-            if (skyLayout != null) skyLayout.setScene(currentScene);
-            if (headerGlass != null) headerGlass.setScene(currentScene, animationsAllowed());
             updatePreviewSubtitle();
             refreshSelectionVisuals();
             onForecastPreviewChanged();
+            if (skyLayout != null) skyLayout.setScene(currentScene);
+            if (headerGlass != null) headerGlass.setScene(currentScene, animationsAllowed());
+            if (bottomGlass != null) bottomGlass.setScene(currentScene, animationsAllowed());
+            if (headerGlass != null) headerGlass.requestBlurRefresh();
+            if (bottomGlass != null) bottomGlass.requestBlurRefresh();
             if (announce && hadPreview) announcePreview("Back to current weather");
         }
 
@@ -204,9 +161,31 @@ abstract class ForecastViewsActivity extends WeatherInteractionViewsActivity {
             chart.syncPreviewFromController();
         }
 
+        void registerHourlyChart(HourlyDayChartView chart) {
+            hourlyCharts.add(new WeakReference<>(chart));
+            chart.syncPreview(selectionKey);
+        }
+
+        void removeViewBindings(View page) {
+            bindings.removeIf(binding -> belongsToPage(binding.view.get(), page));
+            charts.removeIf(binding -> belongsToPage(binding.get(), page));
+            hourlyCharts.removeIf(binding -> belongsToPage(binding.get(), page));
+        }
+
+        private boolean belongsToPage(View view, View page) {
+            if (view == null) return true;
+            for (View current = view; current != null;) {
+                if (current == page) return true;
+                android.view.ViewParent parent = current.getParent();
+                current = parent instanceof View ? (View) parent : null;
+            }
+            return false;
+        }
+
         void clearViewBindings() {
             bindings.clear();
             charts.clear();
+            hourlyCharts.clear();
         }
 
         void dispose() {
@@ -218,6 +197,7 @@ abstract class ForecastViewsActivity extends WeatherInteractionViewsActivity {
             previewWeather = null;
             bindings.clear();
             charts.clear();
+            hourlyCharts.clear();
         }
 
         private void refreshSelectionVisuals() {
@@ -238,6 +218,11 @@ abstract class ForecastViewsActivity extends WeatherInteractionViewsActivity {
                 }
                 chart.syncPreviewFromController();
             }
+            for (int i = hourlyCharts.size() - 1; i >= 0; i--) {
+                HourlyDayChartView chart = hourlyCharts.get(i).get();
+                if (chart == null) hourlyCharts.remove(i);
+                else chart.syncPreview(selectionKey);
+            }
         }
     }
 
@@ -252,12 +237,12 @@ abstract class ForecastViewsActivity extends WeatherInteractionViewsActivity {
             previewSubtitle.setText(text);
             previewSubtitle.setVisibility(View.VISIBLE);
             locationArea.setContentDescription(
-                    locationName + ". " + text
+                    forecastLocationName() + ". " + text
                             + ". Tap to restore current weather. Swipe left or right to switch saved locations.");
         } else {
             previewSubtitle.setText("");
             previewSubtitle.setVisibility(View.GONE);
-            locationArea.setContentDescription(locationName
+            locationArea.setContentDescription(forecastLocationName()
                     + ". Current forecast location. Swipe left or right to switch saved locations.");
         }
     }
@@ -288,7 +273,6 @@ abstract class ForecastViewsActivity extends WeatherInteractionViewsActivity {
         }
     }
 
-
     SceneSpec sceneForForecastDay(JSONObject day, int index) {
         if (day == null) return forecastPreview.currentScene();
         boolean currentDaytime = safeBoolean(lastCurrentWeather, "isDaytime", true);
@@ -313,8 +297,6 @@ abstract class ForecastViewsActivity extends WeatherInteractionViewsActivity {
                 : SceneSpec.fromWeather(selected, fallbackDaytime);
     }
 
-
-
     final class ForecastChartView extends View {
         private final JSONArray days;
         private final ZoneId zone;
@@ -325,11 +307,13 @@ abstract class ForecastViewsActivity extends WeatherInteractionViewsActivity {
         private final Paint textPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
         private final Paint linePaint = new Paint(Paint.ANTI_ALIAS_FLAG);
         private final Paint dotPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
+        private final Paint disclosurePaint = new Paint(Paint.ANTI_ALIAS_FLAG);
         private float downX;
         private float downY;
         private boolean moved;
         private int cursorDay;
         private int previewDay = -1;
+        private int expandedDay = -1;
 
         ForecastChartView(
                 Context context,
@@ -355,7 +339,7 @@ abstract class ForecastViewsActivity extends WeatherInteractionViewsActivity {
 
         @Override
         protected void onMeasure(int widthMeasureSpec, int heightMeasureSpec) {
-            // Keep the v4/API-36 fix: HorizontalScrollView may offer an UNSPECIFIED axis.
+            // HorizontalScrollView may measure this axis as UNSPECIFIED.
             int measuredWidth = measuredDimension(desiredWidth, widthMeasureSpec);
             int measuredHeight = measuredDimension(desiredHeight, heightMeasureSpec);
             setMeasuredDimension(measuredWidth, measuredHeight);
@@ -422,6 +406,12 @@ abstract class ForecastViewsActivity extends WeatherInteractionViewsActivity {
             if (Build.VERSION.SDK_INT >= 30) {
                 setStateDescription(previewDay >= 0 ? "Previewing" : null);
             }
+            invalidate();
+        }
+
+        void setExpandedDay(int index) {
+            if (expandedDay == index) return;
+            expandedDay = index;
             invalidate();
         }
 
@@ -519,7 +509,7 @@ abstract class ForecastViewsActivity extends WeatherInteractionViewsActivity {
             if (lowMin == lowMax) lowMax = lowMin + 1;
 
             float dayY = dp(22);
-            float dateY = dp(42);
+            float dateY = dp(46);
             float iconY = dp(82);
             float highTop = dp(126);
             float highBottom = dp(174);
@@ -546,7 +536,23 @@ abstract class ForecastViewsActivity extends WeatherInteractionViewsActivity {
                 textPaint.setTypeface(Typeface.create("sans-serif", Typeface.NORMAL));
                 textPaint.setColor(SOFT_WHITE);
                 textPaint.setTextSize(dp(10));
-                canvas.drawText(dayDateLabel(day, zone), x, dateY, textPaint);
+                String date = dayDateLabel(day, zone);
+                float dateWidth = textPaint.measureText(date);
+                float dateLeft = x - (dateWidth + dp(16)) / 2f;
+                boolean expanded = i == expandedDay;
+                disclosurePaint.setStyle(Paint.Style.FILL);
+                disclosurePaint.setColor(Color.argb(expanded ? 34 : 20, 255, 255, 255));
+                canvas.drawRoundRect(dateLeft - dp(9), dp(29),
+                        dateLeft + dateWidth + dp(25), dp(55), dp(13), dp(13), disclosurePaint);
+                disclosurePaint.setStyle(Paint.Style.STROKE);
+                disclosurePaint.setStrokeWidth(dp(.7f));
+                disclosurePaint.setColor(Color.argb(expanded ? 90 : 48, 255, 255, 255));
+                canvas.drawRoundRect(dateLeft - dp(9), dp(29),
+                        dateLeft + dateWidth + dp(25), dp(55), dp(13), dp(13), disclosurePaint);
+                textPaint.setTextAlign(Paint.Align.LEFT);
+                canvas.drawText(date, dateLeft, dateY, textPaint);
+                ForecastDisclosureView.drawChevron(canvas, dateLeft + dateWidth + dp(11), dp(42),
+                        expanded, getResources().getDisplayMetrics().density, disclosurePaint);
 
                 JSONObject daytime = day == null ? null : day.optJSONObject("daytimeForecast");
                 drawWeatherGlyph(canvas, SceneSpec.glyphCondition(daytime),
@@ -584,7 +590,7 @@ abstract class ForecastViewsActivity extends WeatherInteractionViewsActivity {
                 }
             }
 
-            // Compact precipitation band: actual daily probability values only, no synthesized data.
+            // Missing probability stays unavailable.
             textPaint.setTypeface(Typeface.create("sans-serif-medium", Typeface.NORMAL));
             textPaint.setTextSize(dp(10));
             textPaint.setColor(ACCENT_BLUE);
@@ -810,8 +816,6 @@ abstract class ForecastViewsActivity extends WeatherInteractionViewsActivity {
             if (animationRunning) postInvalidateDelayed(50L);
         }
     }
-
-
 
     int dp(float value) {
         return Math.round(value * getResources().getDisplayMetrics().density);

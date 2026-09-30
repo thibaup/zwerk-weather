@@ -22,6 +22,8 @@ final class GlassDrawable extends Drawable {
     private int bottomColor;
     private int edgeColor;
     private int alpha = 255;
+    private int fillOpacityBoost;
+    private int transparency = WeatherPreferences.DEFAULT_TILE_TRANSPARENCY;
 
     GlassDrawable(float radius, float strokeWidth, boolean tile) {
         this.radius = radius;
@@ -34,6 +36,22 @@ final class GlassDrawable extends Drawable {
 
     boolean isTile() {
         return tile;
+    }
+
+    void setTransparency(int value) {
+        int next = Math.max(0, Math.min(100, value));
+        if (transparency == next) return;
+        transparency = next;
+        rebuildShader();
+        invalidateSelf();
+    }
+
+    void setFillOpacityBoost(int amount) {
+        int next = Math.max(0, Math.min(255, amount));
+        if (fillOpacityBoost == next) return;
+        fillOpacityBoost = next;
+        rebuildShader();
+        invalidateSelf();
     }
 
     void setColors(int topColor, int bottomColor, int edgeColor) {
@@ -65,11 +83,18 @@ final class GlassDrawable extends Drawable {
                 bounds.top,
                 bounds.left,
                 bounds.bottom,
-                new int[]{multiplyAlpha(topColor, alpha), multiplyAlpha(bottomColor, alpha)},
+                new int[]{surfaceColor(topColor), surfaceColor(bottomColor)},
                 null,
                 Shader.TileMode.CLAMP));
         edgePaint.setShader(null);
-        edgePaint.setColor(multiplyAlpha(edgeColor, alpha));
+        int edgeAlpha = Math.round(alpha * Math.min(1f,
+                (100 - transparency) / (float) (100 - WeatherPreferences.DEFAULT_TILE_TRANSPARENCY)));
+        edgePaint.setColor(multiplyAlpha(edgeColor, edgeAlpha, 0));
+    }
+
+    private int surfaceColor(int color) {
+        int boosted = multiplyAlpha(color, 255, fillOpacityBoost);
+        return multiplyAlpha(WeatherPreferences.surfaceColor(boosted, transparency), alpha, 0);
     }
 
     @Override
@@ -102,8 +127,8 @@ final class GlassDrawable extends Drawable {
         return PixelFormat.TRANSLUCENT;
     }
 
-    private static int multiplyAlpha(int color, int drawableAlpha) {
-        int base = Color.alpha(color);
+    private static int multiplyAlpha(int color, int drawableAlpha, int opacityBoost) {
+        int base = Math.min(255, Color.alpha(color) + opacityBoost);
         int out = (base * drawableAlpha + 127) / 255;
         return Color.argb(out, Color.red(color), Color.green(color), Color.blue(color));
     }

@@ -4,98 +4,46 @@ import android.animation.ValueAnimator;
 import android.app.Activity;
 import android.app.Dialog;
 import android.content.Context;
-import android.content.Intent;
-import android.content.pm.ApplicationInfo;
-import android.content.pm.PackageManager;
-import android.graphics.Bitmap;
-import android.graphics.BitmapFactory;
 import android.graphics.Canvas;
 import android.graphics.Color;
 import android.graphics.LinearGradient;
 import android.graphics.Paint;
 import android.graphics.Path;
-import android.graphics.RadialGradient;
-import android.graphics.Rect;
 import android.graphics.RectF;
 import android.graphics.Shader;
-import android.graphics.Typeface;
-import android.graphics.drawable.ColorDrawable;
 import android.graphics.drawable.GradientDrawable;
-import android.graphics.drawable.StateListDrawable;
-import android.location.Address;
-import android.location.Geocoder;
-import android.location.Location;
-import android.net.Uri;
-import android.os.Build;
-import android.os.Bundle;
-import android.os.SystemClock;
-import android.util.Log;
-import android.text.InputType;
-import android.text.method.PasswordTransformationMethod;
-import android.view.Gravity;
-import android.view.KeyEvent;
-import android.view.MotionEvent;
-import android.view.ViewConfiguration;
 import android.view.View;
-import android.view.ViewGroup;
-import android.view.Window;
-import android.view.WindowInsets;
-import android.view.WindowInsetsController;
-import android.view.WindowManager;
-import android.view.accessibility.AccessibilityNodeInfo;
 import android.widget.Button;
-import android.widget.EditText;
 import android.widget.FrameLayout;
-import android.widget.HorizontalScrollView;
 import android.widget.LinearLayout;
 import android.widget.ProgressBar;
-import android.widget.ScrollView;
 import android.widget.TextView;
-import android.widget.Toast;
-
-import android.system.Os;
 
 import org.json.JSONArray;
 import org.json.JSONObject;
 
-import java.io.BufferedReader;
-import java.io.ByteArrayOutputStream;
-import java.io.File;
-import java.io.FileReader;
-import java.io.FileOutputStream;
-import java.io.InputStream;
 import java.lang.ref.WeakReference;
-import java.io.IOException;
-import java.net.HttpURLConnection;
-import java.net.SocketTimeoutException;
-import java.net.URL;
-import java.net.URLEncoder;
-import java.nio.charset.StandardCharsets;
-import java.security.MessageDigest;
 import java.time.Duration;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
-import java.util.HashSet;
-import java.util.List;
 import java.util.Locale;
 import java.util.concurrent.ExecutorService;
-import java.util.concurrent.ThreadLocalRandom;
 import java.util.concurrent.Executors;
-
 
 abstract class WeatherActivityFoundation extends Activity {
     abstract void addHero(JSONObject current, JSONObject today);
     abstract void addWeatherAlertsCard();
     abstract void addHourlyCard(JSONObject hourly, ZoneId zone);
     abstract void addMultiDayCard(JSONArray days, JSONObject hourly, ZoneId zone);
+    abstract void renderDailyContent();
     abstract void addDetailTiles(JSONObject current);
     abstract void addSunCard(JSONArray days, JSONObject current, ZoneId zone);
     abstract void addMoonCard(JSONObject today, ZoneId zone);
     abstract void updateDailyModeButton(TextView button, boolean selected, String label);
-    abstract View card(View child, int radiusPx, int color);
+    abstract View card(View child, int radiusPx);
     abstract GradientDrawable roundedBg(int color, int radiusPx);
     abstract void persistWidgetSnapshot(
             JSONObject current,
@@ -107,7 +55,7 @@ abstract class WeatherActivityFoundation extends Activity {
     static final int CITY_MANAGER_REQUEST = 41;
     static final int SETTINGS_REQUEST = 42;
     static final String UI_PREFS = "WEATHER_UI";
-    static final String PREF_DAILY_MODE = "daily_mode";
+    static final String PREF_DAILY_MODE = "forecast_page_mode";
     static final String PREF_ANIMATIONS = "weather_animations";
     static final String PREF_TEMPERATURE_UNIT = "temperature_unit";
     static final String PREF_WIND_UNIT = "wind_unit";
@@ -151,10 +99,6 @@ abstract class WeatherActivityFoundation extends Activity {
             "https://developers.google.com/maps/documentation/pollen/get-api-key";
     static final String API_KEY_FILE = "weather_api_key";
     static final String API_KEY_TEMP_FILE = "weather_api_key.tmp";
-    static final String WEATHER_CACHE_V1_PREFIX = "weather_forecast_cache_v1_";
-    static final String WEATHER_CACHE_FILE_PREFIX = "weather_forecast_cache_v2_";
-    static final String WEATHER_CACHE_FILE_SUFFIX = ".json";
-    static final long WEATHER_CACHE_MAX_AGE_MILLIS = 60L * 60L * 1000L;
     static final String OPTIONAL_CACHE_FILE_SUFFIX = ".json";
     static final String AIR_QUALITY_CACHE_ROOT_PREFIX = "google_air_quality_cache_";
     static final String POLLEN_CACHE_ROOT_PREFIX = "google_pollen_cache_";
@@ -202,6 +146,7 @@ abstract class WeatherActivityFoundation extends Activity {
     LinearLayout content;
     FrameLayout forecastPageHost;
     LinearLayout overviewPageContent;
+    LinearLayout dailyPageContent;
     LinearLayout precipitationPageContent;
     LinearLayout activePageContent;
     boolean renderingAllForecastPages;
@@ -213,23 +158,17 @@ abstract class WeatherActivityFoundation extends Activity {
     LinearLayout toolbar;
     LinearLayout locationArea;
     TextView previewSubtitle;
-    HeaderScrimDrawable headerScrim;
     final ArrayList<GlassDrawable> glassDrawables = new ArrayList<>();
     int cardColor = Color.argb(92, 31, 102, 211);
-    int tileColor = Color.argb(72, 31, 102, 211);
     int glassCardTop = Color.argb(94, 48, 116, 207);
     int glassCardBottom = Color.argb(56, 70, 126, 188);
     int glassTileTop = Color.argb(84, 50, 117, 202);
     int glassTileBottom = Color.argb(48, 66, 119, 178);
     int glassEdge = Color.TRANSPARENT;
-    int dynamicStartIndex;
     int expandedDayIndex = -1;
     TextView overviewModeButton;
     TextView precipitationModeButton;
-    GlassDrawable modeSwitchGlass;
     boolean precipitationMode;
-    int overviewScrollY;
-    int precipitationScrollY;
     int minuteRangeHours = MINUTE_RANGE_TWO_HOURS;
     long minuteSelectedTimeMillis = Long.MIN_VALUE;
     View precipitationBody;
@@ -237,16 +176,14 @@ abstract class WeatherActivityFoundation extends Activity {
     MinuteForecastState minuteForecastState;
     boolean minuteReloadAfterLocationCheckPending;
     boolean weatherLoadActive;
+    boolean forecastRefreshFailed;
     double activeLoadLatitude = Double.NaN;
     double activeLoadLongitude = Double.NaN;
     String activeLoadLanguage = "";
     String activeLoadLocationId = "";
     String activeLoadProviderScope = "";
-    int weatherRequestGeneration;
-    final Object hourlyCoverageLock = new Object();
-    boolean hourlyCoverageLoadActive;
-    LocalDate pendingHourlyCoverageTarget;
-    LocalDate hourlyCoverageLoadingTarget;
+    volatile int weatherRequestGeneration;
+    final HourlyCoverageQueue hourlyCoverageQueue = new HourlyCoverageQueue();
     boolean weatherReloadPending;
     boolean weatherReloadForcePending;
     boolean forceNextWeatherLoad;
@@ -271,8 +208,22 @@ abstract class WeatherActivityFoundation extends Activity {
     double latitude = 50.8503;
     double longitude = 4.3517;
     String locationName = "Brussels";
+    String displayedForecastLocationName;
+    double displayedForecastLatitude = Double.NaN;
+    double displayedForecastLongitude = Double.NaN;
+    String displayedForecastLocationId = "";
     String selectedLocationId = "";
     boolean usingDeviceLocation;
+
+    String forecastLocationName() {
+        return displayedForecastLocationName == null ? locationName : displayedForecastLocationName;
+    }
+
+    boolean displayedForecastMatchesSelection() {
+        return Math.abs(displayedForecastLatitude - latitude) <= WEATHER_CACHE_COORDINATE_TOLERANCE
+                && Math.abs(displayedForecastLongitude - longitude) <= WEATHER_CACHE_COORDINATE_TOLERANCE
+                && displayedForecastLocationId.equals(selectedLocationId == null ? "" : selectedLocationId);
+    }
 
     interface DaySelectionListener {
         void onDaySelected(int dayIndex);
@@ -290,12 +241,7 @@ abstract class WeatherActivityFoundation extends Activity {
 
     abstract void performPullRefresh();
 
-    /**
-     * Lets the concrete screen keep the shared status line in sync with the
-     * forecast tab that is currently visible. Background data flows call this
-     * hook after their state changes; the base implementation intentionally does
-     * nothing for other activities that reuse the weather foundation.
-     */
+    /** Updates the visible page's status after background state changes. */
     void notifyActiveForecastStatusChanged() { }
 
     static String fetchedDataAgeLabel(String prefix, long fetchedAtMillis) {
@@ -319,7 +265,7 @@ abstract class WeatherActivityFoundation extends Activity {
     abstract void renderOverviewContent();
     abstract void renderPrecipitationContent();
     abstract void clearDynamicContent();
-    abstract void addAttribution();
+    abstract void addAttribution(boolean includeEnvironment);
     abstract TextView text(String value, int sp, boolean bold, int color);
     abstract Button button(String label);
     abstract GlassDrawable newGlassDrawable(int radiusPx, boolean tile);
@@ -333,11 +279,8 @@ abstract class WeatherActivityFoundation extends Activity {
     abstract void showCoordinateDialog();
 
     boolean animationsAllowed() {
-        if (!weatherPreferences.animationsAllowed()) return false;
-        if (Build.VERSION.SDK_INT >= 26) return ValueAnimator.areAnimatorsEnabled();
-        return true;
+        return weatherPreferences.animationsAllowed() && ValueAnimator.areAnimatorsEnabled();
     }
-
 
     int dp(int value) {
         return Math.round(value * getResources().getDisplayMetrics().density);
@@ -345,10 +288,6 @@ abstract class WeatherActivityFoundation extends Activity {
 
     String temperatureUnitPreference() {
         return weatherPreferences.temperatureUnit();
-    }
-
-    static String normalizeTemperatureUnit(String value) {
-        return WeatherPreferences.normalizeTemperatureUnit(value);
     }
 
     boolean isFahrenheitUnit() {
@@ -362,7 +301,6 @@ abstract class WeatherActivityFoundation extends Activity {
     String temperatureUnitWord() {
         return isFahrenheitUnit() ? "Fahrenheit" : "Celsius";
     }
-
 
     Integer degreesOrNull(JSONObject value) {
         if (value == null) return null;
@@ -545,7 +483,6 @@ abstract class WeatherActivityFoundation extends Activity {
         if (array == null || array.length() == 0) return null;
         return array.optJSONObject(0);
     }
-
 
     static Instant parseInstant(String value) {
         if (value == null || value.trim().isEmpty()) return null;
@@ -768,12 +705,9 @@ abstract class WeatherActivityFoundation extends Activity {
         canvas.drawCircle(cx + size * 0.28f, cy - h * 0.03f, h * 0.58f, p);
     }
 
-
-
     int dp(float value) {
         return Math.round(value * getResources().getDisplayMetrics().density);
     }
-
 
     static String minuteSelectionDetail(
             MinuteSegment segment,
@@ -916,7 +850,5 @@ abstract class WeatherActivityFoundation extends Activity {
         String value = object.optString(key, "").trim();
         return "null".equalsIgnoreCase(value) ? "" : value;
     }
-
-
 
 }

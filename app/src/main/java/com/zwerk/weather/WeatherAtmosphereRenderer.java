@@ -11,8 +11,6 @@ import android.graphics.RadialGradient;
 import android.graphics.RectF;
 import android.graphics.Shader;
 
-import java.util.Locale;
-
 /** Procedural, time-based atmosphere shared by the forecast and settings previews. */
 final class WeatherAtmosphereRenderer {
     private static final int CLOUD_WIDTH = 384;
@@ -138,10 +136,7 @@ final class WeatherAtmosphereRenderer {
         if (w <= 0f || h <= 0f) return;
         onSizeChanged(Math.round(w), Math.round(h));
         boolean storm = spec != null && "thunder".equals(spec.effect);
-        String condition = spec == null ? "" : spec.condition.toLowerCase(Locale.ROOT);
-        float intensity = storm || condition.contains("heavy") || condition.contains("violent")
-                ? 1.28f : condition.contains("drizzle") || condition.contains("light")
-                ? 0.60f : 1f;
+        float intensity = spec == null ? 1f : spec.rainIntensity;
 
         paint.setStyle(Paint.Style.FILL);
         paint.setShader(rainHaze);
@@ -182,7 +177,6 @@ final class WeatherAtmosphereRenderer {
                     214, 235, 255));
             canvas.drawPath(path, paint);
         }
-        // A few close drops catch the light without turning the entire scene into white lines.
         paint.setStrokeWidth(density * 0.65f);
         paint.setColor(Color.argb(storm ? 125 : 98, 236, 246, 255));
         canvas.drawPath(rainPaths[2], paint);
@@ -244,7 +238,6 @@ final class WeatherAtmosphereRenderer {
                 + (float) Math.sin(now * 0.00024 + phase * 5.0f) * density * 4f;
         float offset = (float) positiveModulo(
                 phase * tileWidth + now / 1000.0 * speedDp * density, tileWidth);
-        // A cool underside gives the moving texture a readable edge over the photo sky.
         float shadowOffset = Math.max(density * 3f, bandHeight * 0.042f);
         for (float left = offset - tileWidth; left < w; left += tileWidth) {
             cloudPaint.setAlpha(Math.round(alpha * 0.30f));

@@ -63,7 +63,7 @@
     <string name="settings_units_summary">Sıcaklık, rüzgâr, basınç ve görüş</string>
     <string name="settings_weather_animations">Hava durumu animasyonları</string>
     <string name="settings_preview_weather_scenes">Hava durumu sahnelerini önizle</string>
-    <string name="settings_version_format">Zwerk Weather %1$s</string>
+    <string name="settings_version_format">Zwerk Weather v%1$s</string>
     <string name="settings_measurement_units">Ölçü birimleri</string>
     <string name="settings_temperature_unit">Sıcaklık birimi</string>
     <string name="settings_celsius">Celsius</string>
@@ -80,4 +80,7 @@
     <string name="settings_on">Açık</string>
     <string name="settings_off">Kapalı</string>
     <string name="weather_widget_description">Hava tahmini ve mevcut koşullar.</string>
+    <string name="forecast_saved_status">Kaydedilen tahmin · %1$s</string>
+    <string name="forecast_temperature">Sıcaklık</string>
+    <string name="hourly_day_graph_hint">Saatlik ayrıntılar için grafiğe dokunun</string>
 </resources>

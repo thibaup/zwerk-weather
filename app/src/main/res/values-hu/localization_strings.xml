@@ -63,7 +63,7 @@
     <string name="settings_units_summary">Hőmérséklet, szél, nyomás és látótávolság</string>
     <string name="settings_weather_animations">Időjárási animációk</string>
     <string name="settings_preview_weather_scenes">Időjárási jelenetek előnézete</string>
-    <string name="settings_version_format">Zwerk Weather %1$s</string>
+    <string name="settings_version_format">Zwerk Weather v%1$s</string>
     <string name="settings_measurement_units">Mértékegységek</string>
     <string name="settings_temperature_unit">Hőmérséklet mértékegysége</string>
     <string name="settings_celsius">Celsius</string>
@@ -80,4 +80,7 @@
     <string name="settings_on">Be</string>
     <string name="settings_off">Ki</string>
     <string name="weather_widget_description">Időjárás-előrejelzés és aktuális körülmények.</string>
+    <string name="forecast_saved_status">Mentett előrejelzés · %1$s</string>
+    <string name="forecast_temperature">Hőmérséklet</string>
+    <string name="hourly_day_graph_hint">Koppints a grafikonra az óránkénti részletekért</string>
 </resources>

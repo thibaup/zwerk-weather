@@ -1,81 +1,38 @@
 package com.zwerk.weather;
 
 import android.animation.ValueAnimator;
-import android.app.Activity;
 import android.app.Dialog;
 import android.content.Context;
 import android.content.ClipData;
-import android.content.Intent;
-import android.content.pm.ApplicationInfo;
-import android.content.pm.PackageManager;
-import android.graphics.Bitmap;
-import android.graphics.BitmapFactory;
-import android.graphics.Canvas;
+import android.content.SharedPreferences;
 import android.graphics.Color;
-import android.graphics.LinearGradient;
-import android.graphics.Paint;
-import android.graphics.Path;
-import android.graphics.RadialGradient;
 import android.graphics.Rect;
-import android.graphics.RectF;
-import android.graphics.Shader;
 import android.graphics.Typeface;
 import android.graphics.drawable.ColorDrawable;
 import android.graphics.drawable.GradientDrawable;
 import android.icu.text.RelativeDateTimeFormatter;
 import android.graphics.drawable.StateListDrawable;
-import android.location.Address;
-import android.location.Geocoder;
-import android.location.Location;
-import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
-import android.os.SystemClock;
-import android.util.Log;
-import android.text.InputType;
-import android.text.method.PasswordTransformationMethod;
 import android.view.DragEvent;
 import android.view.Gravity;
-import android.view.KeyEvent;
-import android.view.MotionEvent;
-import android.view.ViewConfiguration;
 import android.view.View;
 import android.view.ViewGroup;
 import android.view.ViewParent;
 import android.view.Window;
-import android.view.WindowInsets;
-import android.view.WindowInsetsController;
 import android.view.WindowManager;
 import android.view.accessibility.AccessibilityNodeInfo;
 import android.widget.Button;
-import android.widget.EditText;
 import android.widget.FrameLayout;
 import android.widget.HorizontalScrollView;
 import android.widget.LinearLayout;
 import android.widget.ProgressBar;
 import android.widget.ScrollView;
 import android.widget.TextView;
-import android.widget.Toast;
-
-import android.system.Os;
 
 import org.json.JSONArray;
 import org.json.JSONObject;
 
-import java.io.BufferedReader;
-import java.io.ByteArrayOutputStream;
-import java.io.File;
-import java.io.FileReader;
-import java.io.FileOutputStream;
-import java.io.InputStream;
-import java.lang.ref.WeakReference;
-import java.io.IOException;
-import java.net.HttpURLConnection;
-import java.net.SocketTimeoutException;
-import java.net.URL;
-import java.net.URLEncoder;
-import java.nio.charset.StandardCharsets;
-import java.security.MessageDigest;
 import java.time.Duration;
 import java.time.Instant;
 import java.time.LocalDate;
@@ -83,22 +40,22 @@ import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.HashSet;
-import java.util.List;
 import java.util.Locale;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.ThreadLocalRandom;
-import java.util.concurrent.Executors;
-
 
 abstract class WeatherOverviewRenderingActivity extends MinuteForecastRenderingActivity {
+    private static final int HOURLY_LABEL_COLOR = Color.rgb(230, 238, 247);
     static final String PREF_OVERVIEW_TILE_ORDER = "overview_information_tile_order_v1";
     static final String PREF_OVERVIEW_BLOCK_ORDER = "overview_top_level_order_v1";
+    private static final String PREF_ENVIRONMENT_ORDER_MIGRATED =
+            "environment_tiles_top_order_v1";
     static final String OVERVIEW_TILE_STREAM_PREFIX = "tile:";
     static final int ACCESSIBILITY_MOVE_TILE_EARLIER =
             AccessibilityNodeInfo.ACTION_SCROLL_BACKWARD;
     static final int ACCESSIBILITY_MOVE_TILE_LATER =
             AccessibilityNodeInfo.ACTION_SCROLL_FORWARD;
     static final String[] DEFAULT_OVERVIEW_TILE_ORDER = new String[] {
+            "air_quality",
+            "pollen",
             "uv",
             "feels_like",
             "humidity",
@@ -112,15 +69,12 @@ abstract class WeatherOverviewRenderingActivity extends MinuteForecastRenderingA
             "heat_index",
             "wind_chill",
             "temperature_change_24h",
-            "precipitation_24h",
-            "air_quality",
-            "pollen"
+            "precipitation_24h"
     };
     static final String[] DEFAULT_OVERVIEW_BLOCK_ORDER = new String[] {
             "hero",
             "alerts",
             "hourly",
-            "daily",
             "details",
             "solar",
             "moon",
@@ -139,6 +93,7 @@ abstract class WeatherOverviewRenderingActivity extends MinuteForecastRenderingA
     static final String HOURLY_DETAIL_UNAVAILABLE = "Not available for this hour";
     static final String DAILY_DETAIL_UNAVAILABLE = "Not available for this day";
     final ArrayList<ForecastDetailBinding> forecastDetailBindings = new ArrayList<>();
+    final ArrayList<OptionalTileBinding> optionalTileBindings = new ArrayList<>();
 
     static final class ForecastDetailBinding {
         final String id;
@@ -159,9 +114,7 @@ abstract class WeatherOverviewRenderingActivity extends MinuteForecastRenderingA
         }
     }
 
-    // Overview information tiles are content-sized rather than locked to a fixed height.
-    // Keep a compact floor for visual consistency while allowing larger text/wrapped values
-    // to increase the row height without clipping.
+    // Let tiles grow for larger fonts while retaining a compact minimum height.
     static final int OVERVIEW_TILE_MIN_WIDTH_DP = 112;
     static final int OVERVIEW_TILE_MIN_HEIGHT_DP = 112;
     static final int OVERVIEW_TILE_GAP_DP = 8;
@@ -189,9 +142,7 @@ abstract class WeatherOverviewRenderingActivity extends MinuteForecastRenderingA
         protected void onMeasure(int widthMeasureSpec, int heightMeasureSpec) {
             super.onMeasure(widthMeasureSpec, heightMeasureSpec);
 
-            // LinearLayout already makes this row as tall as its tallest WRAP_CONTENT child.
-            // Stretch the remaining tiles to that measured height so cards stay aligned, while
-            // retaining the tallest child's natural (font-scale-aware) height.
+            // Match shorter tiles to the tallest child without constraining its natural height.
             int contentHeight = Math.max(0, getMeasuredHeight()
                     - getPaddingTop() - getPaddingBottom());
             for (int i = 0; i < getChildCount(); i++) {
@@ -1096,6 +1047,7 @@ abstract class WeatherOverviewRenderingActivity extends MinuteForecastRenderingA
         if ("alerts".equals(id)) return "Severe weather alert";
         if ("hourly".equals(id)) return "Hourly forecast";
         if ("daily".equals(id)) return "Multi-day forecast";
+        if ("precipitation".equals(id)) return "Precipitation";
         if ("details".equals(id)) return "Weather information";
         if ("solar".equals(id)) return "Next solar event";
         if ("moon".equals(id)) return "Moon";
@@ -1104,7 +1056,7 @@ abstract class WeatherOverviewRenderingActivity extends MinuteForecastRenderingA
     }
 
     void render(JSONObject current, JSONObject hourly, JSONObject daily, String responseUnit) {
-        activeTemperatureUnit = normalizeTemperatureUnit(responseUnit);
+        activeTemperatureUnit = WeatherPreferences.normalizeTemperatureUnit(responseUnit);
         lastCurrentWeather = current;
         lastHourlyWeather = hourly;
         lastDailyWeather = daily;
@@ -1116,6 +1068,7 @@ abstract class WeatherOverviewRenderingActivity extends MinuteForecastRenderingA
         forecastPreview.setCurrentScene(currentScene);
         if (skyLayout != null) skyLayout.setScene(currentScene);
         if (headerGlass != null) headerGlass.setScene(currentScene, animationsAllowed());
+        if (bottomGlass != null) bottomGlass.setScene(currentScene, animationsAllowed());
         applyScenePalette(currentScene.paletteScene());
         displayedScene = settingsSceneKey(current, displayedDaytime);
         persistSettingsSceneSnapshot();
@@ -1124,7 +1077,7 @@ abstract class WeatherOverviewRenderingActivity extends MinuteForecastRenderingA
         JSONArray days = daily == null ? null : daily.optJSONArray("forecastDays");
         JSONObject today = firstObject(days);
         Integer snapshotTemp = degreesOrNull(current == null ? null : current.optJSONObject("temperature"));
-        CityManagerActivity.updateSelectedLocationSnapshot(
+        if (displayedForecastMatchesSelection()) CityManagerActivity.updateSelectedLocationSnapshot(
                 this,
                 snapshotTemp == null ? "" : snapshotTemp + temperatureUnitSymbol(),
                 description(current));
@@ -1132,8 +1085,8 @@ abstract class WeatherOverviewRenderingActivity extends MinuteForecastRenderingA
 
         renderCurrentMode();
         if (headerGlass != null) headerGlass.requestBlurRefresh();
+        if (bottomGlass != null) bottomGlass.requestBlurRefresh();
     }
-
 
     void addHero(JSONObject current, JSONObject today) {
         String condition = description(current);
@@ -1240,7 +1193,7 @@ abstract class WeatherOverviewRenderingActivity extends MinuteForecastRenderingA
         body.setContentDescription(titleValue + ", " + summary + ". "
                 + UiTranslations.text(this, "Tap for official details."));
         body.setOnClickListener(v -> showWeatherAlertsDialog(alerts));
-        View alertCard = card(body, dp(24), cardColor);
+        View alertCard = card(body, dp(24));
         LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-1, -2);
         lp.topMargin = dp(12);
         pageContent().addView(alertCard, lp);
@@ -1260,7 +1213,7 @@ abstract class WeatherOverviewRenderingActivity extends MinuteForecastRenderingA
         scroller.addView(panel, new ScrollView.LayoutParams(-1, -2));
         panel.addView(text("Official weather alerts", 23, true, WHITE));
         TextView intro = text(String.format(Locale.getDefault(), UiTranslations.text(this,
-                "Warnings for %s. Follow the issuing authority's instructions."), locationName),
+                "Warnings for %s. Follow the issuing authority's instructions."), forecastLocationName()),
                 12, false, SOFT_WHITE);
         intro.setPadding(0, dp(5), 0, dp(8));
         panel.addView(intro);
@@ -1489,7 +1442,7 @@ abstract class WeatherOverviewRenderingActivity extends MinuteForecastRenderingA
 
         LinearLayout.LayoutParams cardLp = defaultCardParams();
         cardLp.topMargin = dp(8);
-        View card = card(cardBody, dp(24), cardColor);
+        View card = card(cardBody, dp(24));
         card.setLayoutParams(cardLp);
         pageContent().addView(card);
     }
@@ -1503,107 +1456,75 @@ abstract class WeatherOverviewRenderingActivity extends MinuteForecastRenderingA
         void onDaySelected(int dayIndex);
     }
 
+    void renderDailyContent() {
+        ZoneId zone = responseZone(lastCurrentWeather, lastHourlyWeather, lastDailyWeather);
+        JSONArray days = lastDailyWeather == null ? null : lastDailyWeather.optJSONArray("forecastDays");
+        addMultiDayCard(days, lastHourlyWeather, zone);
+        addAttribution(false);
+    }
+
     void addMultiDayCard(JSONArray days, JSONObject hourly, ZoneId zone) {
         JSONArray hours = hourly == null ? null : hourly.optJSONArray("forecastHours");
-
-        LinearLayout body = new LinearLayout(this);
-        body.setOrientation(LinearLayout.VERTICAL);
-        body.setPadding(dp(14), dp(14), dp(14), dp(14));
-
-        LinearLayout heading = new LinearLayout(this);
-        heading.setGravity(Gravity.CENTER_VERTICAL);
-        TextView title = text("Multi-day forecast", 15, false, SOFT_WHITE);
-        title.setTypeface(Typeface.create("sans-serif-medium", Typeface.NORMAL));
-        heading.addView(title, new LinearLayout.LayoutParams(0, -2, 1));
-
+        TextView title = text("Multi-day forecast", 26, false, WHITE);
+        title.setPadding(dp(2), dp(17), dp(2), dp(15));
+        pageContent().addView(title);
         LinearLayout segmented = new LinearLayout(this);
-        segmented.setOrientation(LinearLayout.HORIZONTAL);
-        segmented.setPadding(dp(2), dp(2), dp(2), dp(2));
-        segmented.setBackground(roundedBg(Color.argb(30, 255, 255, 255), dp(22)));
-        segmented.setContentDescription("Forecast display mode");
-
+        segmented.setPadding(dp(4), dp(4), dp(4), dp(4));
+        segmented.setBackground(newGlassDrawable(dp(25), true));
         TextView lineButton = dailyModeButton("Line", "Line forecast");
-        segmented.addView(lineButton, new LinearLayout.LayoutParams(dp(72), dp(48)));
-
         TextView listButton = dailyModeButton("List", "List forecast");
-        segmented.addView(listButton, new LinearLayout.LayoutParams(dp(72), dp(48)));
-        heading.addView(segmented);
-        body.addView(heading);
+        segmented.addView(lineButton, new LinearLayout.LayoutParams(0, dp(48), 1f));
+        segmented.addView(listButton, new LinearLayout.LayoutParams(0, dp(48), 1f));
+        pageContent().addView(segmented, new LinearLayout.LayoutParams(-1, dp(56)));
 
-        View divider = new View(this);
-        divider.setBackgroundColor(Color.argb(22, 255, 255, 255));
-        LinearLayout.LayoutParams dividerLp = new LinearLayout.LayoutParams(-1, 1);
-        dividerLp.topMargin = dp(8);
-        body.addView(divider, dividerLp);
-
-        int dayCount = days == null ? 0 : Math.min(10, days.length());
-        int viewportWidth = Math.max(dp(280), getResources().getDisplayMetrics().widthPixels - dp(64));
-        int chartWidth = Math.max(viewportWidth, dp(86) * Math.max(1, dayCount));
-        int chartHeight = dp(330);
-
+        LinearLayout lineBody = new LinearLayout(this);
+        lineBody.setOrientation(LinearLayout.VERTICAL);
+        lineBody.setPadding(dp(12), dp(12), dp(12), dp(12));
         LinearLayout lineDetailHost = new LinearLayout(this);
         lineDetailHost.setOrientation(LinearLayout.VERTICAL);
         lineDetailHost.setVisibility(View.GONE);
-
-        DayDetailCoordinator details = new DayDetailCoordinator(
-                days, hours, zone, hourlyDiagnostic(hourly), lineDetailHost);
-        details.expandedDay = Math.min(expandedDayIndex, dayCount - 1);
-        ForecastChartView chart = new ForecastChartView(
-                this, days, zone, chartWidth, chartHeight, details::toggleDay);
-        chart.setLayoutParams(new FrameLayout.LayoutParams(chartWidth, chartHeight));
+        DayDetailCoordinator details = new DayDetailCoordinator(days, hours, zone,
+                hourlyDiagnostic(hourly), lineDetailHost);
+        int count = days == null ? 0 : Math.min(10, days.length());
+        details.expandedDay = Math.min(expandedDayIndex, count - 1);
+        int width = Math.max(getResources().getDisplayMetrics().widthPixels - dp(60), dp(82) * Math.max(1, count));
+        // Leave room below the low-temperature labels for the rain probability band.
+        int height = dp(340);
+        ForecastChartView chart = new ForecastChartView(this, days, zone, width, height, details::toggleDay);
+        details.lineChart = chart;
         forecastPreview.registerChart(chart);
-
         GestureHorizontalScrollView chartScroller = new GestureHorizontalScrollView(this);
         chartScroller.setHorizontalScrollBarEnabled(false);
-        chartScroller.setOverScrollMode(View.OVER_SCROLL_ALWAYS);
         chartScroller.setFillViewport(true);
-        chartScroller.setClipToPadding(false);
-        chartScroller.setMinimumHeight(chartHeight);
-        chartScroller.setContentDescription("Scrollable 10-day line forecast in "
-                + temperatureUnitWord() + ". Select a day for hourly details and scene preview.");
-        chartScroller.addView(chart, new FrameLayout.LayoutParams(chartWidth, chartHeight));
-
-        DayListScrollView list = new DayListScrollView(this);
-        list.setFillViewport(false);
-        list.setVerticalScrollBarEnabled(true);
-        list.setClipToPadding(false);
-        list.setContentDescription("Scrollable 10-day forecast list");
-        list.addView(buildTenDayList(days, zone, details),
-                new ScrollView.LayoutParams(-1, -2));
-        details.setListScroller(list);
-        FrameLayout modeHost = new FrameLayout(this);
-        FrameLayout.LayoutParams chartHostLp = new FrameLayout.LayoutParams(-1, chartHeight);
-        chartHostLp.topMargin = dp(4);
-        modeHost.addView(chartScroller, chartHostLp);
-        FrameLayout.LayoutParams listHostLp = new FrameLayout.LayoutParams(-1, chartHeight);
-        listHostLp.topMargin = dp(4);
-        modeHost.addView(list, listHostLp);
-        body.addView(modeHost, new LinearLayout.LayoutParams(-1, chartHeight + dp(4)));
-
+        chartScroller.setContentDescription(UiTranslations.text(this, "Line forecast"));
+        chartScroller.addView(chart, new FrameLayout.LayoutParams(width, height));
+        lineBody.addView(chartScroller, new LinearLayout.LayoutParams(-1, height));
         LinearLayout.LayoutParams detailLp = new LinearLayout.LayoutParams(-1, -2);
-        detailLp.topMargin = dp(8);
-        body.addView(lineDetailHost, detailLp);
-
-        String savedMode = getSharedPreferences(UI_PREFS, MODE_PRIVATE)
-                .getString(PREF_DAILY_MODE, "line");
-        boolean listMode = "list".equals(savedMode);
-        applyDailyMode(lineButton, listButton, chartScroller, list, listMode);
+        detailLp.topMargin = dp(10);
+        lineBody.addView(lineDetailHost, detailLp);
+        View linePanel = card(lineBody, dp(26));
+        LinearLayout list = buildTenDayList(days, zone, details);
+        FrameLayout modes = new FrameLayout(this);
+        modes.addView(linePanel, new FrameLayout.LayoutParams(-1, -2));
+        modes.addView(list, new FrameLayout.LayoutParams(-1, -2));
+        LinearLayout.LayoutParams modesLp = new LinearLayout.LayoutParams(-1, -2);
+        modesLp.topMargin = dp(12);
+        pageContent().addView(modes, modesLp);
+        boolean listMode = "list".equals(getSharedPreferences(UI_PREFS, MODE_PRIVATE)
+                .getString(PREF_DAILY_MODE, "list"));
+        applyDailyMode(lineButton, listButton, linePanel, list, listMode);
         details.setListMode(listMode);
-        if (details.expandedDay >= 0) {
-            LocalDate selectedDate = displayDate(days.optJSONObject(details.expandedDay), zone);
-            ensureHourlyCoverage(selectedDate, details);
-        }
-
-        lineButton.setOnClickListener(v -> switchDailyMode(
-                lineButton, listButton, chartScroller, list, details, false));
-        listButton.setOnClickListener(v -> switchDailyMode(
-                lineButton, listButton, chartScroller, list, details, true));
-
-        LinearLayout.LayoutParams cardLp = defaultCardParams();
-        cardLp.topMargin = dp(12);
-        View card = card(body, dp(24), cardColor);
-        card.setLayoutParams(cardLp);
-        pageContent().addView(card);
+        View.OnClickListener selectMode = v -> {
+            boolean nextList = v == listButton;
+            getSharedPreferences(UI_PREFS, MODE_PRIVATE).edit()
+                    .putString(PREF_DAILY_MODE, nextList ? "list" : "line").apply();
+            applyDailyMode(lineButton, listButton, linePanel, list, nextList);
+            details.setListMode(nextList);
+            modes.requestLayout();
+            if (forecastPageHost != null) forecastPageHost.requestLayout();
+        };
+        lineButton.setOnClickListener(selectMode);
+        listButton.setOnClickListener(selectMode);
     }
 
     TextView dailyModeButton(String label, String accessibilityLabel) {
@@ -1617,35 +1538,13 @@ abstract class WeatherOverviewRenderingActivity extends MinuteForecastRenderingA
         return button;
     }
 
-    void switchDailyMode(
-            TextView lineButton,
-            TextView listButton,
-            GestureHorizontalScrollView chartScroller,
-            View list,
-            DayDetailCoordinator details,
-            boolean listMode) {
-        int pageScrollY = mainScroll == null ? 0 : mainScroll.getScrollY();
-        int chartScrollX = chartScroller.getScrollX();
-        getSharedPreferences(UI_PREFS, MODE_PRIVATE)
-                .edit()
-                .putString(PREF_DAILY_MODE, listMode ? "list" : "line")
-                .apply();
-        applyDailyMode(lineButton, listButton, chartScroller, list, listMode);
-        details.setListMode(listMode);
-        chartScroller.post(() -> chartScroller.scrollTo(chartScrollX, 0));
-        if (mainScroll != null) {
-            mainScroll.post(() -> mainScroll.scrollTo(0, pageScrollY));
-        }
-    }
-
     void applyDailyMode(
             TextView lineButton,
             TextView listButton,
             View chart,
             View list,
             boolean listMode) {
-        // INVISIBLE (not GONE) keeps the custom chart measured while List mode is active.
-        // That preserves the API-36 line-chart measurement fix and its horizontal scroll position.
+        // Keep the hidden chart measured and its scroll position intact.
         chart.setVisibility(listMode ? View.INVISIBLE : View.VISIBLE);
         list.setVisibility(listMode ? View.VISIBLE : View.GONE);
         updateDailyModeButton(lineButton, !listMode, "Line forecast");
@@ -1700,6 +1599,8 @@ abstract class WeatherOverviewRenderingActivity extends MinuteForecastRenderingA
 
             LinearLayout item = new LinearLayout(this);
             item.setOrientation(LinearLayout.VERTICAL);
+            item.setPadding(dp(13), dp(6), dp(13), dp(6));
+            item.setBackground(newGlassDrawable(dp(25), false));
 
             LinearLayout row = new LinearLayout(this);
             row.setGravity(Gravity.CENTER_VERTICAL);
@@ -1710,8 +1611,8 @@ abstract class WeatherOverviewRenderingActivity extends MinuteForecastRenderingA
             row.setBackground(previewTargetBackground(dp(16)));
 
             String dayText = i == 0 ? "Today" : dayLabel(day, zone);
-            TextView label = text(dayText, 14, i == 0, WHITE);
-            TextView date = text(dayDateLabel(day, zone), 10, false, FAINT_WHITE);
+            TextView label = text(dayText, 17, i == 0, WHITE);
+            TextView date = text(dayDateLabel(day, zone), 12, false, SOFT_WHITE);
             LinearLayout dayLabels = new LinearLayout(this);
             dayLabels.setOrientation(LinearLayout.VERTICAL);
             dayLabels.addView(label);
@@ -1731,13 +1632,14 @@ abstract class WeatherOverviewRenderingActivity extends MinuteForecastRenderingA
             Integer hi = degreesOrNull(day.optJSONObject("maxTemperature"));
             Integer lo = degreesOrNull(day.optJSONObject("minTemperature"));
             String temperatures = (hi == null ? "—" : hi) + "°  " + (lo == null ? "—" : lo) + "°";
-            TextView temps = text(temperatures, 14, true, WHITE);
+            TextView temps = text(temperatures, 16, true, WHITE);
             temps.setGravity(Gravity.END);
             row.addView(temps, new LinearLayout.LayoutParams(dp(88), -2));
 
-            TextView disclosure = text("›", 24, false, SOFT_WHITE);
-            disclosure.setGravity(Gravity.CENTER);
-            row.addView(disclosure, new LinearLayout.LayoutParams(dp(24), dp(40)));
+            ForecastDisclosureView disclosure = new ForecastDisclosureView(this);
+            LinearLayout.LayoutParams disclosureLp = new LinearLayout.LayoutParams(dp(32), dp(40));
+            disclosureLp.leftMargin = dp(4);
+            row.addView(disclosure, disclosureLp);
 
             StringBuilder rowDescription = new StringBuilder(dayText);
             String condition = sceneForForecastDay(day, i).condition;
@@ -1761,15 +1663,11 @@ abstract class WeatherOverviewRenderingActivity extends MinuteForecastRenderingA
             LinearLayout detailHost = new LinearLayout(this);
             detailHost.setOrientation(LinearLayout.VERTICAL);
             item.addView(detailHost, new LinearLayout.LayoutParams(-1, -2));
-            details.registerListDetailHost(dayIndex, detailHost);
+            details.registerListDetailHost(dayIndex, detailHost, disclosure);
 
-            list.addView(item);
-
-            if (i < count - 1) {
-                View divider = new View(this);
-                divider.setBackgroundColor(Color.argb(28, 255, 255, 255));
-                list.addView(divider, new LinearLayout.LayoutParams(-1, 1));
-            }
+            LinearLayout.LayoutParams itemLp = new LinearLayout.LayoutParams(-1, -2);
+            itemLp.bottomMargin = dp(10);
+            list.addView(item, itemLp);
         }
         return list;
     }
@@ -1781,7 +1679,8 @@ abstract class WeatherOverviewRenderingActivity extends MinuteForecastRenderingA
         private final String hourlyDiagnostic;
         private final LinearLayout lineDetailHost;
         private final ArrayList<LinearLayout> listDetailHosts = new ArrayList<>();
-        private DayListScrollView listScroller;
+        private final ArrayList<ForecastDisclosureView> disclosureViews = new ArrayList<>();
+        private ForecastChartView lineChart;
         private int expandedDay = -1;
         private boolean listMode;
 
@@ -1798,13 +1697,11 @@ abstract class WeatherOverviewRenderingActivity extends MinuteForecastRenderingA
             this.lineDetailHost = lineDetailHost;
         }
 
-        void registerListDetailHost(int index, LinearLayout host) {
+        void registerListDetailHost(int index, LinearLayout host, ForecastDisclosureView disclosure) {
             while (listDetailHosts.size() <= index) listDetailHosts.add(null);
+            while (disclosureViews.size() <= index) disclosureViews.add(null);
             listDetailHosts.set(index, host);
-        }
-
-        void setListScroller(DayListScrollView scroller) {
-            listScroller = scroller;
+            disclosureViews.set(index, disclosure);
         }
 
         void setListMode(boolean listMode) {
@@ -1822,12 +1719,7 @@ abstract class WeatherOverviewRenderingActivity extends MinuteForecastRenderingA
             expandedDayIndex = expandedDay;
             if (sameDay) {
                 forecastPreview.restore(true);
-                synchronized (hourlyCoverageLock) {
-                    pendingHourlyCoverageTarget = null;
-                    if (previousTarget != null && previousTarget.equals(hourlyCoverageLoadingTarget)) {
-                        hourlyCoverageLoadingTarget = null;
-                    }
-                }
+                hourlyCoverageQueue.cancel(hourlyPageState, previousTarget);
                 renderExpandedDay();
                 return;
             }
@@ -1842,8 +1734,7 @@ abstract class WeatherOverviewRenderingActivity extends MinuteForecastRenderingA
                     true,
                     day);
 
-            // Mark/queue the target before the first detail render. That prevents a one-frame
-            // unavailable + disabled-Loading-button contradiction while lazy continuation starts.
+            // Queue coverage before rendering so the loading state is visible immediately.
             LocalDate target = displayDate(day, zone);
             ensureHourlyCoverage(target, this);
             renderExpandedDay();
@@ -1852,21 +1743,26 @@ abstract class WeatherOverviewRenderingActivity extends MinuteForecastRenderingA
         public void onHourlyCoverageChanged() {
             if (expandedDay < 0) return;
             int pageScrollY = mainScroll == null ? 0 : mainScroll.getScrollY();
-            int listScrollY = listScroller == null ? 0 : listScroller.getScrollY();
             renderExpandedDay();
-            if (listScroller != null) {
-                listScroller.post(() -> listScroller.scrollTo(0, listScrollY));
-            }
             if (mainScroll != null) {
                 mainScroll.post(() -> mainScroll.scrollTo(0, pageScrollY));
             }
         }
 
         private void renderExpandedDay() {
+            if (lineChart != null) lineChart.setExpandedDay(expandedDay);
+            for (int i = 0; i < disclosureViews.size(); i++) {
+                ForecastDisclosureView disclosure = disclosureViews.get(i);
+                if (disclosure != null) disclosure.setExpanded(i == expandedDay);
+            }
+            forecastPreview.removeViewBindings(lineDetailHost);
             lineDetailHost.removeAllViews();
             lineDetailHost.setVisibility(View.GONE);
             for (LinearLayout host : listDetailHosts) {
-                if (host != null) host.removeAllViews();
+                if (host != null) {
+                    forecastPreview.removeViewBindings(host);
+                    host.removeAllViews();
+                }
             }
             if (expandedDay < 0) return;
 
@@ -1875,7 +1771,9 @@ abstract class WeatherOverviewRenderingActivity extends MinuteForecastRenderingA
             if (listMode && expandedDay < listDetailHosts.size()) {
                 LinearLayout host = listDetailHosts.get(expandedDay);
                 if (host != null) {
-                    host.addView(detail, new LinearLayout.LayoutParams(-1, -2));
+                    LinearLayout.LayoutParams detailLp = new LinearLayout.LayoutParams(-1, -2);
+                    detailLp.topMargin = dp(10);
+                    host.addView(detail, detailLp);
                     return;
                 }
             }
@@ -1895,13 +1793,15 @@ abstract class WeatherOverviewRenderingActivity extends MinuteForecastRenderingA
             DayDetailCoordinator coordinator) {
         LinearLayout detail = new LinearLayout(this);
         detail.setOrientation(LinearLayout.VERTICAL);
-        detail.setPadding(dp(10), dp(10), dp(10), dp(11));
-        detail.setBackground(roundedBg(Color.argb(28, 255, 255, 255), dp(18)));
+        detail.setPadding(dp(14), dp(14), dp(14), dp(16));
+        detail.setBackground(newGlassDrawable(dp(18), true));
 
         JSONObject day = days == null ? null : days.optJSONObject(dayIndex);
         String dayName = dayIndex == 0 ? "Today" : dayLabel(day, zone);
         String date = dayDateLabel(day, zone);
-        TextView title = text(dayName + (date.isEmpty() ? "" : "  " + date) + "  •  Hourly", 14, true, WHITE);
+        TextView title = text(UiTranslations.text(this, dayName)
+                + (date.isEmpty() ? "" : "  " + date) + "  •  "
+                + UiTranslations.text(this, "Hourly"), 14, true, WHITE);
         detail.addView(title);
 
         LocalDate targetDate = displayDate(day, zone);
@@ -1931,7 +1831,7 @@ abstract class WeatherOverviewRenderingActivity extends MinuteForecastRenderingA
             spinner.setContentDescription("Loading hourly details for " + dayName);
             loading.addView(spinner, new LinearLayout.LayoutParams(dp(22), dp(22)));
 
-            TextView label = text("Loading hourly details…", 12, false, SOFT_WHITE);
+            TextView label = text("Loading hourly details…", 12, false, HOURLY_LABEL_COLOR);
             LinearLayout.LayoutParams labelLp = new LinearLayout.LayoutParams(-2, -2);
             labelLp.leftMargin = dp(9);
             loading.addView(label, labelLp);
@@ -1952,24 +1852,24 @@ abstract class WeatherOverviewRenderingActivity extends MinuteForecastRenderingA
             String headline = failed
                     ? "Couldn’t load hourly details."
                     : "No returned hourly data covers this day.";
-            TextView unavailable = text(headline, 12, false, SOFT_WHITE);
+            TextView unavailable = text(headline, 12, false, HOURLY_LABEL_COLOR);
             unavailable.setPadding(0, dp(10), 0, dp(2));
             detail.addView(unavailable);
 
             String diagnostic = hourlyDiagnostic == null ? "" : hourlyDiagnostic.trim();
             if (failed && !diagnostic.isEmpty()) {
-                TextView reason = text(diagnostic, 12, false, SOFT_WHITE);
+                TextView reason = text(diagnostic, 12, false, HOURLY_LABEL_COLOR);
                 reason.setMaxLines(4);
                 reason.setEllipsize(android.text.TextUtils.TruncateAt.END);
                 detail.addView(reason);
             } else if (terminal) {
-                detail.addView(text("The returned hourly pages ended before this date.", 12, false, SOFT_WHITE));
+                detail.addView(text("The returned hourly pages ended before this date.", 12, false, HOURLY_LABEL_COLOR));
             }
 
             if (hourlyRetryPossible(state)) {
                 Button retry = button("Retry hourly details");
                 retry.setContentDescription("Retry hourly details for " + dayName);
-                retry.setOnClickListener(v -> ensureHourlyCoverage(targetDate, coordinator));
+                retry.setOnClickListener(v -> ensureHourlyCoverage(targetDate, coordinator, true));
                 LinearLayout.LayoutParams retryLp = new LinearLayout.LayoutParams(-2, dp(40));
                 retryLp.topMargin = dp(8);
                 detail.addView(retry, retryLp);
@@ -1977,84 +1877,125 @@ abstract class WeatherOverviewRenderingActivity extends MinuteForecastRenderingA
             return detail;
         }
 
-        GestureHorizontalScrollView scroller = new GestureHorizontalScrollView(this);
-        scroller.setHorizontalScrollBarEnabled(false);
-        scroller.setOverScrollMode(View.OVER_SCROLL_ALWAYS);
-        scroller.setFillViewport(false);
-        scroller.setContentDescription("Hourly forecast for " + dayName);
+        int count = matches.size();
+        double[] temperatures = new double[count];
+        double[] rainAmounts = new double[count];
+        String[] times = new String[count];
+        String[] temperatureLabels = new String[count];
+        String[] rainLabels = new String[count];
+        String[] descriptions = new String[count];
+        String[] keys = new String[count];
+        for (int i = 0; i < count; i++) {
+            JSONObject hour = matches.get(i);
+            Integer temperature = degreesOrNull(hour.optJSONObject("temperature"));
+            temperatures[i] = temperature == null ? Double.NaN : temperature;
+            JSONObject precipitation = hour.optJSONObject("precipitation");
+            JSONObject qpf = precipitation == null ? null : precipitation.optJSONObject("qpf");
+            Double quantity = numberValue(qpf, "quantity");
+            boolean inches = qpf != null && qpf.optString("unit", "")
+                    .toUpperCase(Locale.ROOT).contains("INCH");
+            double millimeters = quantity == null || quantity < 0 ? Double.NaN
+                    : inches ? quantity * 25.4d : quantity;
+            rainAmounts[i] = isFahrenheitUnit() ? millimeters / 25.4d : millimeters;
+            rainLabels[i] = precipitationAmountLabel(rainAmounts[i]);
+            times[i] = hourLabel(hour, zone);
+            temperatureLabels[i] = temperature == null ? "—" : temperature + "°";
+            keys[i] = hourPreviewKey(hour);
+            descriptions[i] = hourPreviewLabel(hour, zone) + ", " + description(hour)
+                    + ", " + (temperature == null ? "—" : temperature + temperatureUnitSymbol())
+                    + ", " + UiTranslations.text(this, "Precipitation") + " " + formatQpf(qpf);
+        }
 
-        LinearLayout row = new LinearLayout(this);
-        row.setOrientation(LinearLayout.HORIZONTAL);
-        row.setPadding(0, dp(8), 0, 0);
+        LinearLayout selectedDetails = new LinearLayout(this);
+        selectedDetails.setOrientation(LinearLayout.VERTICAL);
+        selectedDetails.setVisibility(View.GONE);
+        ArrayList<ForecastDisclosureView> hourDisclosures = new ArrayList<>();
+        ArrayList<LinearLayout> hourDetailCells = new ArrayList<>();
+        HourlyDayChartView chart = new HourlyDayChartView(this, temperatures, rainAmounts,
+                times, temperatureLabels, rainLabels, descriptions, keys,
+                index -> {
+                    JSONObject hour = matches.get(index);
+                    forecastPreview.select(keys[index], hourPreviewLabel(hour, zone),
+                            SceneSpec.fromWeather(hour, safeBoolean(hour, "isDaytime", true)),
+                            safeInt(hour, "uvIndex", -1), false, hour);
+                },
+                index -> {
+                    for (int i = 0; i < hourDisclosures.size(); i++) {
+                        String action = UiTranslations.text(this,
+                                i == index ? "Hide details ↑" : "Show details ↓");
+                        hourDisclosures.get(i).setExpanded(i == index);
+                        hourDetailCells.get(i).setContentDescription(descriptions[i] + ". " + action);
+                    }
+                    selectedDetails.removeAllViews();
+                    selectedDetails.setVisibility(index < 0 ? View.GONE : View.VISIBLE);
+                    if (index >= 0) {
+                        selectedDetails.addView(buildSelectedDayHourDetail(matches.get(index), zone),
+                                new LinearLayout.LayoutParams(-1, -2));
+                    }
+                });
+        String legend = getString(R.string.forecast_temperature) + " " + temperatureUnitSymbol();
+        if (chart.hasRain()) legend += "   ·   " + UiTranslations.text(this, "Precipitation")
+                + " " + (isFahrenheitUnit() ? "in" : "mm");
+        TextView legendView = text(legend, 12, false, HOURLY_LABEL_COLOR);
+        legendView.setPadding(0, dp(8), 0, 0);
+        detail.addView(legendView);
 
-        for (JSONObject hour : matches) {
+        detail.addView(chart, new LinearLayout.LayoutParams(-1, -2));
+        GestureHorizontalScrollView hourlyScroller = new GestureHorizontalScrollView(this);
+        hourlyScroller.setHorizontalScrollBarEnabled(false);
+        hourlyScroller.setOverScrollMode(View.OVER_SCROLL_NEVER);
+        LinearLayout hourlyRow = new LinearLayout(this);
+        hourlyRow.setOrientation(LinearLayout.HORIZONTAL);
+        hourlyRow.setPadding(dp(2), dp(6), dp(2), dp(8));
+        for (int i = 0; i < count; i++) {
+            JSONObject hour = matches.get(i);
             LinearLayout cell = new LinearLayout(this);
             cell.setOrientation(LinearLayout.VERTICAL);
             cell.setGravity(Gravity.CENTER_HORIZONTAL);
-            cell.setPadding(dp(4), dp(3), dp(4), dp(4));
-
-            TextView time = text(hourLabel(hour, zone), 12, true, SOFT_WHITE);
+            cell.setPadding(dp(7), dp(8), dp(7), dp(9));
+            TextView time = text(times[i], 13, true, HOURLY_LABEL_COLOR);
             time.setGravity(Gravity.CENTER);
-            cell.addView(time, new LinearLayout.LayoutParams(-1, dp(24)));
-
-            WeatherGlyphView glyph = new WeatherGlyphView(
-                    this, SceneSpec.glyphCondition(hour), safeBoolean(hour, "isDaytime", true));
-            cell.addView(glyph, new LinearLayout.LayoutParams(dp(32), dp(32)));
-
-            Integer temperature = degreesOrNull(hour.optJSONObject("temperature"));
-            TextView temp = text(temperature == null ? "—°" : temperature + "°", 16, true, WHITE);
-            temp.setGravity(Gravity.CENTER);
-            cell.addView(temp);
-
-            int p = probability(hour);
-            TextView rain = text(p >= 0 ? p + "%" : "—", 12, false, ACCENT_BLUE);
+            LinearLayout hourHeading = new LinearLayout(this);
+            hourHeading.setGravity(Gravity.CENTER_VERTICAL);
+            hourHeading.addView(time, new LinearLayout.LayoutParams(0, dp(25), 1f));
+            ForecastDisclosureView disclosure = new ForecastDisclosureView(this, true);
+            LinearLayout.LayoutParams disclosureLp = new LinearLayout.LayoutParams(dp(12), dp(24));
+            disclosureLp.leftMargin = dp(2);
+            hourHeading.addView(disclosure, disclosureLp);
+            cell.addView(hourHeading, new LinearLayout.LayoutParams(-1, dp(25)));
+            hourDisclosures.add(disclosure);
+            WeatherGlyphView glyph = new WeatherGlyphView(this,
+                    SceneSpec.glyphCondition(hour), safeBoolean(hour, "isDaytime", true));
+            LinearLayout.LayoutParams glyphLp = new LinearLayout.LayoutParams(dp(26), dp(26));
+            glyphLp.topMargin = dp(4);
+            glyphLp.bottomMargin = dp(4);
+            cell.addView(glyph, glyphLp);
+            TextView temperature = text(temperatureLabels[i], 17, true, WHITE);
+            temperature.setGravity(Gravity.CENTER);
+            cell.addView(temperature);
+            int chance = probability(hour);
+            TextView rain = text(chance < 0 ? "—" : chance + "%", 12, false, ACCENT_BLUE);
             rain.setGravity(Gravity.CENTER);
+            rain.setPadding(0, dp(3), 0, 0);
             cell.addView(rain);
-
-            JSONObject hourWind = hour.optJSONObject("wind");
-            String hourWindValue = formatWindSpeed(
-                    hourWind == null ? null : hourWind.optJSONObject("speed"));
-            String hourPressureValue = formatPressure(hour.optJSONObject("airPressure"));
-            Integer hourFeels = degreesOrNull(hour.optJSONObject("feelsLikeTemperature"));
-            int hourUv = safeInt(hour, "uvIndex", -1);
-            if (hourFeels != null) {
-                addHourlyMetricLine(cell, "Feels", hourFeels + temperatureUnitSymbol());
-            }
-            addHourlyMetricLine(cell, "Wind", hourWindValue);
-            addHourlyMetricLine(cell, "Pressure", hourPressureValue);
-            if (hourUv >= 0) addHourlyMetricLine(cell, "UV", Integer.toString(hourUv));
-
-            TextView condition = text(description(hour), 11, false, SOFT_WHITE);
-            condition.setGravity(Gravity.CENTER);
-            condition.setMaxLines(2);
-            condition.setEllipsize(android.text.TextUtils.TruncateAt.END);
-            cell.addView(condition, new LinearLayout.LayoutParams(-1, dp(38)));
-            StringBuilder hourDescription = new StringBuilder(hourLabel(hour, zone));
-            if (temperature != null) {
-                hourDescription.append(", ").append(temperature)
-                        .append(" degrees ").append(temperatureUnitWord());
-            }
-            if (p >= 0) hourDescription.append(", ").append(p).append(" percent precipitation");
-            if (hourFeels != null) {
-                hourDescription.append(", feels like ").append(hourFeels)
-                        .append(" degrees ").append(temperatureUnitWord());
-            }
-            if (!"—".equals(hourWindValue)) hourDescription.append(", wind ").append(hourWindValue);
-            if (!"—".equals(hourPressureValue)) hourDescription.append(", pressure ").append(hourPressureValue);
-            if (hourUv >= 0) hourDescription.append(", UV index ").append(hourUv);
-            configureHourPreviewCell(
-                    cell,
-                    hour,
-                    zone,
-                    false,
-                    hourDescription.toString());
-
-            row.addView(cell, new LinearLayout.LayoutParams(dp(142), -2));
+            hourDetailCells.add(cell);
+            configureHourPreviewCell(cell, hour, zone, false, descriptions[i]);
+            cell.setContentDescription(descriptions[i]
+                    + ". " + UiTranslations.text(this, "Show details ↓"));
+            cell.setBackground(dayHourlyCellBackground());
+            LinearLayout.LayoutParams cellLp = new LinearLayout.LayoutParams(dp(84), -2);
+            cellLp.leftMargin = dp(2);
+            cellLp.rightMargin = dp(2);
+            hourlyRow.addView(cell, cellLp);
         }
-        scroller.addView(row, new HorizontalScrollView.LayoutParams(-2, -2));
-        LinearLayout.LayoutParams scrollLp = new LinearLayout.LayoutParams(-1, -2);
-        scrollLp.topMargin = dp(2);
-        detail.addView(scroller, scrollLp);
+        hourlyScroller.addView(hourlyRow, new HorizontalScrollView.LayoutParams(-2, -2));
+        LinearLayout.LayoutParams hourlyLp = new LinearLayout.LayoutParams(-1, -2);
+        hourlyLp.topMargin = dp(10);
+        detail.addView(hourlyScroller, hourlyLp);
+        LinearLayout.LayoutParams selectedLp = new LinearLayout.LayoutParams(-1, -2);
+        selectedLp.topMargin = dp(12);
+        detail.addView(selectedDetails, selectedLp);
+        forecastPreview.registerHourlyChart(chart);
 
         if (!covered && state != null && isHourlyStateCurrent(state)) {
             boolean failed = state.aggregate.optBoolean(HOURLY_LOAD_ERROR, false);
@@ -2064,7 +2005,7 @@ abstract class WeatherOverviewRenderingActivity extends MinuteForecastRenderingA
                             : "Only the returned hours for this day are available.",
                     12,
                     false,
-                    SOFT_WHITE);
+                    HOURLY_LABEL_COLOR);
             LinearLayout.LayoutParams partialLp = new LinearLayout.LayoutParams(-1, -2);
             partialLp.topMargin = dp(6);
             detail.addView(partial, partialLp);
@@ -2080,14 +2021,87 @@ abstract class WeatherOverviewRenderingActivity extends MinuteForecastRenderingA
         return detail;
     }
 
-    void addHourlyMetricLine(LinearLayout cell, String label, String value) {
-        if (cell == null || value == null || "—".equals(value)) return;
-        TextView metric = text(UiTranslations.text(this, label) + " " + value,
-                11, false, SOFT_WHITE);
-        metric.setGravity(Gravity.CENTER);
-        metric.setSingleLine(true);
-        metric.setEllipsize(android.text.TextUtils.TruncateAt.END);
-        cell.addView(metric, new LinearLayout.LayoutParams(-1, dp(22)));
+    private GradientDrawable hourlyDetailSurface(int color, int radiusPx, boolean selected) {
+        GradientDrawable surface = roundedBg(color, radiusPx);
+        surface.setStroke(dp(1), selected ? Color.argb(105, 176, 226, 255)
+                : Color.argb(24, 255, 255, 255));
+        return surface;
+    }
+
+    static final class OptionalTileBinding {
+        final String label;
+        final boolean airQuality;
+        final OptionalDataState state;
+        final LinearLayout tile;
+        final TextView value;
+
+        OptionalTileBinding(String label, boolean airQuality, OptionalDataState state,
+                LinearLayout tile) {
+            this.label = label;
+            this.airQuality = airQuality;
+            this.state = state;
+            this.tile = tile;
+            this.value = tile != null && tile.getChildCount() > 2
+                    && tile.getChildAt(2) instanceof TextView
+                    ? (TextView) tile.getChildAt(2) : null;
+        }
+    }
+
+    private StateListDrawable dayHourlyCellBackground() {
+        StateListDrawable states = new StateListDrawable();
+        states.addState(new int[]{android.R.attr.state_pressed},
+                hourlyDetailSurface(Color.argb(60, 255, 255, 255), dp(14), true));
+        states.addState(new int[]{android.R.attr.state_selected},
+                hourlyDetailSurface(Color.argb(40, 255, 255, 255), dp(14), true));
+        states.addState(new int[]{android.R.attr.state_focused},
+                hourlyDetailSurface(Color.argb(40, 255, 255, 255), dp(14), true));
+        states.addState(new int[]{},
+                hourlyDetailSurface(Color.argb(12, 255, 255, 255), dp(14), false));
+        return states;
+    }
+
+    private View buildSelectedDayHourDetail(JSONObject hour, ZoneId zone) {
+        LinearLayout panel = new LinearLayout(this);
+        panel.setOrientation(LinearLayout.VERTICAL);
+        panel.setPadding(dp(13), dp(12), dp(13), dp(10));
+        panel.setBackground(newEnvironmentalGlassDrawable(dp(18), true));
+        Integer temperature = degreesOrNull(hour.optJSONObject("temperature"));
+        String heading = hourPreviewLabel(hour, zone) + "   ·   "
+                + (temperature == null ? "—" : temperature + temperatureUnitSymbol());
+        panel.addView(text(heading, 17, true, WHITE));
+        TextView condition = text(description(hour), 14, false, HOURLY_LABEL_COLOR);
+        condition.setPadding(0, dp(3), 0, dp(9));
+        panel.addView(condition);
+        int uv = safeInt(hour, "uvIndex", -1);
+        JSONObject precipitation = hour.optJSONObject("precipitation");
+        int chance = probability(hour);
+        String[] labels = {"UV index", "Feels like", "Wind", "Wind gust", "Air pressure",
+                "Cloud cover", "CHANCE", "Precipitation"};
+        String[] values = {
+                uv < 0 ? HOURLY_DETAIL_UNAVAILABLE : uvDisplayValue(uv),
+                hourlyDetailValue("feels_like", hour), hourlyDetailValue("wind", hour),
+                hourlyDetailValue("wind_gust", hour), hourlyDetailValue("air_pressure", hour),
+                hourlyDetailValue("cloud_cover", hour),
+                chance < 0 ? HOURLY_DETAIL_UNAVAILABLE : chance + "%",
+                hourlyAvailable(formatQpf(precipitation == null ? null : precipitation.optJSONObject("qpf")))};
+        for (int i = 0; i < labels.length; i += 2) {
+            LinearLayout row = new LinearLayout(this);
+            row.setOrientation(LinearLayout.HORIZONTAL);
+            for (int column = 0; column < 2 && i + column < labels.length; column++) {
+                int index = i + column;
+                LinearLayout metric = new LinearLayout(this);
+                metric.setOrientation(LinearLayout.VERTICAL);
+                metric.setPadding(0, dp(5), column == 0 ? dp(8) : 0, dp(6));
+                metric.addView(text(labels[index], 12, false, HOURLY_LABEL_COLOR));
+                TextView value = text(values[index], HOURLY_DETAIL_UNAVAILABLE.equals(values[index]) ? 13 : 16,
+                        !HOURLY_DETAIL_UNAVAILABLE.equals(values[index]), WHITE);
+                value.setPadding(0, dp(2), 0, 0);
+                metric.addView(value);
+                row.addView(metric, new LinearLayout.LayoutParams(0, -2, 1f));
+            }
+            panel.addView(row, new LinearLayout.LayoutParams(-1, -2));
+        }
+        return panel;
     }
 
     String aqiDisplayValue(JSONObject index) {
@@ -2100,6 +2114,7 @@ abstract class WeatherOverviewRenderingActivity extends MinuteForecastRenderingA
 
     void addDetailTiles(JSONObject current) {
         forecastDetailBindings.clear();
+        optionalTileBindings.clear();
         Integer feels = degreesOrNull(current == null ? null : current.optJSONObject("feelsLikeTemperature"));
         int humidity = safeInt(current, "relativeHumidity", -1);
         int uv = safeInt(current, "uvIndex", -1);
@@ -2114,6 +2129,16 @@ abstract class WeatherOverviewRenderingActivity extends MinuteForecastRenderingA
                 current == null ? null : current.optJSONObject("visibility"));
 
         ArrayList<OverviewTileSpec> tiles = new ArrayList<>();
+        if (airQualityEnabled()) {
+            OptionalDataState state = optionalDataStateForCurrentScope(true);
+            addOptionalOverviewTile(tiles, "air_quality", "Air quality", state,
+                    "air", "Air quality loading", true);
+        }
+        if (pollenEnabled()) {
+            OptionalDataState state = optionalDataStateForCurrentScope(false);
+            addOptionalOverviewTile(tiles, "pollen", "Pollen", state,
+                    "pollen", "Pollen forecast loading", false);
+        }
         if (detailEnabled(WeatherDetailSettingsActivity.PREF_UV_INDEX, true)) {
             addForecastDetailTile(tiles, "uv", "UV", uvDisplayValue(uv), "uv");
         }
@@ -2149,7 +2174,7 @@ abstract class WeatherOverviewRenderingActivity extends MinuteForecastRenderingA
         int thunder = safeInt(current, "thunderstormProbability", -1);
         if (detailEnabled(WeatherDetailSettingsActivity.PREF_THUNDERSTORM_CHANCE, true)) {
             addForecastDetailTile(tiles, "thunder_chance", "Thunder chance",
-                    thunder < 0 ? "—" : thunder + "%", "uv");
+                    thunder < 0 ? "—" : thunder + "%", "thunder");
         }
         addTemperatureDetailTile(tiles, "dew_point", current, "Dew point", "dewPoint",
                 WeatherDetailSettingsActivity.PREF_DEW_POINT, false);
@@ -2181,22 +2206,13 @@ abstract class WeatherOverviewRenderingActivity extends MinuteForecastRenderingA
                     detailTile("24h precipitation", precipitation24h, "humidity"));
         }
 
-        if (airQualityEnabled()) {
-            OptionalDataState state = optionalDataStateForCurrentScope(true);
-            addOverviewTile(tiles, "air_quality", optionalDetailTile(
-                    "Air quality", state, "air", "Air quality loading", true));
-        }
-        if (pollenEnabled()) {
-            OptionalDataState state = optionalDataStateForCurrentScope(false);
-            addOverviewTile(tiles, "pollen", optionalDetailTile(
-                    "Pollen", state, "pollen", "Pollen forecast loading", false));
-        }
         addDetailTileRows(tiles);
         onForecastPreviewChanged();
     }
 
     @Override
     void onForecastPreviewChanged() {
+        applyScenePalette(forecastPreview.activeScene().paletteScene());
         boolean preview = forecastPreview.isPreviewing();
         boolean dayPreview = preview && forecastPreview.previewUvDaily();
         JSONObject weather = forecastPreview.previewWeather();
@@ -2227,6 +2243,182 @@ abstract class WeatherOverviewRenderingActivity extends MinuteForecastRenderingA
                     : translatedLabel + ", " + ("—".equals(value)
                             ? UiTranslations.text(this, "Unavailable") : translatedValue));
         }
+        for (OptionalTileBinding binding : optionalTileBindings) {
+            if (binding.value == null) continue;
+            String value = binding.state == null || binding.state.loading
+                    ? "Loading…" : binding.state.value;
+            if (preview && !dayPreview && binding.state != null
+                    && binding.state.available && binding.state.details != null && weather != null) {
+                String selected = optionalPreviewValue(
+                        binding.airQuality, binding.state.details, weather);
+                if (selected != null && !selected.trim().isEmpty()) value = selected;
+            }
+            if (value == null || value.trim().isEmpty()) value = "Unavailable";
+            String translatedValue = UiTranslations.text(this, value);
+            binding.value.setText(translatedValue);
+            String translatedLabel = UiTranslations.text(this, binding.label);
+            binding.tile.setContentDescription(preview
+                    ? translatedLabel + " forecast for " + forecastPreview.previewLabel()
+                            + ", " + translatedValue
+                    : translatedLabel + ", " + translatedValue);
+        }
+    }
+
+    String optionalPreviewValue(boolean airQuality, JSONObject details,
+            JSONObject selectedWeather) {
+        if (details == null || selectedWeather == null) return null;
+        ZoneId zone = responseZone(lastCurrentWeather, lastHourlyWeather, lastDailyWeather);
+        return details.optBoolean("_openMeteo", false)
+                ? (airQuality
+                        ? openMeteoAirQualityPreviewValue(details.optJSONObject("raw"),
+                                selectedWeather, zone)
+                        : openMeteoPollenPreviewValue(details.optJSONObject("raw"),
+                                selectedWeather, zone))
+                : (airQuality
+                        ? googleAirQualityPreviewValue(details, selectedWeather, zone)
+                        : googlePollenPreviewValue(details, selectedWeather, zone));
+    }
+
+    String googleAirQualityPreviewValue(JSONObject details, JSONObject selectedWeather,
+            ZoneId zone) {
+        JSONObject forecast = details.optJSONObject("forecast");
+        JSONArray hours = forecast == null ? null : forecast.optJSONArray("hourlyForecasts");
+        if (hours == null) return null;
+        LocalDate date = hourLocalDate(selectedWeather, zone);
+        String clock = hourLabel(selectedWeather, zone);
+        for (int i = 0; i < hours.length(); i++) {
+            JSONObject hour = hours.optJSONObject(i);
+            if (hour == null || !optionalTimeMatches(hour.optString("dateTime", ""),
+                    date, clock, zone)) continue;
+            JSONObject index = universalAqiIndex(hour.optJSONArray("indexes"));
+            if (index == null) return null;
+            String score = aqiDisplayValue(index);
+            String category = stringValue(index, "category");
+            return category.isEmpty() ? score : score + "\n" + category;
+        }
+        return null;
+    }
+
+    String googlePollenPreviewValue(JSONObject details, JSONObject selectedWeather,
+            ZoneId zone) {
+        JSONArray days = details.optJSONArray("dailyInfo");
+        if (days == null) return null;
+        LocalDate selectedDate = hourLocalDate(selectedWeather, zone);
+        for (int i = 0; i < days.length(); i++) {
+            JSONObject day = days.optJSONObject(i);
+            if (day == null || !selectedDateEquals(day.optJSONObject("date"), selectedDate)) {
+                continue;
+            }
+            JSONArray types = day.optJSONArray("pollenTypeInfo");
+            int maxValue = Integer.MIN_VALUE;
+            String category = "";
+            ArrayList<String> dominant = new ArrayList<>();
+            if (types != null) {
+                for (int j = 0; j < types.length(); j++) {
+                    JSONObject type = types.optJSONObject(j);
+                    JSONObject index = type == null ? null : type.optJSONObject("indexInfo");
+                    if (index == null || !index.has("value") || index.isNull("value")) continue;
+                    int value = index.optInt("value", Integer.MIN_VALUE);
+                    if (value == Integer.MIN_VALUE) continue;
+                    String typeName = firstNonEmpty(
+                            stringValue(type, "displayName"), stringValue(type, "code"));
+                    if (value > maxValue) {
+                        maxValue = value;
+                        category = stringValue(index, "category");
+                        dominant.clear();
+                        if (!typeName.isEmpty()) dominant.add(typeName);
+                    } else if (value == maxValue && !typeName.isEmpty()) {
+                        dominant.add(typeName);
+                        if (category.isEmpty()) category = stringValue(index, "category");
+                    }
+                }
+            }
+            if (maxValue == Integer.MIN_VALUE) return null;
+            String level = category.isEmpty() ? Integer.toString(maxValue)
+                    : category + " " + maxValue;
+            StringBuilder dominantText = new StringBuilder();
+            if (maxValue > 0) {
+                for (int j = 0; j < dominant.size() && j < 3; j++) {
+                    if (dominantText.length() > 0) dominantText.append(" · ");
+                    dominantText.append(dominant.get(j));
+                }
+            }
+            return dominantText.length() == 0 ? level : level + "\n" + dominantText;
+        }
+        return null;
+    }
+
+    String openMeteoAirQualityPreviewValue(JSONObject raw, JSONObject selectedWeather,
+            ZoneId zone) {
+        JSONObject hourly = raw == null ? null : raw.optJSONObject("hourly");
+        int index = openMeteoHourIndex(hourly, selectedWeather, zone);
+        if (index < 0) return null;
+        Double european = OpenMeteoEnvironmentClient.numberAt(hourly, "european_aqi", index);
+        boolean useEuropean = european != null;
+        Double score = useEuropean ? european
+                : OpenMeteoEnvironmentClient.numberAt(hourly, "us_aqi", index);
+        if (score == null) return null;
+        int rounded = (int) Math.round(score);
+        String category = useEuropean
+                ? OpenMeteoEnvironmentClient.europeanCategory(rounded)
+                : OpenMeteoEnvironmentClient.usCategory(rounded);
+        return rounded + "\n" + UiTranslations.text(this, category);
+    }
+
+    String openMeteoPollenPreviewValue(JSONObject raw, JSONObject selectedWeather,
+            ZoneId zone) {
+        JSONObject hourly = raw == null ? null : raw.optJSONObject("hourly");
+        int index = openMeteoHourIndex(hourly, selectedWeather, zone);
+        if (index < 0) return null;
+        String[] keys = OpenMeteoEnvironmentClient.pollenKeys();
+        String[] labels = OpenMeteoEnvironmentClient.pollenLabels();
+        double highest = -1d;
+        String dominant = "";
+        for (int i = 0; i < keys.length; i++) {
+            Double value = OpenMeteoEnvironmentClient.numberAt(hourly, keys[i], index);
+            if (value != null && value > highest) {
+                highest = value;
+                dominant = labels[i];
+            }
+        }
+        if (highest < 0d) return null;
+        return UiTranslations.text(this, dominant) + "\n"
+                + OpenMeteoEnvironmentClient.format(highest) + " "
+                + UiTranslations.text(this, "grains/m³");
+    }
+
+    int openMeteoHourIndex(JSONObject hourly, JSONObject selectedWeather, ZoneId zone) {
+        JSONArray times = hourly == null ? null : hourly.optJSONArray("time");
+        if (times == null) return -1;
+        LocalDate date = hourLocalDate(selectedWeather, zone);
+        String clock = hourLabel(selectedWeather, zone);
+        for (int i = 0; i < times.length(); i++) {
+            String time = times.optString(i, "");
+            if (optionalTimeMatches(time, date, clock, zone)) return i;
+        }
+        return -1;
+    }
+
+    boolean optionalTimeMatches(String value, LocalDate date, String clock, ZoneId zone) {
+        if (value == null || value.trim().isEmpty() || date == null
+                || clock == null || clock.length() < 5 || "—".equals(clock)) return false;
+        String raw = value.trim();
+        if (raw.length() >= 16 && raw.charAt(10) == 'T'
+                && raw.substring(0, 10).equals(date.toString())
+                && raw.substring(11, 16).equals(clock)) return true;
+        Instant instant = parseInstant(raw);
+        if (instant == null) return false;
+        try {
+            return instant.atZone(zone).toLocalDate().equals(date)
+                    && DateTimeFormatter.ofPattern("HH:mm", Locale.getDefault())
+                            .format(instant.atZone(zone)).equals(clock);
+        } catch (Exception ignored) {
+            return false;
+        }
+    }
+
+    boolean selectedDateEquals(JSONObject dateObject, LocalDate selectedDate) {
+        return selectedDate != null && selectedDate.equals(localDateFields(dateObject));
     }
 
     String forecastWindLabel(JSONObject weather) {
@@ -2310,6 +2502,17 @@ abstract class WeatherOverviewRenderingActivity extends MinuteForecastRenderingA
         tiles.add(new OverviewTileSpec(id, view));
     }
 
+    void addOptionalOverviewTile(ArrayList<OverviewTileSpec> tiles, String id, String label,
+            OptionalDataState state, String glyph, String loadingDescription,
+            boolean airQuality) {
+        View tile = optionalDetailTile(label, state, glyph, loadingDescription, airQuality);
+        addOverviewTile(tiles, id, tile);
+        if (tile instanceof LinearLayout) {
+            optionalTileBindings.add(new OptionalTileBinding(
+                    label, airQuality, state, (LinearLayout) tile));
+        }
+    }
+
     void addForecastDetailTile(ArrayList<OverviewTileSpec> tiles, String id,
             String label, String value, String glyph) {
         LinearLayout tile = (LinearLayout) detailTile(label, value, glyph);
@@ -2354,6 +2557,7 @@ abstract class WeatherOverviewRenderingActivity extends MinuteForecastRenderingA
     }
 
     ArrayList<String> overviewTileFullOrder() {
+        migrateEnvironmentTilesToTop();
         ArrayList<String> order = new ArrayList<>();
         HashSet<String> seen = new HashSet<>();
         String saved = getSharedPreferences(UI_PREFS, MODE_PRIVATE)
@@ -2373,6 +2577,52 @@ abstract class WeatherOverviewRenderingActivity extends MinuteForecastRenderingA
         return order;
     }
 
+    /** Move the former default trailing pair once, while retaining every other saved position. */
+    private void migrateEnvironmentTilesToTop() {
+        SharedPreferences prefs = getSharedPreferences(UI_PREFS, MODE_PRIVATE);
+        if (prefs.getBoolean(PREF_ENVIRONMENT_ORDER_MIGRATED, false)) return;
+        SharedPreferences.Editor editor = prefs.edit()
+                .putBoolean(PREF_ENVIRONMENT_ORDER_MIGRATED, true);
+        try {
+            JSONArray oldTiles = new JSONArray(prefs.getString(PREF_OVERVIEW_TILE_ORDER, ""));
+            int count = oldTiles.length();
+            if (count >= 2 && "air_quality".equals(oldTiles.optString(count - 2))
+                    && "pollen".equals(oldTiles.optString(count - 1))) {
+                JSONArray movedTiles = new JSONArray().put("air_quality").put("pollen");
+                for (int i = 0; i < count - 2; i++) movedTiles.put(oldTiles.optString(i));
+                editor.putString(PREF_OVERVIEW_TILE_ORDER, movedTiles.toString());
+
+                JSONArray oldBlocks = new JSONArray(
+                        prefs.getString(PREF_OVERVIEW_BLOCK_ORDER, ""));
+                int firstTile = -1;
+                int penultimateTile = -1;
+                int lastTile = -1;
+                for (int i = 0; i < oldBlocks.length(); i++) {
+                    if (!isOverviewTileStreamId(oldBlocks.optString(i))) continue;
+                    if (firstTile < 0) firstTile = i;
+                    penultimateTile = lastTile;
+                    lastTile = i;
+                }
+                if (firstTile >= 0 && penultimateTile >= 0
+                        && "tile:air_quality".equals(oldBlocks.optString(penultimateTile))
+                        && "tile:pollen".equals(oldBlocks.optString(lastTile))) {
+                    JSONArray movedBlocks = new JSONArray();
+                    for (int i = 0; i < oldBlocks.length(); i++) {
+                        if (i == firstTile) {
+                            movedBlocks.put("tile:air_quality").put("tile:pollen");
+                        }
+                        if (i != penultimateTile && i != lastTile)
+                            movedBlocks.put(oldBlocks.optString(i));
+                    }
+                    editor.putString(PREF_OVERVIEW_BLOCK_ORDER, movedBlocks.toString());
+                }
+            }
+        } catch (Exception ignored) {
+            // No saved order to migrate; the new default order already starts with these tiles.
+        }
+        editor.apply();
+    }
+
     int overviewTileColumnCount(LinearLayout board) {
         int width = board == null ? 0 : board.getWidth();
         if (width <= 0 && pageContent() != null) width = pageContent().getWidth();
@@ -2380,9 +2630,7 @@ abstract class WeatherOverviewRenderingActivity extends MinuteForecastRenderingA
             width = Math.max(1, getResources().getDisplayMetrics().widthPixels - dp(36));
         }
 
-        // Include the real inter-tile gap in the fit calculation. The old width / 96dp
-        // rule could choose three columns even when the resulting content width was too
-        // narrow for multi-word values on compact dp widths or larger font scales.
+        // Include gaps when fitting columns, especially with larger fonts.
         int minimumTileWidth = Math.max(1, dp(OVERVIEW_TILE_MIN_WIDTH_DP));
         int gap = Math.max(0, dp(OVERVIEW_TILE_GAP_DP));
         for (int columns = 3; columns >= 2; columns--) {
@@ -2404,16 +2652,26 @@ abstract class WeatherOverviewRenderingActivity extends MinuteForecastRenderingA
 
     String formatQpf(JSONObject qpf) {
         Double quantity = numberValue(qpf, "quantity");
-        if (quantity == null) return "—";
+        if (quantity == null || quantity < 0) return "—";
         String unit = qpf == null ? "" : qpf.optString("unit", "");
         if (isFahrenheitUnit()) {
             double inches = unit.toUpperCase(Locale.ROOT).contains("INCH")
                     ? quantity : quantity / 25.4d;
-            return trimNumber(inches) + " in";
+            return precipitationAmountLabel(inches) + " in";
         }
         double millimeters = unit.toUpperCase(Locale.ROOT).contains("INCH")
                 ? quantity * 25.4d : quantity;
-        return trimNumber(millimeters) + " mm";
+        return precipitationAmountLabel(millimeters) + " mm";
+    }
+
+    private String precipitationAmountLabel(double amount) {
+        if (!Double.isFinite(amount) || amount < 0) return "—";
+        double threshold = isFahrenheitUnit() ? .01d : .1d;
+        if (amount > 0 && amount < threshold) {
+            return "<" + String.format(Locale.getDefault(), isFahrenheitUnit() ? "%.2f" : "%.1f", threshold);
+        }
+        return isFahrenheitUnit() && amount > 0
+                ? String.format(Locale.getDefault(), "%.2f", amount) : trimNumber(amount);
     }
 
     OptionalDataState optionalDataStateForCurrentScope(boolean airQuality) {
@@ -2439,7 +2697,12 @@ abstract class WeatherOverviewRenderingActivity extends MinuteForecastRenderingA
         else if (actionableError) value = "No data\nTap for help";
         View tile = detailTile(label, value, glyph);
         if (tile instanceof LinearLayout) {
-            View valueView = ((LinearLayout) tile).getChildAt(2);
+            LinearLayout layout = (LinearLayout) tile;
+            View labelView = layout.getChildAt(1);
+            if (labelView instanceof TextView) {
+                ((TextView) labelView).setText(label + "  ›");
+            }
+            View valueView = layout.getChildAt(2);
             if (valueView instanceof TextView) {
                 ((TextView) valueView).setTextSize(actionableError ? 12.5f : 14f);
                 ((TextView) valueView).setEllipsize(
@@ -2513,6 +2776,8 @@ abstract class WeatherOverviewRenderingActivity extends MinuteForecastRenderingA
             else addOpenMeteoPollenDetails(panel, state.details);
         } else if (airQuality) addAirQualityDialogContent(panel, state.details);
         else addPollenDialogContent(panel, state.details);
+
+        addDataAttribution(panel, openMeteo, false, airQuality, !airQuality, null);
 
         Button close = button("Close");
         close.setContentDescription(UiTranslations.text(this, "Close") + " "
@@ -3126,7 +3391,7 @@ abstract class WeatherOverviewRenderingActivity extends MinuteForecastRenderingA
         LinearLayout copy = new LinearLayout(this);
         copy.setOrientation(LinearLayout.VERTICAL);
         TextView statusLabel = text("CURRENT STATUS", 9, true, environmentAccentColor());
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) statusLabel.setLetterSpacing(0.08f);
+        statusLabel.setLetterSpacing(0.08f);
         copy.addView(statusLabel);
 
         String safeCategory = firstNonEmpty(category, "Current air quality unavailable");
@@ -3346,7 +3611,7 @@ abstract class WeatherOverviewRenderingActivity extends MinuteForecastRenderingA
 
     TextView sectionHeading(String value) {
         TextView heading = text(value, 10, true, environmentAccentColor());
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) heading.setLetterSpacing(0.08f);
+        heading.setLetterSpacing(0.08f);
         heading.setAccessibilityHeading(true);
         heading.setPadding(dp(1), dp(13), 0, dp(7));
         return heading;
@@ -3354,7 +3619,7 @@ abstract class WeatherOverviewRenderingActivity extends MinuteForecastRenderingA
 
     TextView environmentMiniHeading(String value) {
         TextView heading = text(value, 9, true, environmentAccentColor());
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) heading.setLetterSpacing(0.08f);
+        heading.setLetterSpacing(0.08f);
         heading.setAccessibilityHeading(true);
         heading.setPadding(0, dp(11), 0, dp(2));
         return heading;
@@ -3591,15 +3856,6 @@ abstract class WeatherOverviewRenderingActivity extends MinuteForecastRenderingA
         }
     }
 
-    LinearLayout tileRow(View a, View b, View c) {
-        LinearLayout row = new EqualHeightOverviewTileRow(this);
-
-        addWeightedTile(row, a, 0, dp(4));
-        addWeightedTile(row, b, dp(4), dp(4));
-        addWeightedTile(row, c, dp(4), 0);
-        return row;
-    }
-
     void addWeightedTile(LinearLayout row, View tile, int left, int right) {
         tile.setMinimumHeight(dp(OVERVIEW_TILE_MIN_HEIGHT_DP));
         LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(0, -2, 1);
@@ -3783,7 +4039,7 @@ abstract class WeatherOverviewRenderingActivity extends MinuteForecastRenderingA
 
         LinearLayout.LayoutParams lp = defaultCardParams();
         lp.topMargin = dp(12);
-        View card = card(body, dp(24), cardColor);
+        View card = card(body, dp(24));
         card.setLayoutParams(lp);
         pageContent().addView(card);
     }
@@ -3869,7 +4125,7 @@ abstract class WeatherOverviewRenderingActivity extends MinuteForecastRenderingA
 
         LinearLayout.LayoutParams lp = defaultCardParams();
         lp.topMargin = dp(12);
-        View card = card(body, dp(24), cardColor);
+        View card = card(body, dp(24));
         card.setLayoutParams(lp);
         pageContent().addView(card);
     }
@@ -3886,44 +4142,18 @@ abstract class WeatherOverviewRenderingActivity extends MinuteForecastRenderingA
         return row;
     }
 
-    void addAttribution() {
-        boolean openMeteo = OpenMeteoConfig.isOpenMeteo(this);
-        StringBuilder source = new StringBuilder();
-        if (openMeteo) {
-            source.append(UiTranslations.text(this, "Weather forecast"))
-                    .append(": Open-Meteo · ")
-                    .append(OpenMeteoConfig.modelLabel(OpenMeteoConfig.model(this)))
-                    .append("\nhttps://open-meteo.com/ · CC BY 4.0");
-        } else {
-            source.append(UiTranslations.text(this, "Source")).append(": ")
-                    .append(UiTranslations.text(this,
-                            "Includes weather data from Google"));
-        }
-        if (airQualityEnabled() || pollenEnabled()) {
-            if (openMeteo) {
-                source.append("\n")
-                        .append(UiTranslations.text(this, "Air quality and pollen"))
-                        .append(": Open-Meteo / CAMS ENSEMBLE");
-            } else {
-                if (airQualityEnabled()) source.append("\n")
-                        .append(UiTranslations.text(this, "Source")).append(": ")
-                        .append(UiTranslations.text(this,
-                                "Includes air quality data from Google"));
-                if (pollenEnabled()) source.append("\n")
-                        .append(UiTranslations.text(this, "Source")).append(": ")
-                        .append(UiTranslations.text(this,
-                                "Includes pollen data from Google"));
-                source.append("\nGoogle Maps");
-            }
-        }
-        TextView attribution = text(source.toString(), 12, false, FAINT_WHITE);
-        if (openMeteo) android.text.util.Linkify.addLinks(
-                attribution, android.text.util.Linkify.WEB_URLS);
-        attribution.setGravity(Gravity.CENTER);
-        attribution.setPadding(dp(4), dp(24), dp(4), dp(10));
-        pageContent().addView(attribution);
+    void addAttribution(boolean includeEnvironment) {
+        boolean openMeteo = lastCurrentWeather == null ? OpenMeteoConfig.isOpenMeteo(this)
+                : lastCurrentWeather.has("_openMeteo");
+        OptionalDataState air = includeEnvironment && airQualityEnabled()
+                ? optionalDataStateForCurrentScope(true) : null;
+        OptionalDataState pollen = includeEnvironment && pollenEnabled()
+                ? optionalDataStateForCurrentScope(false) : null;
+        addDataAttribution(pageContent(), openMeteo, true,
+                air != null && air.available && !air.loading,
+                pollen != null && pollen.available && !pollen.loading,
+                "Open-Meteo · " + OpenMeteoConfig.modelLabel(OpenMeteoConfig.model(this)));
     }
-
 
     void makeChildrenUnimportant(ViewGroup parent) {
         if (parent == null) return;
@@ -4018,36 +4248,32 @@ abstract class WeatherOverviewRenderingActivity extends MinuteForecastRenderingA
     void applyScenePalette(String scene) {
         if ("night".equals(scene)) {
             cardColor = Color.argb(104, 18, 47, 96);
-            tileColor = Color.argb(90, 18, 51, 104);
             glassCardTop = Color.argb(102, 18, 44, 84);
             glassCardBottom = Color.argb(58, 8, 24, 52);
             glassTileTop = Color.argb(90, 20, 48, 90);
             glassTileBottom = Color.argb(48, 9, 27, 56);
-            glassEdge = Color.TRANSPARENT;
+            glassEdge = Color.argb(26, 255, 255, 255);
         } else if ("rain".equals(scene)) {
             cardColor = Color.argb(104, 40, 65, 87);
-            tileColor = Color.argb(90, 42, 69, 92);
             glassCardTop = Color.argb(96, 49, 70, 89);
             glassCardBottom = Color.argb(54, 23, 40, 56);
             glassTileTop = Color.argb(84, 51, 73, 94);
             glassTileBottom = Color.argb(46, 24, 43, 60);
-            glassEdge = Color.TRANSPARENT;
+            glassEdge = Color.argb(26, 255, 255, 255);
         } else if ("snow".equals(scene)) {
             cardColor = Color.argb(98, 67, 101, 132);
-            tileColor = Color.argb(84, 70, 106, 139);
             glassCardTop = Color.argb(90, 82, 112, 138);
             glassCardBottom = Color.argb(50, 52, 80, 105);
             glassTileTop = Color.argb(78, 84, 116, 144);
             glassTileBottom = Color.argb(44, 54, 83, 110);
-            glassEdge = Color.TRANSPARENT;
+            glassEdge = Color.argb(26, 255, 255, 255);
         } else {
             cardColor = Color.argb(86, 38, 103, 190);
-            tileColor = Color.argb(68, 42, 103, 181);
             glassCardTop = Color.argb(86, 72, 132, 205);
             glassCardBottom = Color.argb(48, 72, 118, 174);
             glassTileTop = Color.argb(74, 73, 133, 198);
             glassTileBottom = Color.argb(42, 67, 112, 167);
-            glassEdge = Color.TRANSPARENT;
+            glassEdge = Color.argb(26, 255, 255, 255);
         }
         for (GlassDrawable drawable : glassDrawables) {
             applyGlassPalette(drawable);
@@ -4059,6 +4285,7 @@ abstract class WeatherOverviewRenderingActivity extends MinuteForecastRenderingA
 
     void applyGlassPalette(GlassDrawable drawable) {
         if (drawable == null) return;
+        drawable.setTransparency(weatherPreferences.tileTransparency());
         if (drawable.isTile()) {
             drawable.setColors(glassTileTop, glassTileBottom, glassEdge);
         } else {
@@ -4067,6 +4294,14 @@ abstract class WeatherOverviewRenderingActivity extends MinuteForecastRenderingA
     }
 
     void showError(Exception e) {
+        if (lastCurrentWeather != null && lastDailyWeather != null) {
+            // Keep the last published forecast through a failed location/network update.
+            forecastRefreshFailed = true;
+            progress.setVisibility(View.GONE);
+            status.setText(UiTranslations.text(this, "Could not update forecast") + " · "
+                    + dataAgeLabel(lastCurrentWeather));
+            return;
+        }
         clearDynamicContent();
         progress.setVisibility(View.GONE);
         status.setText(UiTranslations.text(this, "Could not load forecast"));
@@ -4095,30 +4330,29 @@ abstract class WeatherOverviewRenderingActivity extends MinuteForecastRenderingA
         retryLp.topMargin = dp(14);
         box.addView(retry, retryLp);
 
-        globalErrorView = card(box, dp(24), cardColor);
-        content.addView(globalErrorView);
+        globalErrorView = card(box, dp(24));
+        overviewPageContent.addView(globalErrorView);
     }
 
     void clearDynamicContent() {
         if (globalErrorView != null) {
-            content.removeView(globalErrorView);
+            ViewGroup parent = (ViewGroup) globalErrorView.getParent();
+            if (parent != null) parent.removeView(globalErrorView);
             globalErrorView = null;
         }
+        forecastPreview.clearViewBindings();
         if (overviewPageContent != null) overviewPageContent.removeAllViews();
+        if (dailyPageContent != null) dailyPageContent.removeAllViews();
         if (precipitationPageContent != null) precipitationPageContent.removeAllViews();
         activePageContent = this instanceof MainActivity
                 ? ((MainActivity) this).activeForecastPageContent()
                 : (precipitationMode ? precipitationPageContent : overviewPageContent);
         glassDrawables.clear();
-        if (modeSwitchGlass != null) {
-            applyGlassPalette(modeSwitchGlass);
-            glassDrawables.add(modeSwitchGlass);
-        }
         sunTrackViews.clear();
         precipitationBody = null;
     }
 
-    View card(View child, int radiusPx, int color) {
+    View card(View child, int radiusPx) {
         LinearLayout holder = new LinearLayout(this);
         holder.setOrientation(LinearLayout.VERTICAL);
         holder.setBackground(newGlassDrawable(radiusPx, false));
@@ -4138,19 +4372,14 @@ abstract class WeatherOverviewRenderingActivity extends MinuteForecastRenderingA
 
     GlassDrawable newEnvironmentalGlassDrawable(int radiusPx, boolean tile) {
         GlassDrawable drawable = newGlassDrawable(radiusPx, tile);
-        int top = tile ? glassTileTop : glassCardTop;
-        int bottom = tile ? glassTileBottom : glassCardBottom;
-        drawable.setColors(
-                increaseGlassOpacity(top, 14),
-                increaseGlassOpacity(bottom, 14),
-                glassEdge);
+        drawable.setFillOpacityBoost(14);
         return drawable;
     }
 
-    static int increaseGlassOpacity(int color, int amount) {
-        return Color.argb(
-                Math.min(255, Color.alpha(color) + Math.max(0, amount)),
-                Color.red(color), Color.green(color), Color.blue(color));
+    void applyTileTransparency() {
+        for (GlassDrawable drawable : glassDrawables) applyGlassPalette(drawable);
+        if (headerGlass != null) headerGlass.requestBlurRefresh();
+        if (bottomGlass != null) bottomGlass.requestBlurRefresh();
     }
 
     LinearLayout.LayoutParams defaultCardParams() {
@@ -4185,7 +4414,6 @@ abstract class WeatherOverviewRenderingActivity extends MinuteForecastRenderingA
         return view;
     }
 
-
     String windUnitPreference() {
         return weatherPreferences.windUnit(isFahrenheitUnit());
     }
@@ -4196,18 +4424,6 @@ abstract class WeatherOverviewRenderingActivity extends MinuteForecastRenderingA
 
     String visibilityUnitPreference() {
         return weatherPreferences.visibilityUnit(isFahrenheitUnit());
-    }
-
-    static String normalizeWindUnit(String value) {
-        return WeatherPreferences.normalizeWindUnit(value);
-    }
-
-    static String normalizePressureUnit(String value) {
-        return WeatherPreferences.normalizePressureUnit(value);
-    }
-
-    static String normalizeVisibilityUnit(String value) {
-        return WeatherPreferences.normalizeVisibilityUnit(value);
     }
 
     String formatWindSpeed(JSONObject speed) {
@@ -4222,7 +4438,7 @@ abstract class WeatherOverviewRenderingActivity extends MinuteForecastRenderingA
         return trimNumber(value) + " " + unit;
     }
 
-    Double speedKilometersPerHour(JSONObject speed) {
+    static Double speedKilometersPerHour(JSONObject speed) {
         Double value = numberValue(speed, "value");
         if (value == null) return null;
         String unit = safeUnitString(speed);
@@ -4281,7 +4497,7 @@ abstract class WeatherOverviewRenderingActivity extends MinuteForecastRenderingA
         return trimNumber(value) + " " + unit;
     }
 
-    Double visibilityKilometers(JSONObject visibility) {
+    static Double visibilityKilometers(JSONObject visibility) {
         if (visibility == null) return null;
         Double value = numberValue(visibility, "distance");
         if (value == null) value = numberValue(visibility, "value");
@@ -4317,8 +4533,14 @@ abstract class WeatherOverviewRenderingActivity extends MinuteForecastRenderingA
         return daytime ? "day" : "night";
     }
 
-
     String dataAgeLabel(JSONObject current) {
+        if (current != null && current.optBoolean(SavedForecast.FALLBACK, false)) {
+            long fetchedAt = current.optLong(SavedForecast.FETCHED_AT, 0L);
+            String savedAt = DateTimeFormatter.ofLocalizedDateTime(java.time.format.FormatStyle.SHORT)
+                    .withLocale(Locale.getDefault()).withZone(ZoneId.systemDefault())
+                    .format(Instant.ofEpochMilli(fetchedAt));
+            return getString(R.string.forecast_saved_status, savedAt);
+        }
         boolean openMeteo = current != null && current.has("_openMeteo");
         if (openMeteo) return "Open-Meteo forecast loaded";
         Instant published = parseInstant(current == null ? null : current.optString("currentTime", null));
@@ -4336,6 +4558,5 @@ abstract class WeatherOverviewRenderingActivity extends MinuteForecastRenderingA
                 .formatNumeric(-minutes, RelativeDateTimeFormatter.RelativeDateTimeUnit.MINUTE);
         return UiTranslations.text(this, "Updated") + " · " + age;
     }
-
 
 }

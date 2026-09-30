@@ -1,89 +1,23 @@
 package com.zwerk.weather;
 
-import android.animation.ValueAnimator;
-import android.app.Activity;
-import android.app.Dialog;
-import android.content.Context;
-import android.content.Intent;
-import android.content.pm.ApplicationInfo;
-import android.content.pm.PackageManager;
-import android.graphics.Bitmap;
-import android.graphics.BitmapFactory;
-import android.graphics.Canvas;
 import android.graphics.Color;
-import android.graphics.LinearGradient;
-import android.graphics.Paint;
-import android.graphics.Path;
-import android.graphics.RadialGradient;
-import android.graphics.Rect;
-import android.graphics.RectF;
-import android.graphics.Shader;
-import android.graphics.Typeface;
-import android.graphics.drawable.ColorDrawable;
-import android.graphics.drawable.GradientDrawable;
-import android.graphics.drawable.StateListDrawable;
-import android.location.Address;
-import android.location.Geocoder;
-import android.location.Location;
-import android.net.Uri;
-import android.os.Build;
-import android.os.Bundle;
-import android.os.SystemClock;
-import android.util.Log;
-import android.text.InputType;
-import android.text.method.PasswordTransformationMethod;
 import android.view.Gravity;
-import android.view.KeyEvent;
-import android.view.MotionEvent;
-import android.view.ViewConfiguration;
 import android.view.View;
 import android.view.ViewGroup;
-import android.view.Window;
-import android.view.WindowInsets;
-import android.view.WindowInsetsController;
-import android.view.WindowManager;
-import android.view.accessibility.AccessibilityNodeInfo;
 import android.widget.Button;
-import android.widget.EditText;
-import android.widget.FrameLayout;
-import android.widget.HorizontalScrollView;
 import android.widget.LinearLayout;
 import android.widget.ProgressBar;
-import android.widget.ScrollView;
 import android.widget.TextView;
-import android.widget.Toast;
 
-import android.system.Os;
 
 import org.json.JSONArray;
 import org.json.JSONObject;
 
-import java.io.BufferedReader;
-import java.io.ByteArrayOutputStream;
-import java.io.File;
-import java.io.FileReader;
-import java.io.FileOutputStream;
-import java.io.InputStream;
-import java.lang.ref.WeakReference;
-import java.io.IOException;
-import java.net.HttpURLConnection;
-import java.net.SocketTimeoutException;
-import java.net.URL;
-import java.net.URLEncoder;
-import java.nio.charset.StandardCharsets;
-import java.security.MessageDigest;
 import java.time.Duration;
 import java.time.Instant;
-import java.time.LocalDate;
 import java.time.ZoneId;
-import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
-import java.util.HashSet;
-import java.util.List;
 import java.util.Locale;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.ThreadLocalRandom;
-import java.util.concurrent.Executors;
 
 
 abstract class MinuteForecastRenderingActivity extends MinuteForecastActivity {
@@ -109,12 +43,13 @@ abstract class MinuteForecastRenderingActivity extends MinuteForecastActivity {
         if (this instanceof MainActivity) {
             ((MainActivity) this).cancelForecastSwipe();
         }
-        expandedDayIndex = -1;
         clearDynamicContent();
         renderingAllForecastPages = true;
         try {
             activePageContent = overviewPageContent;
             renderOverviewContent();
+            activePageContent = dailyPageContent;
+            renderDailyContent();
             activePageContent = precipitationPageContent;
             renderPrecipitationContent();
         } finally {
@@ -129,14 +64,6 @@ abstract class MinuteForecastRenderingActivity extends MinuteForecastActivity {
     LinearLayout pageContent() {
         if (activePageContent != null) return activePageContent;
         return content;
-    }
-
-    void requestForecastPagesRender() {
-        if (lastCurrentWeather == null || lastDailyWeather == null) {
-            clearDynamicContent();
-        } else {
-            renderAllForecastPages();
-        }
     }
 
     void renderOverviewContent() {
@@ -168,10 +95,6 @@ abstract class MinuteForecastRenderingActivity extends MinuteForecastActivity {
             addHourlyCard(lastHourlyWeather, zone);
             markOverviewTopLevelBlock(staging, before, "hourly");
 
-            before = staging.getChildCount();
-            addMultiDayCard(days, lastHourlyWeather, zone);
-            markOverviewTopLevelBlock(staging, before, "daily");
-
             addDetailTiles(lastCurrentWeather);
 
             before = staging.getChildCount();
@@ -183,7 +106,7 @@ abstract class MinuteForecastRenderingActivity extends MinuteForecastActivity {
             markOverviewTopLevelBlock(staging, before, "moon");
 
             before = staging.getChildCount();
-            addAttribution();
+            addAttribution(true);
             markOverviewTopLevelBlock(staging, before, "attribution");
         } finally {
             activePageContent = destination;
@@ -207,10 +130,10 @@ abstract class MinuteForecastRenderingActivity extends MinuteForecastActivity {
         }
         if (globalErrorView != null) return;
         if (this instanceof MainActivity) ((MainActivity) this).cancelForecastSwipe();
+        forecastPreview.removeViewBindings(overviewPageContent);
         removePageGlassDrawables(overviewPageContent);
         overviewPageContent.removeAllViews();
         sunTrackViews.clear();
-        forecastPreview.clearViewBindings();
         boolean previous = renderingAllForecastPages;
         LinearLayout previousContent = activePageContent;
         renderingAllForecastPages = true;
@@ -287,6 +210,18 @@ abstract class MinuteForecastRenderingActivity extends MinuteForecastActivity {
         if (forecastPageHost != null) forecastPageHost.requestLayout();
     }
 
+    void rerenderDailyPage() {
+        if (dailyPageContent == null || lastDailyWeather == null || globalErrorView != null) return;
+        forecastPreview.removeViewBindings(dailyPageContent);
+        removePageGlassDrawables(dailyPageContent);
+        dailyPageContent.removeAllViews();
+        LinearLayout previousContent = activePageContent;
+        activePageContent = dailyPageContent;
+        try { renderDailyContent(); }
+        finally { activePageContent = previousContent; }
+        if (forecastPageHost != null) forecastPageHost.requestLayout();
+    }
+
     void removePageGlassDrawables(View view) {
         if (view == null) return;
         if (view.getBackground() instanceof GlassDrawable) {
@@ -316,7 +251,7 @@ abstract class MinuteForecastRenderingActivity extends MinuteForecastActivity {
         headlineLp.topMargin = dp(12);
         body.addView(headline, headlineLp);
         TextView detail = text(
-                OpenMeteoConfig.isOpenMeteo(this)
+                OpenMeteoConfig.isPrecipitationOpenMeteo(this)
                         ? "Loading Open-Meteo precipitation…"
                         : "Using the returned segment timing exactly as provided by Google Weather.",
                 13,
@@ -371,7 +306,9 @@ abstract class MinuteForecastRenderingActivity extends MinuteForecastActivity {
 
     void renderMinuteForecastReady(LinearLayout page, MinuteForecastState state) {
         ZoneId zone = minuteResponseZone(state.response);
-        ArrayList<MinuteSegment> allSegments = minuteSegments(state.response, Instant.now(), 0);
+        Instant windowStart = Instant.now();
+        Instant windowEnd = windowStart.plus(Duration.ofHours(minuteRangeHours));
+        ArrayList<MinuteSegment> allSegments = minuteSegments(state.response, windowStart, 0);
 
         addMinuteRangeSelector(page);
 
@@ -386,9 +323,7 @@ abstract class MinuteForecastRenderingActivity extends MinuteForecastActivity {
             return;
         }
 
-        ArrayList<MinuteSegment> visible = minuteRangeHours == MINUTE_RANGE_SIX_HOURS
-                ? new ArrayList<>(allSegments)
-                : minuteSegments(state.response, Instant.now(), MINUTE_RANGE_TWO_HOURS);
+        ArrayList<MinuteSegment> visible = minuteSegments(state.response, windowStart, minuteRangeHours);
         if (visible.isEmpty()) {
             addMinuteStateCard(
                     page,
@@ -428,11 +363,14 @@ abstract class MinuteForecastRenderingActivity extends MinuteForecastActivity {
 
         metricRow.addView(minuteMetricCell("TIME", selectedTime), new LinearLayout.LayoutParams(0, dp(58), 0.9f));
         metricRow.addView(minuteMetricCell("RATE", selectedRate), new LinearLayout.LayoutParams(0, dp(58), 1.15f));
-        metricRow.addView(minuteMetricCell("CHANCE", selectedChance), new LinearLayout.LayoutParams(0, dp(58), 0.9f));
+        if (visible.stream().anyMatch(segment -> segment.probability != null)) {
+            metricRow.addView(minuteMetricCell("CHANCE", selectedChance), new LinearLayout.LayoutParams(0, dp(58), 0.9f));
+        }
         metricRow.addView(minuteMetricCell("TYPE", selectedType), new LinearLayout.LayoutParams(0, dp(58), 1.35f));
         graphBody.addView(metricRow, new LinearLayout.LayoutParams(-1, dp(62)));
 
-        MinutePrecipitationGraphView graph = new MinutePrecipitationGraphView(this, visible, zone);
+        MinutePrecipitationGraphView graph = new MinutePrecipitationGraphView(
+                this, visible, zone, windowStart, windowEnd);
         graph.setPreferredSelection(minuteSelectedTimeMillis);
         graph.setSelectionListener((segment, selectedMillis) -> {
             minuteSelectedTimeMillis = selectedMillis;
@@ -445,17 +383,9 @@ abstract class MinuteForecastRenderingActivity extends MinuteForecastActivity {
             metricRow.setContentDescription(UiTranslations.text(this, "Selected precipitation. ") + detail);
         });
 
-        LinearLayout.LayoutParams graphLp = new LinearLayout.LayoutParams(-1, dp(220));
+        LinearLayout.LayoutParams graphLp = new LinearLayout.LayoutParams(-1, dp(205));
         graphLp.topMargin = dp(3);
         graphBody.addView(graph, graphLp);
-        if (state.response.has("_openMeteo")) {
-            TextView explanation = text(
-                    "A rain chance can be above 0% even when the model forecasts 0 mm/h for this interval.",
-                    12, false, SOFT_WHITE);
-            LinearLayout.LayoutParams explanationLp = new LinearLayout.LayoutParams(-1, -2);
-            explanationLp.topMargin = dp(8);
-            graphBody.addView(explanation, explanationLp);
-        }
         addMinutePageCard(page, graphBody, 10);
     }
 
@@ -525,24 +455,57 @@ abstract class MinuteForecastRenderingActivity extends MinuteForecastActivity {
     }
 
     void addMinutePageCard(LinearLayout page, View child, int topMarginDp) {
-        View panel = card(child, dp(24), cardColor);
+        View panel = card(child, dp(24));
         LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-1, -2);
         lp.topMargin = dp(topMarginDp);
         page.addView(panel, lp);
     }
 
     void addMinuteAttribution(LinearLayout page) {
-        boolean openMeteo = OpenMeteoConfig.isOpenMeteo(this);
-        TextView attribution = text(openMeteo
-                ? "Forecast: Open-Meteo · https://open-meteo.com/ · CC BY 4.0"
-                : "Source: Includes weather data from Google", 11, false, FAINT_WHITE);
-        if (openMeteo) android.text.util.Linkify.addLinks(
-                attribution, android.text.util.Linkify.WEB_URLS);
-        attribution.setGravity(Gravity.CENTER);
-        attribution.setPadding(dp(4), dp(24), dp(4), dp(12));
-        attribution.setContentDescription(UiTranslations.text(this, openMeteo
-                ? "Forecast data attribution: Open-Meteo" : "Weather data attribution: Google"));
-        page.addView(attribution);
+        boolean openMeteo = OpenMeteoConfig.isPrecipitationOpenMeteo(this);
+        MinuteForecastState state = minuteForecastStateForCurrentScope();
+        JSONObject model = state == null || state.response == null ? null : state.response.optJSONObject("_openMeteo");
+        String modelLabel = model == null ? OpenMeteoConfig.modelLabel(
+                PrecipitationModelPolicy.resolve(OpenMeteoConfig.model(this), latitude, longitude))
+                : model.optString("modelLabel", "Best Match");
+        addDataAttribution(page, openMeteo, true, false, false,
+                "Open-Meteo · " + modelLabel + " · 15 min");
+    }
+
+    void addDataAttribution(LinearLayout page, boolean openMeteo, boolean weather,
+            boolean airQuality, boolean pollen, String openMeteoLabel) {
+        LinearLayout footer = new LinearLayout(this);
+        footer.setOrientation(LinearLayout.VERTICAL);
+        footer.setGravity(Gravity.CENTER_HORIZONTAL);
+        footer.setPadding(dp(4), dp(12), dp(4), dp(8));
+        if (openMeteo) {
+            String label = openMeteoLabel == null ? "Open-Meteo / CAMS ENSEMBLE" : openMeteoLabel;
+            StringBuilder notice = new StringBuilder(label).append(" · CC BY 4.0");
+            if (weather && (airQuality || pollen)) notice.append("\nOpen-Meteo / CAMS ENSEMBLE");
+            notice.append("\nhttps://open-meteo.com/");
+            TextView attribution = text(notice.toString(), 12, false, SOFT_WHITE);
+            attribution.setGravity(Gravity.CENTER);
+            attribution.setLinkTextColor(Color.WHITE);
+            android.text.util.Linkify.addLinks(attribution, android.text.util.Linkify.WEB_URLS);
+            footer.addView(attribution);
+        } else {
+            // Keep the existing Google source credits under the attribution transition:
+            // https://developers.google.com/maps/documentation/weather/policies
+            StringBuilder notice = new StringBuilder();
+            if (weather) appendGoogleSource(notice, "Includes weather data from Google");
+            if (airQuality) appendGoogleSource(notice, "Includes air quality data from Google");
+            if (pollen) appendGoogleSource(notice, "Includes pollen data from Google");
+            TextView attribution = text(notice.toString(), 12, false, SOFT_WHITE);
+            attribution.setGravity(Gravity.CENTER);
+            footer.addView(attribution);
+        }
+        page.addView(footer, new LinearLayout.LayoutParams(-1, -2));
+    }
+
+    private void appendGoogleSource(StringBuilder notice, String dataset) {
+        if (notice.length() > 0) notice.append('\n');
+        notice.append(UiTranslations.text(this, "Source")).append(": ")
+                .append(UiTranslations.text(this, dataset));
     }
 
     static ZoneId minuteResponseZone(JSONObject response) {
@@ -569,7 +532,9 @@ abstract class MinuteForecastRenderingActivity extends MinuteForecastActivity {
             JSONObject raw = source.optJSONObject(i);
             MinuteSegment segment = minuteSegment(raw);
             if (segment == null || !segment.end.isAfter(cutoff)) continue;
-            if (rangeEnd != null && !segment.start.isBefore(rangeEnd)) continue;
+            if (rangeEnd != null && PrecipitationWindow.overlap(
+                    segment.start.toEpochMilli(), segment.end.toEpochMilli(),
+                    cutoff.toEpochMilli(), rangeEnd.toEpochMilli()) == 0) continue;
             output.add(segment);
         }
         output.sort((a, b) -> a.start.compareTo(b.start));
@@ -608,34 +573,6 @@ abstract class MinuteForecastRenderingActivity extends MinuteForecastActivity {
         } catch (Exception ignored) {
             return null;
         }
-    }
-
-    static MinuteCoverage minuteCoverage(ArrayList<MinuteSegment> segments) {
-        if (segments == null || segments.isEmpty()) return null;
-        Instant start = segments.get(0).start;
-        Instant end = segments.get(0).end;
-        for (MinuteSegment segment : segments) {
-            if (segment.start.isBefore(start)) start = segment.start;
-            if (segment.end.isAfter(end)) end = segment.end;
-        }
-        return new MinuteCoverage(start, end);
-    }
-
-    static String minuteCoverageLabel(MinuteCoverage coverage, ZoneId zone) {
-        if (coverage == null) return "No returned segment coverage";
-        long minutes = Math.max(0L, Duration.between(coverage.start, coverage.end).toMinutes());
-        long hours = minutes / 60L;
-        long remainder = minutes % 60L;
-        String span;
-        if (hours > 0L && remainder > 0L) {
-            span = hours + "h " + remainder + "m";
-        } else if (hours > 0L) {
-            span = hours + "h";
-        } else {
-            span = minutes + "m";
-        }
-        return "Returned coverage " + span + " · "
-                + formatTime(coverage.start, zone) + "–" + formatTime(coverage.end, zone);
     }
 
     static String minuteSelectionDetail(

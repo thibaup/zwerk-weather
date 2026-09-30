@@ -1,89 +1,13 @@
 package com.zwerk.weather;
 
-import android.animation.ValueAnimator;
-import android.app.Activity;
-import android.app.Dialog;
-import android.content.Context;
 import android.content.Intent;
-import android.content.pm.ApplicationInfo;
-import android.content.pm.PackageManager;
-import android.graphics.Bitmap;
-import android.graphics.BitmapFactory;
-import android.graphics.Canvas;
-import android.graphics.Color;
-import android.graphics.LinearGradient;
-import android.graphics.Paint;
-import android.graphics.Path;
-import android.graphics.RadialGradient;
-import android.graphics.Rect;
-import android.graphics.RectF;
-import android.graphics.Shader;
-import android.graphics.Typeface;
-import android.graphics.drawable.ColorDrawable;
-import android.graphics.drawable.GradientDrawable;
-import android.graphics.drawable.StateListDrawable;
-import android.location.Address;
-import android.location.Geocoder;
-import android.location.Location;
-import android.net.Uri;
-import android.os.Build;
-import android.os.Bundle;
-import android.os.SystemClock;
-import android.util.Log;
-import android.text.InputType;
-import android.text.method.PasswordTransformationMethod;
-import android.view.Gravity;
-import android.view.KeyEvent;
-import android.view.MotionEvent;
-import android.view.ViewConfiguration;
-import android.view.View;
-import android.view.ViewGroup;
-import android.view.Window;
-import android.view.WindowInsets;
-import android.view.WindowInsetsController;
-import android.view.WindowManager;
-import android.view.accessibility.AccessibilityNodeInfo;
-import android.widget.Button;
-import android.widget.EditText;
-import android.widget.FrameLayout;
-import android.widget.HorizontalScrollView;
-import android.widget.LinearLayout;
-import android.widget.ProgressBar;
-import android.widget.ScrollView;
-import android.widget.TextView;
-import android.widget.Toast;
 
-import android.system.Os;
 
-import org.json.JSONArray;
 import org.json.JSONObject;
 
-import java.io.BufferedReader;
-import java.io.ByteArrayOutputStream;
-import java.io.File;
-import java.io.FileReader;
-import java.io.FileOutputStream;
-import java.io.InputStream;
-import java.lang.ref.WeakReference;
-import java.io.IOException;
-import java.net.HttpURLConnection;
-import java.net.SocketTimeoutException;
-import java.net.URL;
-import java.net.URLEncoder;
-import java.nio.charset.StandardCharsets;
-import java.security.MessageDigest;
-import java.time.Duration;
 import java.time.Instant;
-import java.time.LocalDate;
 import java.time.ZoneId;
-import java.time.format.DateTimeFormatter;
-import java.util.ArrayList;
-import java.util.HashSet;
-import java.util.List;
 import java.util.Locale;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.ThreadLocalRandom;
-import java.util.concurrent.Executors;
 
 
 abstract class WeatherSettingsFlowActivity extends WeatherOverviewRenderingActivity {
@@ -113,9 +37,11 @@ abstract class WeatherSettingsFlowActivity extends WeatherOverviewRenderingActiv
                 SettingsActivity.EXTRA_FORECAST_PAGES_CHANGED, false);
         boolean providerChanged = data.getBooleanExtra(
                 SettingsActivity.EXTRA_PROVIDER_CHANGED, false);
+        boolean precipitationProviderChanged = data.getBooleanExtra(
+                SettingsActivity.EXTRA_PRECIPITATION_PROVIDER_CHANGED, false);
         if (unitChanged || displayUnitChanged || airQualityChanged || pollenChanged
                 || severeAlertsChanged || weatherDetailsChanged || forecastPagesChanged
-                || providerChanged) {
+                || providerChanged || precipitationProviderChanged) {
             suppressNextResumeWeatherLoad = true;
         }
         boolean actionReloadsBaseWeather = SettingsActivity.ACTION_API_KEY_CHANGED.equals(action)
@@ -137,9 +63,6 @@ abstract class WeatherSettingsFlowActivity extends WeatherOverviewRenderingActiv
         if (providerChanged) {
             invalidateMinuteForecastState();
             hourlyPageState = null;
-            if (this instanceof MainActivity) {
-                ((MainActivity) this).reloadRadarSource();
-            }
             if (OpenMeteoConfig.GOOGLE.equals(OpenMeteoConfig.provider(this))
                     && this instanceof MainActivity
                     && !((MainActivity) this).hasConfiguredApiKey()) {
@@ -153,6 +76,17 @@ abstract class WeatherSettingsFlowActivity extends WeatherOverviewRenderingActiv
             refreshWeather(true, precipitationMode);
         } else if (SettingsActivity.ACTION_PREFERENCES_CHANGED.equals(action)) {
             if (unitChanged || displayUnitChanged || weatherDetailsChanged) rerenderLastWeather();
+            if (precipitationProviderChanged) {
+                invalidateMinuteForecastState();
+                if (OpenMeteoConfig.GOOGLE.equals(
+                        OpenMeteoConfig.precipitationProvider(this))
+                        && this instanceof MainActivity
+                        && !((MainActivity) this).hasConfiguredApiKey()) {
+                    ((MainActivity) this).showApiKeySetupDialog();
+                } else if (precipitationMode) {
+                    ensureMinuteForecast(true);
+                }
+            }
         } else if (SettingsActivity.ACTION_DEVICE_LOCATION.equals(action)) {
             selectDeviceLocationAndRefresh();
         } else if (SettingsActivity.ACTION_ADVANCED_COORDINATES.equals(action)) {
@@ -163,6 +97,9 @@ abstract class WeatherSettingsFlowActivity extends WeatherOverviewRenderingActiv
         } else if (unitChanged || displayUnitChanged || airQualityChanged || pollenChanged
                 || severeAlertsChanged || weatherDetailsChanged) {
             if (unitChanged || displayUnitChanged || weatherDetailsChanged) rerenderLastWeather();
+        } else if (precipitationProviderChanged) {
+            invalidateMinuteForecastState();
+            if (precipitationMode) ensureMinuteForecast(true);
         }
     }
 
@@ -193,7 +130,7 @@ abstract class WeatherSettingsFlowActivity extends WeatherOverviewRenderingActiv
         selectedLocationId = data.getStringExtra(CityManagerActivity.EXTRA_LOCATION_ID);
         if (selectedLocationId == null) selectedLocationId = "";
         usingDeviceLocation = data.getBooleanExtra(CityManagerActivity.EXTRA_IS_DEVICE, false);
-        locationTitle.setText(locationName);
+        locationTitle.setText(lastCurrentWeather == null ? locationName : forecastLocationName());
         getPreferences(MODE_PRIVATE).edit()
                 .putFloat("lat", (float) lat)
                 .putFloat("lon", (float) lon)
@@ -249,7 +186,8 @@ abstract class WeatherSettingsFlowActivity extends WeatherOverviewRenderingActiv
                 public String conditionKey(String condition) { return WeatherSettingsFlowActivity.conditionKey(condition); }
             });
         }
-        widgetSnapshotPublisher.publish(current, today, hourly, zone, locationName);
+        widgetSnapshotPublisher.publish(current, today, hourly, lastDailyWeather, zone,
+                forecastLocationName(), latitude, longitude);
     }
 
 }

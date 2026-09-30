@@ -4,22 +4,29 @@ import org.json.JSONObject;
 
 import java.time.Instant;
 
-/** Package-private DTOs shared across request, cache, minute-forecast and rendering boundaries. */
-final class WeatherModels {
-    private WeatherModels() { }
-}
-
 final class SceneSpec {
     final String base;
     final String effect;
     final boolean daytime;
     final String condition;
+    final float rainIntensity;
 
     SceneSpec(String base, String effect, boolean daytime, String condition) {
         this.base = base == null ? "day" : base;
         this.effect = effect == null ? "none" : effect;
         this.daytime = daytime;
         this.condition = condition == null || condition.trim().isEmpty() ? "Unknown" : condition.trim();
+        String description = this.condition.toLowerCase(java.util.Locale.ROOT);
+        rainIntensity = "thunder".equals(this.effect)
+                || description.contains("heavy") || description.contains("violent") ? 1.28f
+                : description.contains("drizzle") || description.contains("light") ? 0.60f : 1f;
+    }
+
+    boolean hasSameVisuals(SceneSpec other) {
+        return other != null && daytime == other.daytime && base.equals(other.base)
+                && effect.equals(other.effect)
+                && (!("rain".equals(effect) || "thunder".equals(effect))
+                    || Float.compare(rainIntensity, other.rainIntensity) == 0);
     }
 
     static SceneSpec fromWeather(JSONObject weather, boolean fallbackDaytime) {
@@ -241,15 +248,5 @@ final class MinuteSegment {
         this.snowfallUnit = snowfallUnit == null ? "" : snowfallUnit;
         this.type = type == null ? "" : type;
         this.intensity = intensity == null ? "" : intensity;
-    }
-}
-
-final class MinuteCoverage {
-    final Instant start;
-    final Instant end;
-
-    MinuteCoverage(Instant start, Instant end) {
-        this.start = start;
-        this.end = end;
     }
 }

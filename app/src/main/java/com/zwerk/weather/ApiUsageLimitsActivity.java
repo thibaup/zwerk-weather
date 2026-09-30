@@ -15,7 +15,6 @@ import android.os.Bundle;
 import android.text.InputType;
 import android.view.Gravity;
 import android.view.View;
-import android.view.ViewGroup;
 import android.view.Window;
 import android.view.WindowInsets;
 import android.view.WindowInsetsController;
@@ -28,7 +27,6 @@ import android.widget.TextView;
 
 import java.util.Locale;
 
-/** Dedicated settings screen for app-side API request budgets. */
 public final class ApiUsageLimitsActivity extends Activity {
     private static final String PRICING_URL =
             "https://developers.google.com/maps/billing-and-pricing/pricing";
@@ -91,6 +89,7 @@ public final class ApiUsageLimitsActivity extends Activity {
         TextView title = text("API request limits", 25f, PRIMARY);
         title.setTypeface(Typeface.create("sans-serif-medium", Typeface.NORMAL));
         LinearLayout.LayoutParams titleParams = new LinearLayout.LayoutParams(0, dp(54), 1f);
+        titleParams.setMarginStart(dp(12));
         title.setGravity(Gravity.CENTER_VERTICAL);
         header.addView(title, titleParams);
         page.addView(header);
@@ -341,19 +340,7 @@ public final class ApiUsageLimitsActivity extends Activity {
             buildUi();
         });
 
-        dialog.setContentView(panel);
-        dialog.show();
-        Window window = dialog.getWindow();
-        if (window != null) {
-            window.setBackgroundDrawable(new ColorDrawable(Color.TRANSPARENT));
-            window.addFlags(WindowManager.LayoutParams.FLAG_DIM_BEHIND);
-            WindowManager.LayoutParams attributes = window.getAttributes();
-            attributes.width = getResources().getDisplayMetrics().widthPixels - dp(36);
-            attributes.height = WindowManager.LayoutParams.WRAP_CONTENT;
-            attributes.dimAmount = 0.62f;
-            window.setAttributes(attributes);
-            window.setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE);
-        }
+        showLimitsDialog(dialog, panel);
     }
 
     private void addExternalUsage(LinearLayout page, String title,
@@ -456,19 +443,22 @@ public final class ApiUsageLimitsActivity extends Activity {
             buildUi();
         });
 
-        dialog.setContentView(panel);
+        showLimitsDialog(dialog, panel);
+    }
+
+    private void showLimitsDialog(Dialog dialog, View content) {
+        dialog.setContentView(content);
         dialog.show();
         Window window = dialog.getWindow();
-        if (window != null) {
-            window.setBackgroundDrawable(new ColorDrawable(Color.TRANSPARENT));
-            window.addFlags(WindowManager.LayoutParams.FLAG_DIM_BEHIND);
-            WindowManager.LayoutParams attributes = window.getAttributes();
-            attributes.width = getResources().getDisplayMetrics().widthPixels - dp(36);
-            attributes.height = WindowManager.LayoutParams.WRAP_CONTENT;
-            attributes.dimAmount = 0.62f;
-            window.setAttributes(attributes);
-            window.setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE);
-        }
+        if (window == null) return;
+        window.setBackgroundDrawable(new ColorDrawable(Color.TRANSPARENT));
+        window.addFlags(WindowManager.LayoutParams.FLAG_DIM_BEHIND);
+        WindowManager.LayoutParams attributes = window.getAttributes();
+        attributes.width = getResources().getDisplayMetrics().widthPixels - dp(36);
+        attributes.height = WindowManager.LayoutParams.WRAP_CONTENT;
+        attributes.dimAmount = 0.62f;
+        window.setAttributes(attributes);
+        window.setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE);
     }
 
     private EditText numberField(String hint, int value) {
