@@ -80,6 +80,7 @@
     <string name="settings_on">Вкл.</string>
     <string name="settings_off">Выкл.</string>
     <string name="weather_widget_description">Прогноз погоды и текущие условия.</string>
+    <string name="weather_widget_loading">Обновление…</string>
     <string name="forecast_saved_status">Сохранённый прогноз · %1$s</string>
     <string name="forecast_temperature">Температура</string>
     <string name="hourly_day_graph_hint">Нажмите на график, чтобы увидеть почасовые данные</string>

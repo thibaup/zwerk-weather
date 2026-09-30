@@ -80,6 +80,7 @@
     <string name="settings_on">Til</string>
     <string name="settings_off">Fra</string>
     <string name="weather_widget_description">Vejrudsigt og aktuelle forhold.</string>
+    <string name="weather_widget_loading">Opdaterer…</string>
     <string name="forecast_saved_status">Gemt prognose · %1$s</string>
     <string name="forecast_temperature">Temperatur</string>
     <string name="hourly_day_graph_hint">Tryk på grafen for timeoplysninger</string>

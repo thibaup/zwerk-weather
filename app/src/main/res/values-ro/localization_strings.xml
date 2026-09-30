@@ -80,6 +80,7 @@
     <string name="settings_on">Activat</string>
     <string name="settings_off">Dezactivat</string>
     <string name="weather_widget_description">Prognoza meteo și condițiile actuale.</string>
+    <string name="weather_widget_loading">Se actualizează…</string>
     <string name="forecast_saved_status">Prognoză salvată · %1$s</string>
     <string name="forecast_temperature">Temperatură</string>
     <string name="hourly_day_graph_hint">Atinge graficul pentru detalii orare</string>

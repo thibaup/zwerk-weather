@@ -80,6 +80,7 @@
     <string name="settings_on">Увімк.</string>
     <string name="settings_off">Вимк.</string>
     <string name="weather_widget_description">Прогноз погоди та поточні умови.</string>
+    <string name="weather_widget_loading">Оновлення…</string>
     <string name="forecast_saved_status">Збережений прогноз · %1$s</string>
     <string name="forecast_temperature">Температура</string>
     <string name="hourly_day_graph_hint">Натисніть на графік, щоб побачити погодинні дані</string>

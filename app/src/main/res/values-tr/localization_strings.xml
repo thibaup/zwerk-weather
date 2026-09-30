@@ -80,6 +80,7 @@
     <string name="settings_on">Açık</string>
     <string name="settings_off">Kapalı</string>
     <string name="weather_widget_description">Hava tahmini ve mevcut koşullar.</string>
+    <string name="weather_widget_loading">Yenileniyor…</string>
     <string name="forecast_saved_status">Kaydedilen tahmin · %1$s</string>
     <string name="forecast_temperature">Sıcaklık</string>
     <string name="hourly_day_graph_hint">Saatlik ayrıntılar için grafiğe dokunun</string>

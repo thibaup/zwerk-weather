@@ -80,6 +80,7 @@
     <string name="settings_on">On</string>
     <string name="settings_off">Off</string>
     <string name="weather_widget_description">Weather forecast and current conditions.</string>
+    <string name="weather_widget_loading">Refreshing…</string>
     <string name="forecast_saved_status">Saved forecast · %1$s</string>
     <string name="forecast_temperature">Temperature</string>
     <string name="hourly_day_graph_hint">Tap the graph for hourly details</string>

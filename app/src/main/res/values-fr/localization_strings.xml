@@ -80,6 +80,7 @@
     <string name="settings_on">Activé</string>
     <string name="settings_off">Désactivé</string>
     <string name="weather_widget_description">Prévisions météo et conditions actuelles.</string>
+    <string name="weather_widget_loading">Actualisation…</string>
     <string name="forecast_saved_status">Prévisions enregistrées · %1$s</string>
     <string name="forecast_temperature">Température</string>
     <string name="hourly_day_graph_hint">Touchez le graphique pour les détails horaires</string>

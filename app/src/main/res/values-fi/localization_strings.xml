@@ -80,6 +80,7 @@
     <string name="settings_on">Päällä</string>
     <string name="settings_off">Pois</string>
     <string name="weather_widget_description">Sääennuste ja nykyiset olosuhteet.</string>
+    <string name="weather_widget_loading">Päivitetään…</string>
     <string name="forecast_saved_status">Tallennettu ennuste · %1$s</string>
     <string name="forecast_temperature">Lämpötila</string>
     <string name="hourly_day_graph_hint">Näytä tuntitiedot napauttamalla kuvaajaa</string>

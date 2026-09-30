@@ -80,6 +80,7 @@
     <string name="settings_on">Вкл.</string>
     <string name="settings_off">Изкл.</string>
     <string name="weather_widget_description">Прогноза за времето и текущи условия.</string>
+    <string name="weather_widget_loading">Опресняване…</string>
     <string name="forecast_saved_status">Запазена прогноза · %1$s</string>
     <string name="forecast_temperature">Температура</string>
     <string name="hourly_day_graph_hint">Докоснете графиката за почасови подробности</string>

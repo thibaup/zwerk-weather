@@ -80,6 +80,7 @@
     <string name="settings_on">Be</string>
     <string name="settings_off">Ki</string>
     <string name="weather_widget_description">Időjárás-előrejelzés és aktuális körülmények.</string>
+    <string name="weather_widget_loading">Frissítés…</string>
     <string name="forecast_saved_status">Mentett előrejelzés · %1$s</string>
     <string name="forecast_temperature">Hőmérséklet</string>
     <string name="hourly_day_graph_hint">Koppints a grafikonra az óránkénti részletekért</string>

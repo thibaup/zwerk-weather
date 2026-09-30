@@ -80,6 +80,7 @@
     <string name="settings_on">Zapnuté</string>
     <string name="settings_off">Vypnuté</string>
     <string name="weather_widget_description">Predpoveď počasia a aktuálne podmienky.</string>
+    <string name="weather_widget_loading">Aktualizácia…</string>
     <string name="forecast_saved_status">Uložená predpoveď · %1$s</string>
     <string name="forecast_temperature">Teplota</string>
     <string name="hourly_day_graph_hint">Klepnutím na graf zobrazíte hodinové podrobnosti</string>

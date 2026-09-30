@@ -80,6 +80,7 @@
     <string name="settings_on">På</string>
     <string name="settings_off">Av</string>
     <string name="weather_widget_description">Værmelding og nåværende forhold.</string>
+    <string name="weather_widget_loading">Oppdaterer…</string>
     <string name="forecast_saved_status">Lagret værvarsel · %1$s</string>
     <string name="forecast_temperature">Temperatur</string>
     <string name="hourly_day_graph_hint">Trykk på grafen for timedetaljer</string>

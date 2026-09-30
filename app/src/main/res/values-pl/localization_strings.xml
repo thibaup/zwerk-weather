@@ -80,6 +80,7 @@
     <string name="settings_on">Wł.</string>
     <string name="settings_off">Wył.</string>
     <string name="weather_widget_description">Prognoza pogody i aktualne warunki.</string>
+    <string name="weather_widget_loading">Odświeżanie…</string>
     <string name="forecast_saved_status">Zapisana prognoza · %1$s</string>
     <string name="forecast_temperature">Temperatura</string>
     <string name="hourly_day_graph_hint">Dotknij wykresu, aby zobaczyć szczegóły godzinowe</string>

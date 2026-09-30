@@ -80,6 +80,7 @@
     <string name="settings_on">Ενεργό</string>
     <string name="settings_off">Ανενεργό</string>
     <string name="weather_widget_description">Πρόγνωση καιρού και τρέχουσες συνθήκες.</string>
+    <string name="weather_widget_loading">Ανανέωση…</string>
     <string name="forecast_saved_status">Αποθηκευμένη πρόγνωση · %1$s</string>
     <string name="forecast_temperature">Θερμοκρασία</string>
     <string name="hourly_day_graph_hint">Πατήστε το γράφημα για ωριαίες λεπτομέρειες</string>

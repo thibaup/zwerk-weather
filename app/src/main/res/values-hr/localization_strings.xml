@@ -80,6 +80,7 @@
     <string name="settings_on">Uključeno</string>
     <string name="settings_off">Isključeno</string>
     <string name="weather_widget_description">Vremenska prognoza i trenutačni uvjeti.</string>
+    <string name="weather_widget_loading">Osvježavanje…</string>
     <string name="forecast_saved_status">Spremljena prognoza · %1$s</string>
     <string name="forecast_temperature">Temperatura</string>
     <string name="hourly_day_graph_hint">Dodirnite grafikon za pojedinosti po satu</string>
