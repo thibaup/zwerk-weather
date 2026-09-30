@@ -2,7 +2,7 @@
   "Set up Zwerk Weather": "Configurează Zwerk Weather",
   "Zwerk Weather uses Google Weather. Your key is saved only in this app's private storage and is never shown after saving.": "Zwerk Weather folosește Google Weather. Cheia ta este salvată numai în spațiul de stocare privat al acestei aplicații și nu este afișată niciodată după salvare.",
   "Save & continue": "Salvează & continuă",
-  "Use Open-Meteo without a key": "Folosește Open-Meteo fără cheie",
+  "Use Zwerk Weather without a key": "Folosește Zwerk Weather fără cheie",
   "Get a key in 3 steps": "Obține o cheie în 3 pași",
   "1. Create or select a Google Cloud project and enable billing.": "1. Creează sau selectează un proiect Google Cloud și activează facturarea.",
   "2. Enable Weather API. Enable Air Quality API and Pollen API too if you want those optional tiles.": "2. Activează Weather API. Activează și Air Quality API și Pollen API dacă vrei să folosești acele dale opționale.",

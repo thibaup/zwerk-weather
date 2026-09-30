@@ -2,7 +2,7 @@
   "Set up Zwerk Weather": "Configurer Zwerk Weather",
   "Zwerk Weather uses Google Weather. Your key is saved only in this app's private storage and is never shown after saving.": "Zwerk Weather utilise Google Weather. Votre clé est enregistrée uniquement dans le stockage privé de cette application et n’est jamais affichée après son enregistrement.",
   "Save & continue": "Enregistrer et continuer",
-  "Use Open-Meteo without a key": "Utiliser Open-Meteo sans clé",
+  "Use Zwerk Weather without a key": "Utiliser Zwerk Weather sans clé",
   "Get a key in 3 steps": "Obtenir une clé en 3 étapes",
   "1. Create or select a Google Cloud project and enable billing.": "1. Créez ou sélectionnez un projet Google Cloud et activez la facturation.",
   "2. Enable Weather API. Enable Air Quality API and Pollen API too if you want those optional tiles.": "2. Activez Weather API. Activez également Air Quality API et Pollen API si vous souhaitez utiliser ces tuiles facultatives.",

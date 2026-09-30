@@ -15,7 +15,7 @@ android {
         applicationId "com.zwerk.weather"
         minSdk 28
         targetSdk 36
-        versionCode 58
+        versionCode 59
         versionName "1.5.0"
         testInstrumentationRunner "com.zwerk.weather.SettingsWidgetRegression"
         buildConfigField "boolean", "FORCE_GENERIC_HEADER_BLUR", forceGenericHeaderBlur.toString()

@@ -20,7 +20,11 @@ import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
 import android.text.InputType;
+import android.text.SpannableString;
+import android.text.Spanned;
 import android.text.method.PasswordTransformationMethod;
+import android.text.style.ForegroundColorSpan;
+import android.text.style.RelativeSizeSpan;
 import android.view.Gravity;
 import android.view.MotionEvent;
 import android.view.ViewConfiguration;
@@ -1296,9 +1300,18 @@ public class MainActivity extends WeatherSettingsFlowActivity implements DeviceL
         title.setTypeface(Typeface.create("sans-serif-medium", Typeface.NORMAL));
         panel.addView(title);
 
-        Button useOpenMeteo = coordinateDialogButton("Use Open-Meteo without a key", true);
+        String keyFreeTitle = UiTranslations.text(this, "Use Zwerk Weather without a key");
+        SpannableString keyFreeLabel = new SpannableString(keyFreeTitle + "\nOpen-Meteo");
+        int providerLabelStart = keyFreeTitle.length() + 1;
+        keyFreeLabel.setSpan(new RelativeSizeSpan(0.8f), providerLabelStart,
+                keyFreeLabel.length(), Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
+        keyFreeLabel.setSpan(new ForegroundColorSpan(SOFT_WHITE), providerLabelStart,
+                keyFreeLabel.length(), Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
+        Button useOpenMeteo = coordinateDialogButton("Use Zwerk Weather without a key", true);
+        useOpenMeteo.setText(keyFreeLabel);
         useOpenMeteo.setTextSize(15);
-        useOpenMeteo.setMinHeight(dp(56));
+        useOpenMeteo.setPadding(dp(12), dp(12), dp(12), dp(12));
+        useOpenMeteo.setMinHeight(dp(72));
         LinearLayout.LayoutParams openMeteoLp = new LinearLayout.LayoutParams(-1, -2);
         openMeteoLp.topMargin = dp(16);
         openMeteoLp.bottomMargin = dp(14);
