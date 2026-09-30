@@ -19,7 +19,7 @@ Overview, forecast, precipitation, and radar:
   <img src="docs/screenshots/demo-radar.png" width="24%" alt="Dark radar map showing real RainViewer observations over London">
 </p>
 
-Clear skies, thunderstorms, and snow have their own animated backgrounds:
+Clear skies, thunderstorms, snow, and more have their own animated backgrounds:
 
 <p align="center">
   <img src="docs/screenshots/demo-clear.png" width="32%" alt="Clear-sky overview with a warm sunny background">
