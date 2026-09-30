@@ -27,8 +27,6 @@ Clear skies, thunderstorms, snow, and more have their own animated backgrounds:
   <img src="docs/screenshots/demo-snow.png" width="32%" alt="Snowy overview with falling snow">
 </p>
 
-*Screenshots captured from the app. “Demo City” uses sample weather; the radar shows real observations over London. The backgrounds animate in the app.*
-
 ## Features
 
 - **Weather at a glance.** Current conditions, an hourly forecast, and useful details such as feels-like temperature, wind, humidity, UV, and visibility.
