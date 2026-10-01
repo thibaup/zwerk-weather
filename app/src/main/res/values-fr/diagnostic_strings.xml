@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="settings_export_logs">Exporter les journaux de diagnostic</string>
+    <string name="settings_export_logs_summary">Enregistrez un rapport pour aider à résoudre les problèmes.</string>
+    <string name="settings_logs_saved">Rapport de diagnostic enregistré.</string>
+    <string name="settings_logs_failed">Impossible d’enregistrer le rapport de diagnostic.</string>
+</resources>

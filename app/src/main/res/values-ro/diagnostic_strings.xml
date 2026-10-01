@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="settings_export_logs">Exportă jurnalele de diagnostic</string>
+    <string name="settings_export_logs_summary">Salvează un raport pentru rezolvarea problemelor.</string>
+    <string name="settings_logs_saved">Raportul de diagnostic a fost salvat.</string>
+    <string name="settings_logs_failed">Raportul de diagnostic nu a putut fi salvat.</string>
+</resources>

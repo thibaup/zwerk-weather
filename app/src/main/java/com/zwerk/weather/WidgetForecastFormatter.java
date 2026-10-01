@@ -9,9 +9,11 @@ import java.util.Locale;
 /** The same display units and JSON adapters used by the activity, without creating an activity. */
 final class WidgetForecastFormatter implements WeatherWidgetSnapshotPublisher.Formatter {
     private final WeatherPreferences preferences;
+    private final Context context;
     private final boolean fahrenheit;
 
     WidgetForecastFormatter(Context context) {
+        this.context = context;
         preferences = new WeatherPreferences(context);
         fahrenheit = WeatherPreferences.TEMP_FAHRENHEIT.equals(preferences.temperatureUnit());
     }
@@ -26,8 +28,10 @@ final class WidgetForecastFormatter implements WeatherWidgetSnapshotPublisher.Fo
         return WeatherActivityFoundation.safeBoolean(object, key, fallback);
     }
     public Instant parseInstant(String value) { return WeatherActivityFoundation.parseInstant(value); }
-    public String formatTime(Instant value, ZoneId zone) { return WeatherActivityFoundation.formatTime(value, zone); }
-    public String hourLabel(JSONObject hour, ZoneId zone) { return WeatherActivityFoundation.hourLabel(hour, zone); }
+    public String formatTime(Instant value, ZoneId zone) { return WeatherTimeFormat.time(context, value, zone); }
+    public String hourLabel(JSONObject hour, ZoneId zone) {
+        return WeatherTimeFormat.clock(context, WeatherActivityFoundation.rawHourLabel(hour, zone));
+    }
     public int probability(JSONObject weather) { return WeatherActivityFoundation.probability(weather); }
     public String temperatureUnitSymbol() { return fahrenheit ? "°F" : "°C"; }
     public String conditionKey(String condition) { return WeatherActivityFoundation.conditionKey(condition); }

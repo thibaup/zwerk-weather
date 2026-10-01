@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="widget_background_title">Поддържайте джаджите актуални</string>
+    <string name="widget_background_message">Разрешете фоновата активност, за да се обновяват джаджите при затворено приложение. Отворете Използване на батерията в настройките на приложението и изберете Разрешаване на всичко, Без ограничения или съответната опция на телефона.</string>
+    <string name="widget_background_summary">Разрешете фоновата активност за обновяване на джаджите.</string>
+    <string name="widget_background_settings">Настройки на приложението</string>
+    <string name="widget_background_confirmed">Вече е включено</string>
+    <string name="widget_background_later">Не сега</string>
+    <string name="widget_background_unavailable">Системните настройки не могат да се отворят.</string>
+</resources>

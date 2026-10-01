@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="widget_background_title">Widgets aktuell halten</string>
+    <string name="widget_background_message">Erlaube Hintergrundaktivität, damit Widgets bei geschlossener App aktualisiert werden. Öffne Akkunutzung in den App-Einstellungen und wähle Alles zulassen, Uneingeschränkt oder die entsprechende Option auf deinem Gerät.</string>
+    <string name="widget_background_summary">Erlaube Hintergrundaktivität zur Aktualisierung der Widgets.</string>
+    <string name="widget_background_settings">App-Einstellungen öffnen</string>
+    <string name="widget_background_confirmed">Bereits aktiviert</string>
+    <string name="widget_background_later">Nicht jetzt</string>
+    <string name="widget_background_unavailable">Systemeinstellungen konnten nicht geöffnet werden.</string>
+</resources>

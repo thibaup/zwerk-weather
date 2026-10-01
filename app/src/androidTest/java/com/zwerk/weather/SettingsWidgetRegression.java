@@ -33,18 +33,54 @@ import java.util.concurrent.atomic.AtomicReference;
 /** Native Android regression checks; preferences are restored in finally, including on failure. */
 public final class SettingsWidgetRegression extends Instrumentation {
     private int checks;
+    private boolean compactWidgets;
+    private boolean diagnostics;
+    private boolean diagnosticCrash;
+    private boolean widgetBackground;
 
-    @Override public void onCreate(Bundle arguments) { super.onCreate(arguments); start(); }
+    @Override public void onCreate(Bundle arguments) {
+        super.onCreate(arguments);
+        compactWidgets = arguments != null && Boolean.parseBoolean(arguments.getString("compactWidgets"));
+        diagnostics = arguments != null && Boolean.parseBoolean(arguments.getString("diagnostics"));
+        diagnosticCrash = arguments != null && Boolean.parseBoolean(arguments.getString("diagnosticCrash"));
+        widgetBackground = arguments != null && Boolean.parseBoolean(arguments.getString("widgetBackground"));
+        start();
+    }
 
     @Override public void onStart() {
+        if (diagnosticCrash) {
+            DiagnosticLog.http(DiagnosticLog.Area.APP, 299, 1);
+            new Thread(() -> {
+                throw new IllegalStateException("DIAGNOSTIC_PRIVATE_MESSAGE https://example.invalid/key");
+            }, "DiagnosticCrashCheck").start();
+            return;
+        }
+        if (diagnostics) {
+            Bundle result = new Bundle();
+            try {
+                int passed = new DiagnosticRegression().run(getTargetContext());
+                result.putString("stream", "Passed " + passed + " native diagnostic checks.\n");
+                finish(-1, result);
+            } catch (Throwable error) {
+                result.putString("stream", "FAILED: " + android.util.Log.getStackTraceString(error));
+                finish(0, result);
+            }
+            return;
+        }
         Bundle result = new Bundle();
         AtomicReference<Throwable> failure = new AtomicReference<>();
         runOnMainSync(() -> {
             try {
                 Context context = new ContextThemeWrapper(getTargetContext(), android.R.style.Theme_Material_NoActionBar);
-                checkSlider(context);
-                checkCharts(context);
-                checkReset(context);
+                if (widgetBackground) {
+                    checks += new WidgetBackgroundRegression().run(context);
+                } else if (compactWidgets) {
+                    checks += new WidgetTimeRegression().run(context);
+                } else {
+                    checkSlider(context);
+                    checkCharts(context);
+                    checkReset(context);
+                }
             } catch (Throwable error) { failure.set(error); }
         });
         Throwable error = failure.get();

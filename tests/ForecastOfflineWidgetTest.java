@@ -16,6 +16,7 @@ public final class ForecastOfflineWidgetTest {
     private static int checks;
     private static final long HOUR = ForecastClock.FRESH_MILLIS;
     private static final String SCOPE = "city|open-meteo:auto";
+    private static final Context FORMAT_CONTEXT = new Context(null);
 
     private static void check(boolean value, String message) {
         checks++;
@@ -157,8 +158,8 @@ public final class ForecastOfflineWidgetTest {
                 .put(compactHour(dst + HOUR, 11)).toString());
         WeatherWidgetTimeline dstFirst = new WeatherWidgetTimeline(prefs, dst + 30 * 60_000);
         WeatherWidgetTimeline dstSecond = new WeatherWidgetTimeline(prefs, dst + HOUR + 30 * 60_000);
-        check(dstFirst.label(dstFirst.currentHour().getLong("start"), dstFirst.zone).equals("02:00"), "first DST hour label");
-        check(dstSecond.label(dstSecond.currentHour().getLong("start"), dstSecond.zone).equals("02:00"), "second DST hour label");
+        check(WeatherTimeFormat.hour(FORMAT_CONTEXT, dstFirst.currentHour().getLong("start"), dstFirst.zone).equals("02:00"), "first DST hour label");
+        check(WeatherTimeFormat.hour(FORMAT_CONTEXT, dstSecond.currentHour().getLong("start"), dstSecond.zone).equals("02:00"), "second DST hour label");
         check(dstFirst.currentIndex == 0 && dstSecond.currentIndex == 1, "repeated DST hour advances correctly");
 
         solarTimelineChecks();
@@ -225,7 +226,7 @@ public final class ForecastOfflineWidgetTest {
                 "sunset inserted between its neighbouring forecast hours");
         check(entries.get(2).hour.getInt("temperature") == 19,
                 "sunset temperature comes from its actual forecast interval");
-        check("19:25".equals(timeline.label(entries.get(2).time, timeline.zone)),
+        check("19:25".equals(WeatherTimeFormat.hour(FORMAT_CONTEXT, entries.get(2).time, timeline.zone)),
                 "sunset preserves exact minutes in the requested display zone");
         check(timeline.hours.toString().equals(savedHours), "event insertion leaves saved forecast untouched");
         check(entries.stream().noneMatch(entry -> "sunrise".equals(entry.sunEvent)),
@@ -278,7 +279,7 @@ public final class ForecastOfflineWidgetTest {
         entries = new WeatherWidgetTimeline(prefs, dst + 10 * 60_000).visibleEntries(dst + 10 * 60_000, 4);
         check(entries.size() == 4 && "sunrise".equals(entries.get(1).sunEvent),
                 "sunrise is ordered correctly across the repeated DST hour");
-        check("02:30".equals(new WeatherWidgetTimeline(prefs, dst).label(entries.get(1).time, timeline.zone)),
+        check("02:30".equals(WeatherTimeFormat.hour(FORMAT_CONTEXT, entries.get(1).time, timeline.zone)),
                 "sunrise label uses the correct DST offset");
         check(new WeatherWidgetTimeline(prefs, dst + 48 * HOUR).visibleEntries(dst + 48 * HOUR, 6).isEmpty(),
                 "expired snapshot never shows cached solar events");
@@ -301,16 +302,16 @@ public final class ForecastOfflineWidgetTest {
                     .put("start", londonMidnight - 24 * HOUR).put("end", londonMidnight)
                     .put("high", 25).put("sunset", nextHour + 42 * 60_000)).toString());
             WeatherWidgetTimeline timeline = new WeatherWidgetTimeline(prefs, now);
-            check("19:00".equals(timeline.label(nextHour)), "London forecast labels follow Brussels phone time");
-            check("19:42".equals(timeline.label(nextHour + 42 * 60_000)), "sunset labels follow phone time too");
+            check("19:00".equals(WeatherTimeFormat.hour(FORMAT_CONTEXT, nextHour, ZoneId.systemDefault())), "London forecast labels follow Brussels phone time");
+            check("19:42".equals(WeatherTimeFormat.hour(FORMAT_CONTEXT, nextHour + 42 * 60_000, ZoneId.systemDefault())), "sunset labels follow phone time too");
             check("Europe/London".equals(timeline.zone.getId()), "display clock preserves the forecast location zone");
             check(timeline.currentIndex == 0 && timeline.nextChange(now) == nextHour,
                     "display clock cannot shift forecast intervals or scheduled updates");
             check(timeline.today(londonMidnight - 30 * 60_000).getInt("high") == 25,
                     "phone midnight does not roll over the forecast location's day early");
             java.util.TimeZone.setDefault(java.util.TimeZone.getTimeZone("Europe/London"));
-            check("18:00".equals(timeline.label(nextHour)), "phone timezone changes apply without refetching");
-            check("—".equals(timeline.label(0)), "missing time retains its placeholder");
+            check("18:00".equals(WeatherTimeFormat.hour(FORMAT_CONTEXT, nextHour, ZoneId.systemDefault())), "phone timezone changes apply without refetching");
+            check("—".equals(WeatherTimeFormat.hour(FORMAT_CONTEXT, 0L, ZoneId.systemDefault())), "missing time retains its placeholder");
         } finally {
             java.util.TimeZone.setDefault(previousZone);
         }

@@ -403,6 +403,7 @@ abstract class MinuteForecastActivity extends OptionalWeatherDataActivity {
                 if (isDebugBuild()) {
                     Log.d(LOG_TAG, "retry generation=" + requestState.generation + " endpoint=minute");
                 }
+                DiagnosticLog.event(DiagnosticLog.Area.PRECIPITATION, DiagnosticLog.Event.RETRY);
                 JSONObject response = request(address);
                 if (!minuteRequestScopeCurrent(requestState)) {
                     throw new SupersededWeatherRequestException();

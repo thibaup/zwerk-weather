@@ -5,13 +5,10 @@ import android.content.SharedPreferences;
 import org.json.JSONArray;
 import org.json.JSONObject;
 
-import java.time.Instant;
 import java.time.ZoneId;
-import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
-import java.util.Locale;
 
 /** Saved forecast intervals, with widget labels following the phone's clock. */
 final class WeatherWidgetTimeline {
@@ -118,15 +115,6 @@ final class WeatherWidgetTimeline {
                     day.optLong("end", 0L), now)) return day;
         }
         return null;
-    }
-
-    String label(long time) {
-        return label(time, ZoneId.systemDefault());
-    }
-
-    String label(long time, ZoneId displayZone) {
-        return time <= 0L ? "—" : DateTimeFormatter.ofPattern("HH:mm", Locale.getDefault())
-                .withZone(displayZone).format(Instant.ofEpochMilli(time));
     }
 
     long nextChange(long now) {

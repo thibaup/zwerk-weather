@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="settings_export_logs">Eksportér diagnostiklog</string>
+    <string name="settings_export_logs_summary">Gem en rapport til fejlfinding.</string>
+    <string name="settings_logs_saved">Diagnostikrapport gemt.</string>
+    <string name="settings_logs_failed">Kunne ikke gemme diagnostikrapporten.</string>
+</resources>

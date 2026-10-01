@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="widget_background_title">Tartsa naprakészen a widgeteket</string>
+    <string name="widget_background_message">Engedélyezze a háttértevékenységet, hogy a widgetek bezárt alkalmazás mellett is frissüljenek. Nyissa meg az Akkumulátorhasználatot az alkalmazás beállításaiban, és válassza az Összes engedélyezése, Korlátlan vagy a telefon megfelelő lehetőségét.</string>
+    <string name="widget_background_summary">Engedélyezze a háttértevékenységet a widgetek frissítéséhez.</string>
+    <string name="widget_background_settings">Alkalmazásbeállítások</string>
+    <string name="widget_background_confirmed">Már engedélyezve</string>
+    <string name="widget_background_later">Most nem</string>
+    <string name="widget_background_unavailable">Nem sikerült megnyitni a rendszerbeállításokat.</string>
+</resources>

@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="settings_export_logs">Экспорт диагностических журналов</string>
+    <string name="settings_export_logs_summary">Сохраните отчёт для решения проблем.</string>
+    <string name="settings_logs_saved">Диагностический отчёт сохранён.</string>
+    <string name="settings_logs_failed">Не удалось сохранить диагностический отчёт.</string>
+</resources>

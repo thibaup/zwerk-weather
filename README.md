@@ -34,9 +34,10 @@ Clear skies, thunderstorms, snow, and more have their own animated backgrounds:
 - **Plan around the rain.** See precipitation amounts and rates over the next 2 or 6 hours.
 - **Follow the radar.** Pan, zoom, and play recent radar observations. The map automatically switches between light during the day and dark at night, with manual Light and Dark options too.
 - **Animated skies.** Day and night scenes change with the weather, including rain, snow, fog, and thunderstorms.
-- **Home-screen widgets.** Choose a weather overview or a six-hour precipitation chart, with adjustable appearance.
-- **Make it yours.** Customize glass effects, transparency, units, and card order. Save cities and choose from more than 20 languages.
+- **Home-screen widgets.** Pick a compact 2×1, a 2×2 weather summary, a full overview, or a six-hour precipitation chart. Weather widgets adapt when resized, and you can customise their appearance.
+- **Make it yours.** Customize glass effects, transparency, units, time format, and card order. Save cities and choose from more than 20 languages.
 - **Extra weather details.** Optional air quality and pollen information, depending on your provider and location.
+- **Help troubleshoot issues.** Export a diagnostic report from Settings when something goes wrong.
 
 ## Getting started
 

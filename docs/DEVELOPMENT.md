@@ -46,7 +46,17 @@ Optional checks:
 To install the existing release APK with ADB:
 
 ```powershell
-adb install -r .\Zwerk-Weather-1.5.0.apk
+adb install -r .\Zwerk-Weather-1.5.1.apk
 ```
 
 The app checks GitHub Releases automatically. You can also use **Check for updates** in Settings.
+
+## Troubleshooting
+
+Use **Settings → Export diagnostic logs** to save a text report. Logs stay on the device in two rotating 128 KiB files and include request results, radar loading, widget refreshes, and crash frames. API keys, URLs, response bodies, and locations are excluded.
+
+For live diagnostics through ADB:
+
+```powershell
+adb logcat -v threadtime -s ZwerkWeather:I
+```

@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="widget_background_title">Widget’ları güncel tutun</string>
+    <string name="widget_background_message">Uygulama kapalıyken widget’ların yenilenmesi için arka plan etkinliğine izin verin. Uygulama ayarlarında Pil kullanımını açıp Tümüne izin ver, Kısıtlanmamış veya telefonunuzdaki eşdeğer seçeneği belirleyin.</string>
+    <string name="widget_background_summary">Widget’ları yenilemek için arka plan etkinliğine izin verin.</string>
+    <string name="widget_background_settings">Uygulama ayarlarını aç</string>
+    <string name="widget_background_confirmed">Zaten etkin</string>
+    <string name="widget_background_later">Şimdi değil</string>
+    <string name="widget_background_unavailable">Sistem ayarları açılamadı.</string>
+</resources>

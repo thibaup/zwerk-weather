@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="widget_background_title">Udržiavajte widgety aktuálne</string>
+    <string name="widget_background_message">Povoľte aktivitu na pozadí, aby sa widgety aktualizovali aj pri zatvorenej aplikácii. V nastaveniach aplikácie otvorte Využitie batérie a vyberte Povoliť všetko, Bez obmedzení alebo zodpovedajúcu možnosť v telefóne.</string>
+    <string name="widget_background_summary">Povoľte aktivitu na pozadí na aktualizáciu widgetov.</string>
+    <string name="widget_background_settings">Otvoriť nastavenia aplikácie</string>
+    <string name="widget_background_confirmed">Už zapnuté</string>
+    <string name="widget_background_later">Teraz nie</string>
+    <string name="widget_background_unavailable">Nedajú sa otvoriť nastavenia systému.</string>
+</resources>

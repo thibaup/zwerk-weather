@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="widget_background_title">Aktualizuj widżety</string>
+    <string name="widget_background_message">Zezwól na działanie w tle, aby widżety odświeżały się przy zamkniętej aplikacji. Otwórz Użycie baterii w ustawieniach aplikacji i wybierz Zezwalaj na wszystko, Bez ograniczeń lub odpowiednią opcję w telefonie.</string>
+    <string name="widget_background_summary">Zezwól na działanie w tle, aby odświeżać widżety.</string>
+    <string name="widget_background_settings">Otwórz ustawienia aplikacji</string>
+    <string name="widget_background_confirmed">Już włączone</string>
+    <string name="widget_background_later">Nie teraz</string>
+    <string name="widget_background_unavailable">Nie można otworzyć ustawień systemowych.</string>
+</resources>

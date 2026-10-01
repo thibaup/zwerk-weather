@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="widget_background_title">Mantén los widgets actualizados</string>
+    <string name="widget_background_message">Permite la actividad en segundo plano para actualizar los widgets cuando la app esté cerrada. Abre Uso de batería en los ajustes de la app y elige Permitir todo, Sin restricciones o la opción equivalente de tu teléfono.</string>
+    <string name="widget_background_summary">Permite la actividad en segundo plano para actualizar los widgets.</string>
+    <string name="widget_background_settings">Abrir ajustes de la app</string>
+    <string name="widget_background_confirmed">Ya está activado</string>
+    <string name="widget_background_later">Ahora no</string>
+    <string name="widget_background_unavailable">No se pudieron abrir los ajustes del sistema.</string>
+</resources>

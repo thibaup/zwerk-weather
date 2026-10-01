@@ -176,8 +176,8 @@ abstract class WeatherSettingsFlowActivity extends WeatherOverviewRenderingActiv
                 public String description(JSONObject weather) { return WeatherSettingsFlowActivity.description(weather); }
                 public boolean safeBoolean(JSONObject object, String key, boolean fallback) { return WeatherSettingsFlowActivity.safeBoolean(object, key, fallback); }
                 public Instant parseInstant(String value) { return WeatherSettingsFlowActivity.parseInstant(value); }
-                public String formatTime(Instant instant, ZoneId zone) { return WeatherSettingsFlowActivity.formatTime(instant, zone); }
-                public String hourLabel(JSONObject hour, ZoneId zone) { return WeatherSettingsFlowActivity.hourLabel(hour, zone); }
+                public String formatTime(Instant instant, ZoneId zone) { return WeatherSettingsFlowActivity.this.formatTime(instant, zone); }
+                public String hourLabel(JSONObject hour, ZoneId zone) { return WeatherSettingsFlowActivity.this.hourLabel(hour, zone); }
                 public int probability(JSONObject weather) { return WeatherSettingsFlowActivity.probability(weather); }
                 public String formatWindSpeed(JSONObject speed) { return WeatherSettingsFlowActivity.this.formatWindSpeed(speed); }
                 public String formatPressure(JSONObject pressure) { return WeatherSettingsFlowActivity.this.formatPressure(pressure); }

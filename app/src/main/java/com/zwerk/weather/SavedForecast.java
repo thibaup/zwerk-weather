@@ -49,6 +49,7 @@ final class SavedForecast {
                     && (days == null || days.length() == 0)) return null;
             result.put(FETCHED_AT, fetchedAt);
             result.put(FALLBACK, true);
+            DiagnosticLog.event(DiagnosticLog.Area.WEATHER, DiagnosticLog.Event.CACHE_FALLBACK);
             return result;
         } catch (Exception ignored) { return null; }
     }

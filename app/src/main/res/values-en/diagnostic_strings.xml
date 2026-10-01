@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="settings_export_logs">Export diagnostic logs</string>
+    <string name="settings_export_logs_summary">Save a report to help troubleshoot issues.</string>
+    <string name="settings_logs_saved">Diagnostic report saved.</string>
+    <string name="settings_logs_failed">Could not save the diagnostic report.</string>
+</resources>

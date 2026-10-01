@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="settings_export_logs">Diagnoseprotokolle exportieren</string>
+    <string name="settings_export_logs_summary">Einen Bericht zur Fehlerbehebung speichern.</string>
+    <string name="settings_logs_saved">Diagnosebericht gespeichert.</string>
+    <string name="settings_logs_failed">Der Diagnosebericht konnte nicht gespeichert werden.</string>
+</resources>

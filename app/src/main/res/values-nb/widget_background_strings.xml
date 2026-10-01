@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="widget_background_title">Hold widgetene oppdatert</string>
+    <string name="widget_background_message">Tillat bakgrunnsaktivitet slik at widgetene kan oppdateres når appen er lukket. Åpne Batteribruk i appinnstillingene, og velg Tillat alt, Ubegrenset eller tilsvarende alternativ på telefonen.</string>
+    <string name="widget_background_summary">Tillat bakgrunnsaktivitet for å oppdatere widgetene.</string>
+    <string name="widget_background_settings">Åpne appinnstillinger</string>
+    <string name="widget_background_confirmed">Allerede aktivert</string>
+    <string name="widget_background_later">Ikke nå</string>
+    <string name="widget_background_unavailable">Kunne ikke åpne systeminnstillingene.</string>
+</resources>

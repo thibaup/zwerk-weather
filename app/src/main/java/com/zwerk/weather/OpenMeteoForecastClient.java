@@ -1078,7 +1078,11 @@ final class OpenMeteoForecastClient {
             OpenMeteoRequestBudgetManager.Category category) throws Exception {
         OpenMeteoRequestBudgetManager.Decision budget =
                 OpenMeteoRequestBudgetManager.tryAcquire(context, category);
-        if (!budget.allowed) throw new IOException(budget.message);
+        if (!budget.allowed) {
+            DiagnosticLog.event(DiagnosticLog.Area.OPEN_METEO, DiagnosticLog.Event.REQUEST_LIMIT);
+            throw new IOException(budget.message);
+        }
+        long diagnosticStart = android.os.SystemClock.elapsedRealtime();
         HttpURLConnection connection = null;
         try {
             connection = (HttpURLConnection) URI.create(address).toURL().openConnection();
@@ -1091,6 +1095,7 @@ final class OpenMeteoForecastClient {
             connection.setRequestProperty("User-Agent", "ZwerkWeather-OpenMeteo/1");
 
             int status = connection.getResponseCode();
+            DiagnosticLog.http(DiagnosticLog.Area.OPEN_METEO, status, android.os.SystemClock.elapsedRealtime() - diagnosticStart);
             boolean success = status >= 200 && status < 300;
             int limit = success ? MAX_SUCCESS_BODY_BYTES : MAX_ERROR_BODY_BYTES;
             long declaredLength = connection.getContentLength();
@@ -1122,6 +1127,9 @@ final class OpenMeteoForecastClient {
                         + (reason.isEmpty() ? "" : ": " + reason));
             }
             return json;
+        } catch (Exception failure) {
+            DiagnosticLog.error(DiagnosticLog.Area.OPEN_METEO, failure);
+            throw failure;
         } finally {
             if (connection != null) connection.disconnect();
         }

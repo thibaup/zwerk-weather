@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="settings_export_logs">Tanılama günlüklerini dışa aktar</string>
+    <string name="settings_export_logs_summary">Sorunları incelemek için bir rapor kaydedin.</string>
+    <string name="settings_logs_saved">Tanılama raporu kaydedildi.</string>
+    <string name="settings_logs_failed">Tanılama raporu kaydedilemedi.</string>
+</resources>

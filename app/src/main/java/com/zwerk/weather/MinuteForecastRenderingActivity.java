@@ -575,33 +575,6 @@ abstract class MinuteForecastRenderingActivity extends MinuteForecastActivity {
         }
     }
 
-    static String minuteSelectionDetail(
-            MinuteSegment segment,
-            Instant selectedTime,
-            ZoneId zone) {
-        if (segment == null) return "No selected segment";
-        StringBuilder detail = new StringBuilder();
-        detail.append(formatTime(selectedTime == null ? segment.start : selectedTime, zone));
-        appendPart(detail, "returned interval " + formatTime(segment.start, zone)
-                + " to " + formatTime(segment.end, zone));
-        Double rate = minuteRateMmPerHour(segment);
-        if (rate != null) {
-            appendPart(detail, "Rate " + formatMinuteRate(rate) + " millimeters per hour");
-        } else {
-            appendPart(detail, "Rate unavailable");
-        }
-        if (segment.probability != null) {
-            appendPart(detail, "Chance " + segment.probability + "%");
-        }
-        String typeIntensity = minuteTypeIntensityLabel(segment);
-        if (!"—".equals(typeIntensity)) appendPart(detail, typeIntensity);
-        if (segment.snowfallQuantity != null) {
-            appendPart(detail, "Snowfall " + formatMinuteQuantity(segment.snowfallQuantity)
-                    + minuteUnitLabel(segment.snowfallUnit));
-        }
-        return detail.toString();
-    }
-
     static Double minuteRateMmPerHour(MinuteSegment segment) {
         if (segment == null || segment.qpfQuantity == null) return null;
         long durationMillis;

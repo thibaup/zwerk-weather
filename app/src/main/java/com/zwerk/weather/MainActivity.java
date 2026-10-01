@@ -71,9 +71,15 @@ public class MainActivity extends WeatherSettingsFlowActivity implements DeviceL
     private final Handler supportPromptHandler = new Handler(Looper.getMainLooper());
     private final Runnable supportPromptTask = this::showSupportPromptIfEligible;
     private Dialog supportPromptDialog;
+    private final Runnable widgetBackgroundPromptTask = this::showWidgetBackgroundPrompt;
+    private Dialog widgetBackgroundPromptDialog;
     private ForecastSwipeLayout forecastSwipeLayout;
     private LinearLayout radarPageContent;
     private RadarPageView radarPageView;
+
+    void refreshTimeFormat() {
+        if (radarPageView != null) radarPageView.refreshTimeFormat();
+    }
     private TextView radarModeButton;
     private TextView dailyModeTab;
     private TextView settingsModeTab;
@@ -123,6 +129,7 @@ public class MainActivity extends WeatherSettingsFlowActivity implements DeviceL
 
     protected void onCreate(Bundle state) {
         super.onCreate(state);
+        getWindow().getDecorView().post(() -> WidgetPreviews.publish(this));
         recordSupportPromptLaunch();
         RainAlertManager.reconcile(this);
         weatherPreferences = new WeatherPreferences(this);
@@ -2085,6 +2092,7 @@ public class MainActivity extends WeatherSettingsFlowActivity implements DeviceL
         long firstOpen = prefs.getLong(PREF_SUPPORT_FIRST_OPEN, 0L);
         if (prefs.getBoolean(SettingsActivity.PREF_SUPPORT_PROMPT_HANDLED, false)
                 || firstOpen <= 0L
+                || WidgetBackgroundAccess.popupDue(this)
                 || System.currentTimeMillis() - firstOpen < SUPPORT_PROMPT_DELAY_MILLIS
                 || prefs.getInt(PREF_SUPPORT_LAUNCH_COUNT, 0) < 3) return;
         supportPromptHandler.postDelayed(supportPromptTask, 3500L);
@@ -2094,6 +2102,7 @@ public class MainActivity extends WeatherSettingsFlowActivity implements DeviceL
         if (isFinishing() || isDestroyed() || !hasWindowFocus()
                 || lastCurrentWeather == null || lastDailyWeather == null
                 || apiKeySetupDialog != null
+                || (widgetBackgroundPromptDialog != null && widgetBackgroundPromptDialog.isShowing())
                 || (supportPromptDialog != null && supportPromptDialog.isShowing())) return;
         android.content.SharedPreferences prefs = getSharedPreferences(UI_PREFS, MODE_PRIVATE);
         if (prefs.getBoolean(SettingsActivity.PREF_SUPPORT_PROMPT_HANDLED, false)) return;
@@ -2175,6 +2184,16 @@ public class MainActivity extends WeatherSettingsFlowActivity implements DeviceL
         }
     }
 
+    private void showWidgetBackgroundPrompt() {
+        if (isFinishing() || isDestroyed() || !hasWindowFocus()
+                || selectedForecastPage == PAGE_SETTINGS || apiKeySetupDialog != null
+                || (supportPromptDialog != null && supportPromptDialog.isShowing())
+                || (widgetBackgroundPromptDialog != null && widgetBackgroundPromptDialog.isShowing())
+                || !WidgetBackgroundAccess.popupDue(this)) return;
+        widgetBackgroundPromptDialog = WidgetBackgroundAccess.showDialog(this,
+                () -> widgetBackgroundPromptDialog = null);
+    }
+
     protected void onResume() {
         super.onResume();
         if (settingsScreen != null && selectedForecastPage == PAGE_SETTINGS) settingsScreen.onResume();
@@ -2194,6 +2213,8 @@ public class MainActivity extends WeatherSettingsFlowActivity implements DeviceL
             if (track != null) track.setAnimationRunning(enabled);
         }
         scheduleSupportPrompt();
+        supportPromptHandler.removeCallbacks(widgetBackgroundPromptTask);
+        supportPromptHandler.postDelayed(widgetBackgroundPromptTask, 1800L);
 
         if (!hasResumedOnce) {
             hasResumedOnce = true;
@@ -2212,6 +2233,8 @@ public class MainActivity extends WeatherSettingsFlowActivity implements DeviceL
         if (settingsScreen != null) settingsScreen.onPause();
         supportPromptHandler.removeCallbacks(supportPromptTask);
         stopStatusAgeRefresh();
+        supportPromptHandler.removeCallbacks(widgetBackgroundPromptTask);
+        if (widgetBackgroundPromptDialog != null) widgetBackgroundPromptDialog.dismiss();
         forecastPreview.restore(false);
         if (radarPageView != null) radarPageView.setActive(false);
         if (skyLayout != null) skyLayout.setAnimationRunning(false);
@@ -2225,6 +2248,8 @@ public class MainActivity extends WeatherSettingsFlowActivity implements DeviceL
     protected void onDestroy() {
         supportPromptHandler.removeCallbacks(supportPromptTask);
         if (supportPromptDialog != null) supportPromptDialog.dismiss();
+        supportPromptHandler.removeCallbacks(widgetBackgroundPromptTask);
+        if (widgetBackgroundPromptDialog != null) widgetBackgroundPromptDialog.dismiss();
         stopStatusAgeRefresh();
         if (radarPageView != null) radarPageView.dispose();
         if (locationRefreshCoordinator != null) locationRefreshCoordinator.destroy();

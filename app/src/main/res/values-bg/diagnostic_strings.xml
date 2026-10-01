@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="settings_export_logs">Експортиране на диагностични записи</string>
+    <string name="settings_export_logs_summary">Запазете отчет за отстраняване на проблеми.</string>
+    <string name="settings_logs_saved">Диагностичният отчет е запазен.</string>
+    <string name="settings_logs_failed">Диагностичният отчет не може да бъде запазен.</string>
+</resources>

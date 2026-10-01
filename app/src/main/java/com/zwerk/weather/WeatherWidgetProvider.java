@@ -29,8 +29,6 @@ import java.util.Locale;
 import java.util.Map;
 import java.time.Instant;
 import java.time.ZoneId;
-import java.time.format.DateTimeFormatter;
-import java.time.format.FormatStyle;
 
 /**
  * Snapshot-rendering home-screen widget.
@@ -66,15 +64,13 @@ public class WeatherWidgetProvider extends AppWidgetProvider {
     private static final String ACTION_REFRESH =
             "com.zwerk.weather.action.REFRESH_WEATHER_WIDGET";
 
-    // Two rows on launchers using the traditional cell formula are close to 110dp. The normal
-    // layout itself is designed to remain non-overlapping at 118dp; taller allocations get a
-    // dedicated layout instead of stretching a tiny fixed card through empty space.
     private static final int NORMAL_HEIGHT_DP = 118;
     private static final int ROOMY_HEIGHT_DP = 152;
     private static final int TALL_HEIGHT_DP = 192;
 
     private enum WidgetMode {
-        COMPACT,
+        MINI,
+        SMALL,
         NORMAL,
         ROOMY,
         TALL
@@ -138,6 +134,7 @@ public class WeatherWidgetProvider extends AppWidgetProvider {
 
     @Override
     public void onUpdate(Context context, AppWidgetManager appWidgetManager, int[] appWidgetIds) {
+        DiagnosticLog.event(DiagnosticLog.Area.WIDGET, DiagnosticLog.Event.WIDGET_UPDATE);
         WidgetRefreshManager.reconcile(context);
         for (int appWidgetId : appWidgetIds) {
             appWidgetManager.updateAppWidget(appWidgetId, buildViews(context, appWidgetId));
@@ -149,6 +146,7 @@ public class WeatherWidgetProvider extends AppWidgetProvider {
     public void onAppWidgetOptionsChanged(Context context, AppWidgetManager appWidgetManager,
                                           int appWidgetId, Bundle newOptions) {
         super.onAppWidgetOptionsChanged(context, appWidgetManager, appWidgetId, newOptions);
+        DiagnosticLog.event(DiagnosticLog.Area.WIDGET, DiagnosticLog.Event.WIDGET_RESIZE);
         WidgetRefreshManager.reconcile(context);
         appWidgetManager.updateAppWidget(
                 appWidgetId,
@@ -178,7 +176,7 @@ public class WeatherWidgetProvider extends AppWidgetProvider {
 
     @Override
     public void onDisabled(Context context) {
-        cancelClockUpdate(context);
+        scheduleNextUpdate(context);
         WidgetRefreshManager.reconcile(context);
     }
 
@@ -188,12 +186,29 @@ public class WeatherWidgetProvider extends AppWidgetProvider {
     private static void updateAll(Context context) {
         WidgetRefreshManager.reconcile(context);
         AppWidgetManager manager = AppWidgetManager.getInstance(context);
-        ComponentName provider = new ComponentName(context, WeatherWidgetProvider.class);
-        int[] ids = manager.getAppWidgetIds(provider);
-        for (int id : ids) {
+        for (int id : widgetIds(context)) {
             manager.updateAppWidget(id, buildViews(context, id));
         }
         scheduleNextUpdate(context);
+    }
+
+    static int[] widgetIds(Context context) {
+        AppWidgetManager manager = AppWidgetManager.getInstance(context);
+        Class<?>[] providers = {WeatherWidgetProvider.class, WeatherSmallWidgetProvider.class,
+                WeatherMiniWidgetProvider.class};
+        int[][] groups = new int[providers.length][];
+        int total = 0;
+        for (int i = 0; i < providers.length; i++) {
+            groups[i] = manager.getAppWidgetIds(new ComponentName(context, providers[i]));
+            total += groups[i].length;
+        }
+        int[] ids = new int[total];
+        int offset = 0;
+        for (int[] group : groups) {
+            System.arraycopy(group, 0, ids, offset, group.length);
+            offset += group.length;
+        }
+        return ids;
     }
 
     private static PendingIntent clockUpdateIntent(Context context) {
@@ -209,8 +224,7 @@ public class WeatherWidgetProvider extends AppWidgetProvider {
 
     private static void scheduleNextUpdate(Context context) {
         cancelClockUpdate(context);
-        int[] ids = AppWidgetManager.getInstance(context).getAppWidgetIds(
-                new ComponentName(context, WeatherWidgetProvider.class));
+        int[] ids = widgetIds(context);
         SharedPreferences prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
         if (ids.length == 0) return;
         long now = System.currentTimeMillis();
@@ -236,15 +250,23 @@ public class WeatherWidgetProvider extends AppWidgetProvider {
     }
 
     private static RemoteViews buildViews(Context context, int appWidgetId, Bundle optionsHint) {
+        SharedPreferences snapshot = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
+        if (!snapshot.getBoolean(KEY_HAS_SNAPSHOT, false)) {
+            DiagnosticLog.event(DiagnosticLog.Area.WIDGET, DiagnosticLog.Event.SNAPSHOT_MISSING);
+        } else if (!ForecastClock.withinAge(snapshot.getLong(KEY_UPDATED_EPOCH_MS, 0L),
+                System.currentTimeMillis(), ForecastClock.retentionMillis(snapshot.getBoolean(KEY_OPEN_METEO, false)))) {
+            DiagnosticLog.event(DiagnosticLog.Area.WIDGET, DiagnosticLog.Event.CACHE_EXPIRED);
+        }
         Context localized = AppLocaleManager.wrap(context);
-        RemoteViews compact = buildMode(localized, WidgetMode.COMPACT);
+        RemoteViews mini = buildMode(localized, WidgetMode.MINI);
+        RemoteViews small = buildMode(localized, WidgetMode.SMALL);
         RemoteViews normal = buildMode(localized, WidgetMode.NORMAL);
         RemoteViews roomy = buildMode(localized, WidgetMode.ROOMY);
         RemoteViews tall = buildMode(localized, WidgetMode.TALL);
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
             try {
-                return Api31Responsive.remoteViews(compact, normal, roomy, tall);
+                return Api31Responsive.remoteViews(mini, small, normal, roomy, tall);
             } catch (Throwable ignored) {
                 // A launcher may reject responsive RemoteViews; the options fallback is complete.
             }
@@ -256,7 +278,8 @@ public class WeatherWidgetProvider extends AppWidgetProvider {
         if (mode == WidgetMode.TALL) return tall;
         if (mode == WidgetMode.ROOMY) return roomy;
         if (mode == WidgetMode.NORMAL) return normal;
-        return compact;
+        if (mode == WidgetMode.SMALL) return small;
+        return mini;
     }
 
     private static WidgetMode modeForOptions(Bundle options) {
@@ -271,12 +294,13 @@ public class WeatherWidgetProvider extends AppWidgetProvider {
         if (available >= TALL_HEIGHT_DP && (width <= 0 || width >= 280)) return WidgetMode.TALL;
         if (available >= ROOMY_HEIGHT_DP && (width <= 0 || width >= 280)) return WidgetMode.ROOMY;
         if (available >= NORMAL_HEIGHT_DP && (width <= 0 || width >= 240)) return WidgetMode.NORMAL;
-        return WidgetMode.COMPACT;
+        return available >= NORMAL_HEIGHT_DP ? WidgetMode.SMALL : WidgetMode.MINI;
     }
 
     private static RemoteViews buildMode(Context context, WidgetMode mode) {
         int layout;
-        if (mode == WidgetMode.COMPACT) layout = R.layout.widget_weather_compact;
+        if (mode == WidgetMode.MINI) layout = R.layout.widget_weather_mini;
+        else if (mode == WidgetMode.SMALL) layout = R.layout.widget_weather_small;
         else if (mode == WidgetMode.TALL) layout = R.layout.widget_weather_tall;
         else if (mode == WidgetMode.ROOMY) layout = R.layout.widget_weather_roomy;
         else layout = R.layout.widget_weather;
@@ -325,25 +349,21 @@ public class WeatherWidgetProvider extends AppWidgetProvider {
         }
         String advice = clean(prefs.getString(KEY_ADVICE, "Open Zwerk Weather for details"),
                 "Open Zwerk Weather for details");
-        String localizedAdvice = localizeAdvice(context, advice);
-        String savedAt = DateTimeFormatter.ofLocalizedDateTime(FormatStyle.SHORT)
-                .withLocale(Locale.getDefault()).withZone(ZoneId.systemDefault())
-                .format(Instant.ofEpochMilli(timeline.fetchedAt));
+        String localizedAdvice = localizeAdvice(context, advice, observation, timeline.zone);
+        String savedAt = WeatherTimeFormat.saved(context, timeline.fetchedAt, ZoneId.systemDefault());
         if (advanced || prefs.getBoolean(KEY_FALLBACK, false)
                 || !ForecastClock.withinAge(timeline.fetchedAt, now, ForecastClock.FRESH_MILLIS)) {
             localizedAdvice = context.getString(R.string.forecast_saved_status, savedAt);
         }
 
         views.setTextViewText(R.id.widget_city, city);
-        views.setTextViewText(R.id.widget_temperature, temperatureLabel(temperature, unit, mode));
+        views.setTextViewText(R.id.widget_temperature, temperatureLabel(temperature, unit));
         String localizedCondition = UiTranslations.text(context, condition);
         views.setTextViewText(R.id.widget_condition, localizedCondition);
         views.setImageViewResource(R.id.widget_glyph, iconFor(conditionType, daytime));
         views.setTextViewText(R.id.widget_high_low, highLowLabel(context, high, low));
         views.setViewVisibility(R.id.widget_hour_strip,
-                mode == WidgetMode.COMPACT ? View.GONE : View.VISIBLE);
-        views.setViewVisibility(R.id.widget_glyph,
-                mode == WidgetMode.COMPACT ? View.GONE : View.VISIBLE);
+                hasHourlyStrip(mode) ? View.VISIBLE : View.GONE);
 
         if (mode == WidgetMode.NORMAL || mode == WidgetMode.ROOMY) {
             bindHourlyStrip(
@@ -382,23 +402,26 @@ public class WeatherWidgetProvider extends AppWidgetProvider {
         WidgetBackground.apply(context, views, R.id.widget_scene, conditionType, daytime);
         views.setInt(R.id.widget_hour_strip, "setBackgroundColor", Color.TRANSPARENT);
         views.setViewVisibility(R.id.widget_hour_strip,
-                mode != WidgetMode.COMPACT ? View.VISIBLE : View.GONE);
-        views.setViewVisibility(R.id.widget_glyph,
-                mode != WidgetMode.COMPACT ? View.VISIBLE : View.GONE);
+                hasHourlyStrip(mode) ? View.VISIBLE : View.GONE);
+        views.setViewVisibility(R.id.widget_glyph, View.VISIBLE);
         if (mode == WidgetMode.TALL) views.setViewVisibility(R.id.widget_advice,
                 View.VISIBLE);
     }
 
-    private static String localizeAdvice(Context context, String advice) {
+    private static boolean hasHourlyStrip(WidgetMode mode) {
+        return mode != WidgetMode.MINI && mode != WidgetMode.SMALL;
+    }
+
+    private static String localizeAdvice(Context context, String advice, long observation, ZoneId zone) {
         String marker = " • Updated ";
         int split = advice.indexOf(marker);
+        String time = WeatherTimeFormat.time(context, Instant.ofEpochMilli(observation), zone);
         if (split >= 0) {
             return UiTranslations.text(context, advice.substring(0, split)) + " • "
-                    + UiTranslations.text(context, "Updated")
-                    + advice.substring(split + marker.length() - 1);
+                    + UiTranslations.text(context, "Updated") + " " + time;
         }
         if (advice.startsWith("Updated ")) {
-            return UiTranslations.text(context, "Updated") + advice.substring("Updated".length());
+            return UiTranslations.text(context, "Updated") + " " + time;
         }
         return UiTranslations.text(context, advice);
     }
@@ -423,7 +446,7 @@ public class WeatherWidgetProvider extends AppWidgetProvider {
             }
 
             JSONObject hour = entry.hour;
-            String time = timeline.label(entry.time);
+            String time = WeatherTimeFormat.hour(context, entry.time, ZoneId.systemDefault());
             int temperature = hour.optInt("temperature", Integer.MIN_VALUE);
             String condition = clean(hour.optString("condition", "Forecast"), "Forecast");
             String conditionType = clean(hour.optString("conditionType", condition), condition);
@@ -451,14 +474,13 @@ public class WeatherWidgetProvider extends AppWidgetProvider {
         SharedPreferences prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
         String city = clean(prefs.getString(KEY_CITY, "Zwerk Weather"), "Zwerk Weather");
         views.setTextViewText(R.id.widget_city, city);
-        views.setTextViewText(R.id.widget_temperature, temperatureLabel(Integer.MIN_VALUE, "°", mode));
+        views.setTextViewText(R.id.widget_temperature, temperatureLabel(Integer.MIN_VALUE, "°"));
         views.setTextViewText(R.id.widget_condition, UiTranslations.text(context, "Refreshing…"));
         views.setImageViewResource(R.id.widget_glyph, R.drawable.widget_ic_cloud);
         views.setTextViewText(R.id.widget_high_low, "—");
         views.setViewVisibility(R.id.widget_hour_strip,
-                mode == WidgetMode.COMPACT ? View.GONE : View.VISIBLE);
-        views.setViewVisibility(R.id.widget_glyph,
-                mode == WidgetMode.COMPACT ? View.GONE : View.VISIBLE);
+                hasHourlyStrip(mode) ? View.VISIBLE : View.GONE);
+        views.setViewVisibility(R.id.widget_glyph, View.VISIBLE);
 
         if (mode == WidgetMode.NORMAL || mode == WidgetMode.ROOMY) {
             bindPlaceholderHours(context, views, NORMAL_HOUR_TIME_IDS,
@@ -562,11 +584,11 @@ public class WeatherWidgetProvider extends AppWidgetProvider {
         return unit.trim().isEmpty() ? "°" : unit.trim();
     }
 
-    private static CharSequence temperatureLabel(int temperature, String unit, WidgetMode mode) {
+    private static CharSequence temperatureLabel(int temperature, String unit) {
         String number = temperature == Integer.MIN_VALUE ? "—" : Integer.toString(temperature);
         SpannableString label = new SpannableString(number + compactUnit(unit));
         // One text run shares a baseline and keeps the unit next to the number at every size.
-        label.setSpan(new RelativeSizeSpan(mode == WidgetMode.COMPACT ? 0.66f : 0.48f),
+        label.setSpan(new RelativeSizeSpan(0.48f),
                 number.length(), label.length(),
                 Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
         label.setSpan(new TypefaceSpan("sans-serif-medium"), number.length(), label.length(),
@@ -587,10 +609,11 @@ public class WeatherWidgetProvider extends AppWidgetProvider {
         private Api31Responsive() {}
 
         @TargetApi(31)
-        static RemoteViews remoteViews(RemoteViews compact, RemoteViews normal,
+        static RemoteViews remoteViews(RemoteViews mini, RemoteViews small, RemoteViews normal,
                 RemoteViews roomy, RemoteViews tall) {
             Map<SizeF, RemoteViews> variants = new HashMap<>();
-            variants.put(new SizeF(240f, 56f), compact);
+            variants.put(new SizeF(109f, 56f), mini);
+            variants.put(new SizeF(109f, NORMAL_HEIGHT_DP), small);
             variants.put(new SizeF(240f, NORMAL_HEIGHT_DP), normal);
             variants.put(new SizeF(280f, ROOMY_HEIGHT_DP), roomy);
             variants.put(new SizeF(280f, TALL_HEIGHT_DP), tall);

@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="settings_export_logs">Vie diagnostiikkalokit</string>
+    <string name="settings_export_logs_summary">Tallenna raportti vianmääritystä varten.</string>
+    <string name="settings_logs_saved">Diagnostiikkaraportti tallennettu.</string>
+    <string name="settings_logs_failed">Diagnostiikkaraporttia ei voitu tallentaa.</string>
+</resources>

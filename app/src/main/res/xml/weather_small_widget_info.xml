@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<appwidget-provider xmlns:android="http://schemas.android.com/apk/res/android"
+    android:description="@string/weather_widget_description"
+    android:initialLayout="@layout/widget_weather_small"
+    android:minWidth="109dp"
+    android:minHeight="118dp"
+    android:minResizeWidth="109dp"
+    android:minResizeHeight="56dp"
+    android:previewLayout="@layout/widget_weather_small_picker_preview"
+    android:previewImage="@drawable/widget_weather_small_preview"
+    android:resizeMode="horizontal|vertical"
+    android:targetCellWidth="2"
+    android:targetCellHeight="2"
+    android:updatePeriodMillis="1800000"
+    android:widgetCategory="home_screen" />

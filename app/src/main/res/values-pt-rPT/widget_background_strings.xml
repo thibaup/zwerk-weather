@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="widget_background_title">Mantenha os widgets atualizados</string>
+    <string name="widget_background_message">Permita a atividade em segundo plano para atualizar os widgets com a aplicação fechada. Abra Utilização da bateria nas definições da aplicação e escolha Permitir tudo, Sem restrições ou a opção equivalente do telemóvel.</string>
+    <string name="widget_background_summary">Permita a atividade em segundo plano para atualizar os widgets.</string>
+    <string name="widget_background_settings">Abrir definições da aplicação</string>
+    <string name="widget_background_confirmed">Já ativado</string>
+    <string name="widget_background_later">Agora não</string>
+    <string name="widget_background_unavailable">Não foi possível abrir as definições do sistema.</string>
+</resources>

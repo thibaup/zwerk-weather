@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="settings_hour_format">Formatul orei</string>
+    <string name="settings_hour_format_12">12 ore</string>
+    <string name="settings_hour_format_24">24 ore</string>
+</resources>

@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="widget_background_title">Houd widgets bijgewerkt</string>
+    <string name="widget_background_message">Sta achtergrondactiviteit toe zodat widgets kunnen vernieuwen wanneer de app gesloten is. Open Batterijgebruik in de appinstellingen en kies Alles toestaan, Onbeperkt of de vergelijkbare optie op je telefoon.</string>
+    <string name="widget_background_summary">Sta achtergrondactiviteit toe om widgets te laten vernieuwen.</string>
+    <string name="widget_background_settings">Open appinstellingen</string>
+    <string name="widget_background_confirmed">Al ingeschakeld</string>
+    <string name="widget_background_later">Niet nu</string>
+    <string name="widget_background_unavailable">Kan de systeeminstellingen niet openen.</string>
+</resources>

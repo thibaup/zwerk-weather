@@ -12,7 +12,7 @@ final class WeatherSettingsDefaults {
                 WeatherPreferences.PREFS_NAME, Context.MODE_PRIVATE);
         SharedPreferences.Editor edit = prefs.edit();
         for (String key : new String[]{
-                "temperature_unit", "wind_unit", "pressure_unit", "visibility_unit",
+                "temperature_unit", "wind_unit", "pressure_unit", "visibility_unit", WeatherTimeFormat.PREF,
                 "weather_animations", "rain_alerts", "severe_weather_alerts",
                 "precipitation_page_enabled", "radar_page_enabled", "forecast_page_mode",
                 "daily_mode", "widget_show_hourly", "widget_show_advice", "widget_show_icon",

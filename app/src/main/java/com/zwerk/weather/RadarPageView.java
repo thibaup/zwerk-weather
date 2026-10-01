@@ -24,12 +24,10 @@ import org.json.JSONObject;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.time.ZoneId;
-import java.time.format.DateTimeFormatter;
 import java.util.Locale;
 
 final class RadarPageView extends FrameLayout {
-    private static final DateTimeFormatter FRAME_TIME =
-            DateTimeFormatter.ofPattern("EEE HH:mm", Locale.getDefault());
+
     private static final long TIMELINE_WATCHDOG_MS = 18_000L;
     private static final long VIEWPORT_COALESCE_MS = 140L;
     private static final long VIEWPORT_RETRY_MS = 1_500L;
@@ -524,6 +522,7 @@ final class RadarPageView extends FrameLayout {
             refreshButton.setLoading(false);
             loading.setVisibility(GONE);
             playButton.setMode(RadarPlaybackButton.PLAY);
+            DiagnosticLog.event(DiagnosticLog.Area.RADAR, DiagnosticLog.Event.LOADING_TIMEOUT);
             timelineError = "Radar loading timed out · tap ↻ to retry";
             if (timeline != null && !timeline.frames.isEmpty()) {
                 setSummary("Radar refresh timed out · showing current frame · tap ↻ to retry");
@@ -580,11 +579,13 @@ final class RadarPageView extends FrameLayout {
         if (userSelected) mapMessage.setVisibility(GONE);
     }
 
+    void refreshTimeFormat() { updateFrameTime(); }
+
     private void updateFrameTime() {
         if (disposed || timeline == null || timeline.frames.isEmpty() || frameIndex < 0) return;
         RadarDataClient.Frame frame = timeline.frames.get(frameIndex);
-        String time = FRAME_TIME.format(Instant.ofEpochSecond(frame.timeSeconds)
-                .atZone(ZoneId.systemDefault()));
+        String time = WeatherTimeFormat.dated(getContext(),
+                Instant.ofEpochSecond(frame.timeSeconds), ZoneId.systemDefault(), "EEE");
         frameTime.setText(UiTranslations.text(getContext(), !map.isFrameDisplayed(frame)
                 && !map.frameReady(frame) ? "Loading…" : frameIndex == timeline.frames.size() - 1 ? "Latest" : "Past")
                 + " · " + time);
@@ -678,6 +679,7 @@ final class RadarPageView extends FrameLayout {
         }
         setSummary("");
         playing = true;
+        DiagnosticLog.event(DiagnosticLog.Area.RADAR, DiagnosticLog.Event.PLAYBACK_STARTED);
         playbackClock.reset();
         if (firstReady >= 0 && firstReady != frameIndex) showFrame(firstReady, false);
         map.setFallbackFrame(timeline.frames.get(frameIndex));
@@ -719,6 +721,8 @@ final class RadarPageView extends FrameLayout {
     }
 
     private void stopPlayback() {
+        if (playing || preparing || pendingPlay)
+            DiagnosticLog.event(DiagnosticLog.Area.RADAR, DiagnosticLog.Event.PLAYBACK_STOPPED);
         boolean interruptedPreparation = preparing || pendingPlay;
         playing = false;
         preparing = false;

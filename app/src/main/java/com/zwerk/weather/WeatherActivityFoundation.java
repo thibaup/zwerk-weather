@@ -380,7 +380,11 @@ abstract class WeatherActivityFoundation extends Activity {
         return "partly";
     }
 
-    static String hourLabel(JSONObject hour, ZoneId zone) {
+    String hourLabel(JSONObject hour, ZoneId zone) {
+        return WeatherTimeFormat.clock(this, rawHourLabel(hour, zone));
+    }
+
+    static String rawHourLabel(JSONObject hour, ZoneId zone) {
         if (hour == null) return "—";
         JSONObject displayDateTime = firstJSONObject(
                 hour, "displayDateTime", "display_date_time", "displayTime", "display_time");
@@ -498,10 +502,10 @@ abstract class WeatherActivityFoundation extends Activity {
         return parseInstant(array.optString(0, null));
     }
 
-    static String formatTime(Instant instant, ZoneId zone) {
+    String formatTime(Instant instant, ZoneId zone) {
         if (instant == null) return "—";
         try {
-            return DateTimeFormatter.ofPattern("HH:mm", Locale.getDefault()).withZone(zone).format(instant);
+            return WeatherTimeFormat.time(this, instant, zone);
         } catch (Exception ignored) {
             return "—";
         }
@@ -709,41 +713,16 @@ abstract class WeatherActivityFoundation extends Activity {
         return Math.round(value * getResources().getDisplayMetrics().density);
     }
 
-    static String minuteSelectionDetail(
-            MinuteSegment segment,
-            Instant selectedTime,
-            ZoneId zone) {
-        if (segment == null) return "No selected segment";
-        StringBuilder detail = new StringBuilder();
-        detail.append(formatTime(selectedTime == null ? segment.start : selectedTime, zone));
-        appendPart(detail, "returned interval " + formatTime(segment.start, zone)
-                + " to " + formatTime(segment.end, zone));
-        Double rate = minuteRateMmPerHour(segment);
-        if (rate != null) {
-            appendPart(detail, "Rate " + formatMinuteRate(rate) + " millimeters per hour");
-        } else {
-            appendPart(detail, "Rate unavailable");
-        }
-        if (segment.probability != null) {
-            appendPart(detail, "Chance " + segment.probability + "%");
-        }
-        String typeIntensity = minuteTypeIntensityLabel(segment);
-        if (!"—".equals(typeIntensity)) appendPart(detail, typeIntensity);
-        if (segment.snowfallQuantity != null) {
-            appendPart(detail, "Snowfall " + formatMinuteQuantity(segment.snowfallQuantity)
-                    + minuteUnitLabel(segment.snowfallUnit));
-        }
-        return detail.toString();
-    }
-
     static String localizedMinuteSelectionDetail(Context context,
             MinuteSegment segment, Instant selectedTime, ZoneId zone) {
         if (segment == null) return UiTranslations.text(context, "No selected segment");
         StringBuilder detail = new StringBuilder();
-        detail.append(formatTime(selectedTime == null ? segment.start : selectedTime, zone));
+        detail.append(WeatherTimeFormat.time(context,
+                selectedTime == null ? segment.start : selectedTime, zone));
         appendPart(detail, String.format(Locale.getDefault(),
                 UiTranslations.text(context, "returned interval %s to %s"),
-                formatTime(segment.start, zone), formatTime(segment.end, zone)));
+                WeatherTimeFormat.time(context, segment.start, zone),
+                WeatherTimeFormat.time(context, segment.end, zone)));
         Double rate = minuteRateMmPerHour(segment);
         appendPart(detail, rate == null ? UiTranslations.text(context, "Rate unavailable")
                 : String.format(Locale.getDefault(),

@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="widget_background_title">Gardez les widgets à jour</string>
+    <string name="widget_background_message">Autorisez l’activité en arrière-plan pour actualiser les widgets lorsque l’application est fermée. Ouvrez Utilisation de la batterie dans les paramètres de l’application et choisissez Tout autoriser, Sans restriction ou une option équivalente.</string>
+    <string name="widget_background_summary">Autorisez l’activité en arrière-plan pour actualiser les widgets.</string>
+    <string name="widget_background_settings">Ouvrir les paramètres</string>
+    <string name="widget_background_confirmed">Déjà activé</string>
+    <string name="widget_background_later">Pas maintenant</string>
+    <string name="widget_background_unavailable">Impossible d’ouvrir les paramètres système.</string>
+</resources>

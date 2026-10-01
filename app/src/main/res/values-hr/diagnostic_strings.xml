@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="settings_export_logs">Izvezi dijagnostičke zapisnike</string>
+    <string name="settings_export_logs_summary">Spremite izvješće za rješavanje problema.</string>
+    <string name="settings_logs_saved">Dijagnostičko izvješće je spremljeno.</string>
+    <string name="settings_logs_failed">Dijagnostičko izvješće nije moguće spremiti.</string>
+</resources>

@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="widget_background_title">Оновлюйте віджети</string>
+    <string name="widget_background_message">Дозвольте фонову активність, щоб віджети оновлювалися, коли застосунок закритий. Відкрийте Використання батареї в налаштуваннях застосунку й виберіть Дозволити все, Без обмежень або відповідний пункт на телефоні.</string>
+    <string name="widget_background_summary">Дозвольте фонову активність для оновлення віджетів.</string>
+    <string name="widget_background_settings">Налаштування застосунку</string>
+    <string name="widget_background_confirmed">Уже ввімкнено</string>
+    <string name="widget_background_later">Не зараз</string>
+    <string name="widget_background_unavailable">Не вдалося відкрити системні налаштування.</string>
+</resources>

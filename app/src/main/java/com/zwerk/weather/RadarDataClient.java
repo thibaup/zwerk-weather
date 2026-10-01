@@ -245,6 +245,7 @@ final class RadarDataClient {
         final int generation;
         synchronized (lock) {
             if (!force && timeline != null && timeline.fresh()) {
+                DiagnosticLog.event(DiagnosticLog.Area.RADAR, DiagnosticLog.Event.CACHE_HIT);
                 callback.onTimeline(timeline, null);
                 return;
             }
@@ -262,6 +263,7 @@ final class RadarDataClient {
                     JSONObject raw = new JSONObject(new String(bytes, StandardCharsets.UTF_8));
                     result = parseTimeline(raw, System.currentTimeMillis());
                     saveTimeline(raw, result.fetchedAtMillis);
+                    DiagnosticLog.event(DiagnosticLog.Area.RADAR, DiagnosticLog.Event.TIMELINE_READY);
                 } catch (Exception ignored) {
                     error = radarWaitMessage();
                     if (error.isEmpty()) error = "Radar frames could not be loaded. Tap retry to try again.";
@@ -271,6 +273,8 @@ final class RadarDataClient {
                         }
                     }
                     if (result == null) result = readTimeline(true);
+                    DiagnosticLog.error(DiagnosticLog.Area.RADAR, ignored);
+                    if (result != null) DiagnosticLog.event(DiagnosticLog.Area.RADAR, DiagnosticLog.Event.CACHE_FALLBACK);
                 }
             }
             completeTimelineLoad(generation, result, error);
@@ -629,6 +633,7 @@ final class RadarDataClient {
     private byte[] fetch(String urlText, int maxBytes, boolean radar) throws Exception {
         if (radar) acquireRadarSlot();
         if (!active) throw new IllegalStateException("Radar page closed");
+        long diagnosticStart = android.os.SystemClock.elapsedRealtime();
         HttpURLConnection connection = (HttpURLConnection) new URL(urlText).openConnection();
         connection.setConnectTimeout(CONNECT_TIMEOUT_MS);
         connection.setReadTimeout(READ_TIMEOUT_MS);
@@ -638,6 +643,8 @@ final class RadarDataClient {
         try {
             RadarUsageCounter.record(context, radar);
             int responseCode = connection.getResponseCode();
+            DiagnosticLog.http(radar ? DiagnosticLog.Area.RADAR : DiagnosticLog.Area.MAP, responseCode,
+                    android.os.SystemClock.elapsedRealtime() - diagnosticStart);
             if (radar && responseCode == 429) {
                 long delay = RadarRequestLimiter.retryAfterMillis(
                         connection.getHeaderField("Retry-After"), System.currentTimeMillis());
@@ -657,6 +664,9 @@ final class RadarDataClient {
                 }
                 return output.toByteArray();
             }
+        } catch (Exception failure) {
+            DiagnosticLog.error(radar ? DiagnosticLog.Area.RADAR : DiagnosticLog.Area.MAP, failure);
+            throw failure;
         } finally {
             connection.disconnect();
         }
@@ -664,7 +674,10 @@ final class RadarDataClient {
 
     private void acquireRadarSlot() throws RadarRateLimitException {
         long delay = RADAR_LIMITER.acquire(SystemClock.elapsedRealtime());
-        if (delay > 0L) throw new RadarRateLimitException(delay);
+        if (delay > 0L) {
+            DiagnosticLog.event(DiagnosticLog.Area.RADAR, DiagnosticLog.Event.REQUEST_LIMIT);
+            throw new RadarRateLimitException(delay);
+        }
     }
 
 }

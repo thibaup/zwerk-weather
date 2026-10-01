@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="widget_background_title">Mantieni aggiornati i widget</string>
+    <string name="widget_background_message">Consenti l’attività in background per aggiornare i widget quando l’app è chiusa. Apri Utilizzo batteria nelle impostazioni dell’app e scegli Consenti tutto, Senza restrizioni o l’opzione equivalente del telefono.</string>
+    <string name="widget_background_summary">Consenti l’attività in background per aggiornare i widget.</string>
+    <string name="widget_background_settings">Apri impostazioni app</string>
+    <string name="widget_background_confirmed">Già attivato</string>
+    <string name="widget_background_later">Non ora</string>
+    <string name="widget_background_unavailable">Impossibile aprire le impostazioni di sistema.</string>
+</resources>

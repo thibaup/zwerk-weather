@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="settings_export_logs">Esporta registri diagnostici</string>
+    <string name="settings_export_logs_summary">Salva un rapporto per aiutare a risolvere i problemi.</string>
+    <string name="settings_logs_saved">Rapporto diagnostico salvato.</string>
+    <string name="settings_logs_failed">Impossibile salvare il rapporto diagnostico.</string>
+</resources>

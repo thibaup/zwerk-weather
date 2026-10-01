@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="settings_hour_format">Формат на часа</string>
+    <string name="settings_hour_format_12">12-часов</string>
+    <string name="settings_hour_format_24">24-часов</string>
+</resources>

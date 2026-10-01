@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="widget_background_title">Pidä widgetit ajan tasalla</string>
+    <string name="widget_background_message">Salli taustatoiminta, jotta widgetit voivat päivittyä sovelluksen ollessa suljettuna. Avaa Akun käyttö sovelluksen asetuksissa ja valitse Salli kaikki, Rajoittamaton tai vastaava vaihtoehto puhelimessasi.</string>
+    <string name="widget_background_summary">Salli taustatoiminta widgetien päivittämiseksi.</string>
+    <string name="widget_background_settings">Avaa sovelluksen asetukset</string>
+    <string name="widget_background_confirmed">Jo käytössä</string>
+    <string name="widget_background_later">Ei nyt</string>
+    <string name="widget_background_unavailable">Järjestelmäasetuksia ei voitu avata.</string>
+</resources>

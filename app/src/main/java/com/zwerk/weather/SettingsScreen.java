@@ -125,6 +125,7 @@ final class SettingsScreen extends android.content.ContextWrapper {
     private static final String EXTRA_API_PAGE = "com.zwerk.weather.extra.API_PAGE";
     private static final int REQUEST_UNITS_PAGE = 91;
     private static final int REQUEST_API_PAGE = 92;
+    private static final int REQUEST_DIAGNOSTIC_EXPORT = 93;
     private static final String TEMP_CELSIUS = "C";
     private static final String TEMP_FAHRENHEIT = "F";
     private static final String WIND_KMH = "km/h";
@@ -169,6 +170,8 @@ final class SettingsScreen extends android.content.ContextWrapper {
     private String initialWeatherDetailsSignature;
     private String displayedBudgetProfile;
     private boolean displayedNotificationsBlocked;
+    private boolean displayedWidgetBackgroundReminder;
+    private Dialog widgetBackgroundDialog;
 
     private final Activity activity;
     private final LinearLayout embeddedContainer;
@@ -369,6 +372,7 @@ final class SettingsScreen extends android.content.ContextWrapper {
         surfaceStyles.clear();
         displayedBudgetProfile = ApiRequestBudgetManager.profile(this);
         displayedNotificationsBlocked = alertNotificationsBlocked();
+        displayedWidgetBackgroundReminder = WidgetBackgroundAccess.needsReminder(this);
         FrameLayout root = null;
         ScrollView scroll = null;
         if (embeddedContainer == null) {
@@ -480,6 +484,17 @@ final class SettingsScreen extends android.content.ContextWrapper {
                     15, () -> WeatherWidgetProvider.requestRefresh(this));
             addSwitchRow("Gradient background", "", WeatherWidgetProvider.PREF_GRADIENT, true);
             addActionRow("Background colour", "", this::showWidgetColourDialog);
+            if (displayedWidgetBackgroundReminder) {
+                addActionRow(getString(R.string.widget_background_title),
+                        getString(R.string.widget_background_summary), () -> {
+                            if (widgetBackgroundDialog == null) {
+                                widgetBackgroundDialog = WidgetBackgroundAccess.showDialog(activity, () -> {
+                                    widgetBackgroundDialog = null;
+                                    if (!activity.isFinishing() && !activity.isDestroyed()) onResume();
+                                });
+                            }
+                        });
+            }
 
             addSectionHeading(getString(R.string.settings_alerts));
             addSwitchRow(
@@ -505,6 +520,8 @@ final class SettingsScreen extends android.content.ContextWrapper {
                     getString(R.string.settings_app_language),
                     AppLocaleManager.selectedLanguageLabel(this),
                     this::showLanguageDialog);
+            addActionRow(getString(R.string.settings_hour_format),
+                    WeatherTimeFormat.label(this), this::showHourFormatDialog);
             addActionRow(
                     getString(R.string.settings_check_updates),
                     getString(R.string.settings_check_updates_summary),
@@ -519,6 +536,8 @@ final class SettingsScreen extends android.content.ContextWrapper {
                             .putExtra(EXTRA_API_PAGE, true), REQUEST_API_PAGE));
             addActionRow("Reset all settings", "Restore defaults. Saved cities and API keys are kept.",
                     this::showResetSettingsDialog);
+            addActionRow(getString(R.string.settings_export_logs),
+                    getString(R.string.settings_export_logs_summary), this::exportDiagnosticLogs);
             activeSection = null;
             activeSectionRows = 0;
             addGitHubStarCard();
@@ -560,6 +579,28 @@ final class SettingsScreen extends android.content.ContextWrapper {
             return insets;
         });
         root.requestApplyInsets();
+    }
+
+    private void showHourFormatDialog() {
+        String[] values = {WeatherTimeFormat.SYSTEM, WeatherTimeFormat.TWELVE,
+                WeatherTimeFormat.TWENTY_FOUR};
+        String selected = WeatherTimeFormat.selected(this);
+        showGlassChoiceDialog(getString(R.string.settings_hour_format),
+                new String[]{getString(R.string.language_system_default),
+                        getString(R.string.settings_hour_format_12),
+                        getString(R.string.settings_hour_format_24)},
+                new String[]{"", "2:00 PM", "14:00"},
+                WeatherTimeFormat.TWELVE.equals(selected) ? 1
+                        : WeatherTimeFormat.TWENTY_FOUR.equals(selected) ? 2 : 0,
+                false, index -> {
+                    if (values[index].equals(WeatherTimeFormat.selected(this))) return;
+                    getSharedPreferences(UI_PREFS, MODE_PRIVATE).edit()
+                            .putString(WeatherTimeFormat.PREF, values[index]).apply();
+                    displayUnitChanged = true;
+                    WeatherWidgetProvider.requestRefresh(this);
+                    if (activity instanceof MainActivity) ((MainActivity) activity).refreshTimeFormat();
+                    buildUi();
+                });
     }
 
     private void showLanguageDialog() {
@@ -2648,13 +2689,19 @@ final class SettingsScreen extends android.content.ContextWrapper {
     void onResume() {
         String currentProfile = ApiRequestBudgetManager.profile(this);
         boolean notificationsBlocked = alertNotificationsBlocked();
+        boolean widgetBackgroundReminder = WidgetBackgroundAccess.needsReminder(this);
         if (displayedNotificationsBlocked && !notificationsBlocked) {
             RainAlertManager.checkSoon(this);
         }
         if (page != null && displayedBudgetProfile != null
                 && (!displayedBudgetProfile.equals(currentProfile)
-                || displayedNotificationsBlocked != notificationsBlocked)) {
+                || displayedNotificationsBlocked != notificationsBlocked
+                || displayedWidgetBackgroundReminder != widgetBackgroundReminder)) {
+            ScrollView oldScroll = containingScroll();
+            int scrollY = oldScroll == null ? 0 : oldScroll.getScrollY();
             buildUi();
+            ScrollView newScroll = containingScroll();
+            if (newScroll != null) newScroll.post(() -> newScroll.scrollTo(0, scrollY));
         }
         if (backdrop != null) {
             backdrop.setAnimationRunning(getSharedPreferences(UI_PREFS, MODE_PRIVATE)
@@ -2663,10 +2710,64 @@ final class SettingsScreen extends android.content.ContextWrapper {
     }
 
     void onPause() {
+        if (widgetBackgroundDialog != null) widgetBackgroundDialog.dismiss();
         if (backdrop != null) backdrop.setAnimationRunning(false);
     }
 
+    private ScrollView containingScroll() {
+        for (android.view.ViewParent parent = page == null ? null : page.getParent();
+                parent != null; parent = parent.getParent()) {
+            if (parent instanceof ScrollView) return (ScrollView) parent;
+        }
+        return null;
+    }
+
+    private void exportDiagnosticLogs() {
+        DiagnosticLog.event(DiagnosticLog.Area.APP, DiagnosticLog.Event.EXPORT_REQUESTED);
+        Intent save = new Intent(Intent.ACTION_CREATE_DOCUMENT)
+                .addCategory(Intent.CATEGORY_OPENABLE)
+                .setType("text/plain")
+                .putExtra(Intent.EXTRA_TITLE, "Zwerk-Weather-diagnostics-"
+                        + java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd-HHmmss", Locale.ROOT)
+                                .withZone(java.time.ZoneOffset.UTC).format(java.time.Instant.now()) + ".txt");
+        try {
+            if (activity instanceof MainActivity)
+                ((MainActivity) activity).suppressNextResumeWeatherLoad = true;
+            startActivityForResult(save, REQUEST_DIAGNOSTIC_EXPORT);
+        }
+        catch (android.content.ActivityNotFoundException unavailable) {
+            if (activity instanceof MainActivity)
+                ((MainActivity) activity).suppressNextResumeWeatherLoad = false;
+            Toast.makeText(this, R.string.settings_logs_failed, Toast.LENGTH_LONG).show();
+            DiagnosticLog.error(DiagnosticLog.Area.APP, unavailable);
+        }
+    }
+
+    private void saveDiagnosticLogs(Uri destination) {
+        Context context = getApplicationContext();
+        new Thread(() -> {
+            boolean saved = false;
+            try (java.io.OutputStream stream = context.getContentResolver().openOutputStream(destination, "wt")) {
+                if (stream == null) throw new IOException("No output stream");
+                stream.write(DiagnosticLog.report(context).getBytes(StandardCharsets.UTF_8));
+                saved = true;
+            } catch (Exception failure) {
+                saved = false;
+                DiagnosticLog.event(DiagnosticLog.Area.APP, DiagnosticLog.Event.EXPORT_FAILED);
+                DiagnosticLog.error(DiagnosticLog.Area.APP, failure);
+            }
+            if (saved) DiagnosticLog.event(DiagnosticLog.Area.APP, DiagnosticLog.Event.EXPORT_SAVED);
+            int message = saved ? R.string.settings_logs_saved : R.string.settings_logs_failed;
+            activity.runOnUiThread(() -> Toast.makeText(context, message, Toast.LENGTH_LONG).show());
+        }, "ZwerkDiagnosticExport").start();
+    }
+
     void onActivityResult(int requestCode, int resultCode, Intent data) {
+        if (requestCode == REQUEST_DIAGNOSTIC_EXPORT) {
+            if (resultCode == RESULT_OK && data != null && data.getData() != null)
+                saveDiagnosticLogs(data.getData());
+            return;
+        }
         if (requestCode != REQUEST_UNITS_PAGE || resultCode != RESULT_OK || data == null) return;
         temperatureUnitChanged |= data.getBooleanExtra(EXTRA_UNIT_CHANGED, false);
         displayUnitChanged |= data.getBooleanExtra(EXTRA_DISPLAY_UNIT_CHANGED, false);

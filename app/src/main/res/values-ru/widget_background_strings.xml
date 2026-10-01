@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="widget_background_title">Обновляйте виджеты</string>
+    <string name="widget_background_message">Разрешите фоновую активность, чтобы виджеты обновлялись при закрытом приложении. Откройте Использование батареи в настройках приложения и выберите Разрешить всё, Без ограничений или аналогичный пункт на телефоне.</string>
+    <string name="widget_background_summary">Разрешите фоновую активность для обновления виджетов.</string>
+    <string name="widget_background_settings">Настройки приложения</string>
+    <string name="widget_background_confirmed">Уже включено</string>
+    <string name="widget_background_later">Не сейчас</string>
+    <string name="widget_background_unavailable">Не удалось открыть настройки системы.</string>
+</resources>

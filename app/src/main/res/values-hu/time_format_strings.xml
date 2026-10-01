@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="settings_hour_format">Időformátum</string>
+    <string name="settings_hour_format_12">12 órás</string>
+    <string name="settings_hour_format_24">24 órás</string>
+</resources>

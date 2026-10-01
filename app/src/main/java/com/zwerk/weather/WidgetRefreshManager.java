@@ -27,7 +27,7 @@ final class WidgetRefreshManager {
     private WidgetRefreshManager() { }
 
     static boolean hasWidgets(Context context) {
-        return hasWidget(context, WeatherWidgetProvider.class)
+        return WeatherWidgetProvider.widgetIds(context).length > 0
                 || hasWidget(context, PrecipitationWidgetProvider.class);
     }
     private static boolean hasWidget(Context context, Class<?> provider) {
@@ -213,7 +213,10 @@ final class WidgetRefreshManager {
                     if (!published) throw new IllegalStateException("Missing current temperature");
                 }
                 if (needsBaseRefresh(context, target, System.currentTimeMillis())) success = false;
-            } catch (Exception ignored) { success = false; }
+            } catch (Exception failure) {
+                DiagnosticLog.error(DiagnosticLog.Area.WIDGET, failure);
+                success = false;
+            }
         }
         if (hasWidget(context, PrecipitationWidgetProvider.class) && target.isCurrent(context)) {
             if (needsMinuteRefresh(context, System.currentTimeMillis())) {
@@ -230,7 +233,8 @@ final class WidgetRefreshManager {
                         PrecipitationWidgetProvider.publishMinute(context, minutes,
                                 startedAt, target.lat, target.lon);
                     }
-                } catch (Exception ignored) {
+                } catch (Exception failure) {
+                    DiagnosticLog.error(DiagnosticLog.Area.PRECIPITATION, failure);
                     // Hourly quantities remain usable when minute data is unsupported.
                 }
             }
@@ -248,15 +252,20 @@ final class WidgetRefreshManager {
 
     private static JSONObject requestGoogle(Context context, String address) throws Exception {
         if (Thread.currentThread().isInterrupted()) throw new InterruptedException();
-        if (!ApiRequestBudgetManager.tryAcquire(context, ApiRequestBudgetManager.Category.WEATHER).allowed)
+        if (!ApiRequestBudgetManager.tryAcquire(context, ApiRequestBudgetManager.Category.WEATHER).allowed) {
+            DiagnosticLog.event(DiagnosticLog.Area.WIDGET, DiagnosticLog.Event.REQUEST_LIMIT);
             throw new IllegalStateException("Request limit reached");
+        }
+        long diagnosticStart = android.os.SystemClock.elapsedRealtime();
         HttpURLConnection connection = (HttpURLConnection) new URL(address).openConnection();
         connection.setConnectTimeout(12_000);
         connection.setReadTimeout(18_000);
         connection.setRequestProperty("Accept", "application/json");
         RainAlertManager.applyAndroidApiKeyRestrictionHeaders(context, connection);
         try {
-            if (connection.getResponseCode() != 200) throw new IllegalStateException("Weather service unavailable");
+            int status = connection.getResponseCode();
+            DiagnosticLog.http(DiagnosticLog.Area.WIDGET, status, android.os.SystemClock.elapsedRealtime() - diagnosticStart);
+            if (status != 200) throw new IllegalStateException("Weather service unavailable");
             try (InputStream input = connection.getInputStream(); ByteArrayOutputStream output = new ByteArrayOutputStream()) {
                 byte[] buffer = new byte[8192];
                 int count;

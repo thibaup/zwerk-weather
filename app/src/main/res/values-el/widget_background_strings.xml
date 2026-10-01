@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="widget_background_title">Διατηρήστε τα widget ενημερωμένα</string>
+    <string name="widget_background_message">Επιτρέψτε τη δραστηριότητα στο παρασκήνιο για ανανέωση των widget όταν η εφαρμογή είναι κλειστή. Ανοίξτε τη Χρήση μπαταρίας στις ρυθμίσεις της εφαρμογής και επιλέξτε Να επιτρέπονται όλα, Χωρίς περιορισμούς ή την αντίστοιχη επιλογή στο τηλέφωνό σας.</string>
+    <string name="widget_background_summary">Επιτρέψτε τη δραστηριότητα στο παρασκήνιο για ανανέωση των widget.</string>
+    <string name="widget_background_settings">Ρυθμίσεις εφαρμογής</string>
+    <string name="widget_background_confirmed">Ήδη ενεργοποιημένο</string>
+    <string name="widget_background_later">Όχι τώρα</string>
+    <string name="widget_background_unavailable">Δεν ήταν δυνατό το άνοιγμα των ρυθμίσεων συστήματος.</string>
+</resources>

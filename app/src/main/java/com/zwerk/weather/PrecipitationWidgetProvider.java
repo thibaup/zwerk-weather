@@ -16,7 +16,8 @@ import android.widget.RemoteViews;
 import org.json.JSONArray;
 import org.json.JSONObject;
 
-import java.util.Date;
+import java.time.Instant;
+import java.time.ZoneId;
 
 /** A home-screen plot rendered solely from the app's saved, location-scoped forecast. */
 public final class PrecipitationWidgetProvider extends AppWidgetProvider {
@@ -29,6 +30,7 @@ public final class PrecipitationWidgetProvider extends AppWidgetProvider {
     private static final long MINUTE_MAX_AGE_MILLIS = 60L * 60L * 1000L;
 
     @Override public void onUpdate(Context context, AppWidgetManager manager, int[] ids) {
+        DiagnosticLog.event(DiagnosticLog.Area.WIDGET, DiagnosticLog.Event.WIDGET_UPDATE);
         WidgetRefreshManager.reconcile(context);
         for (int id : ids) manager.updateAppWidget(id, buildViews(context, id, null));
         scheduleNextUpdate(context);
@@ -37,6 +39,7 @@ public final class PrecipitationWidgetProvider extends AppWidgetProvider {
     @Override public void onAppWidgetOptionsChanged(Context context, AppWidgetManager manager,
             int id, android.os.Bundle options) {
         super.onAppWidgetOptionsChanged(context, manager, id, options);
+        DiagnosticLog.event(DiagnosticLog.Area.WIDGET, DiagnosticLog.Event.WIDGET_RESIZE);
         WidgetRefreshManager.reconcile(context);
         manager.updateAppWidget(id, buildViews(context, id, options));
         scheduleNextUpdate(context);
@@ -192,10 +195,11 @@ public final class PrecipitationWidgetProvider extends AppWidgetProvider {
                 : PrecipitationWidgetData.amountLabel(data.totalMm) + " mm · "
                         + UiTranslations.text(localized, complete ? "Total" : "Partial forecast")
                         + " · " + UiTranslations.text(localized, "10 min bars");
-        java.text.DateFormat clock = android.text.format.DateFormat.getTimeFormat(localized);
         String[] labels = {UiTranslations.text(localized, "Now"),
-                clock.format(new Date(now + 3L * 60L * 60L * 1000L)),
-                clock.format(new Date(now + 6L * 60L * 60L * 1000L))};
+                WeatherTimeFormat.time(localized, Instant.ofEpochMilli(now + 3L * 3_600_000L),
+                        ZoneId.systemDefault()),
+                WeatherTimeFormat.time(localized, Instant.ofEpochMilli(now + 6L * 3_600_000L),
+                        ZoneId.systemDefault())};
         try {
             Bitmap chart = PrecipitationWidgetChart.render(data, widthDp - 28, heightDp - 44,
                     labels, UiTranslations.text(localized, "No forecast available"));

@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="settings_export_logs">Eksportuj dzienniki diagnostyczne</string>
+    <string name="settings_export_logs_summary">Zapisz raport pomocny w rozwiązywaniu problemów.</string>
+    <string name="settings_logs_saved">Raport diagnostyczny zapisany.</string>
+    <string name="settings_logs_failed">Nie udało się zapisać raportu diagnostycznego.</string>
+</resources>

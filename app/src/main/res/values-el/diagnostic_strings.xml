@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="settings_export_logs">Εξαγωγή αρχείων διαγνωστικού ελέγχου</string>
+    <string name="settings_export_logs_summary">Αποθηκεύστε μια αναφορά για την επίλυση προβλημάτων.</string>
+    <string name="settings_logs_saved">Η διαγνωστική αναφορά αποθηκεύτηκε.</string>
+    <string name="settings_logs_failed">Δεν ήταν δυνατή η αποθήκευση της διαγνωστικής αναφοράς.</string>
+</resources>

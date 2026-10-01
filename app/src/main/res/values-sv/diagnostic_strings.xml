@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="settings_export_logs">Exportera diagnostikloggar</string>
+    <string name="settings_export_logs_summary">Spara en rapport för felsökning.</string>
+    <string name="settings_logs_saved">Diagnostikrapport sparad.</string>
+    <string name="settings_logs_failed">Kunde inte spara diagnostikrapporten.</string>
+</resources>

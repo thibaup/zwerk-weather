@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="settings_export_logs">Експортувати діагностичні журнали</string>
+    <string name="settings_export_logs_summary">Збережіть звіт для вирішення проблем.</string>
+    <string name="settings_logs_saved">Діагностичний звіт збережено.</string>
+    <string name="settings_logs_failed">Не вдалося зберегти діагностичний звіт.</string>
+</resources>

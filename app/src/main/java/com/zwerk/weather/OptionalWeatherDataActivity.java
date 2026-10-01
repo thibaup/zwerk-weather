@@ -712,9 +712,11 @@ abstract class OptionalWeatherDataActivity extends WeatherApiActivity {
         ApiRequestBudgetManager.Decision budget =
                 ApiRequestBudgetManager.tryAcquire(this, category);
         if (!budget.allowed) {
+            DiagnosticLog.event(DiagnosticLog.Area.OPTIONAL, DiagnosticLog.Event.REQUEST_LIMIT);
             throw new OptionalRequestException(
                     -2, endpointName, "APP_REQUEST_LIMIT", budget.message);
         }
+        long diagnosticStart = android.os.SystemClock.elapsedRealtime();
         HttpURLConnection connection = (HttpURLConnection) new URL(address).openConnection();
         connection.setConnectTimeout(12000);
         connection.setReadTimeout(18000);
@@ -732,6 +734,7 @@ abstract class OptionalWeatherDataActivity extends WeatherApiActivity {
         }
         try {
             int code = connection.getResponseCode();
+            DiagnosticLog.http(DiagnosticLog.Area.OPTIONAL, code, android.os.SystemClock.elapsedRealtime() - diagnosticStart);
             if (code < 200 || code >= 300) {
                 String errorBody = readUtf8Bounded(
                         connection.getErrorStream(), ERROR_BODY_LIMIT_BYTES);
@@ -748,8 +751,10 @@ abstract class OptionalWeatherDataActivity extends WeatherApiActivity {
                 throw new OptionalRequestException(code, endpointName, "INVALID_RESPONSE");
             }
         } catch (SocketTimeoutException ignored) {
+            DiagnosticLog.error(DiagnosticLog.Area.OPTIONAL, ignored);
             throw new OptionalRequestException(-1, endpointName, "TIMEOUT");
         } catch (IOException ignored) {
+            DiagnosticLog.error(DiagnosticLog.Area.OPTIONAL, ignored);
             throw new OptionalRequestException(-1, endpointName, "NETWORK");
         } finally {
             connection.disconnect();

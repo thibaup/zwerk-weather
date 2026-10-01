@@ -8,10 +8,11 @@
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
 
     <application
+        android:name=".WeatherApplication"
         android:allowBackup="false"
-        android:icon="@mipmap/ic_launcher"
+        android:icon="@mipmap/ic_zwerk_weather"
         android:label="Zwerk Weather"
-        android:roundIcon="@mipmap/ic_launcher"
+        android:roundIcon="@mipmap/ic_zwerk_weather"
         android:theme="@style/AppTheme"
         android:usesCleartextTraffic="false">
         <activity
@@ -28,6 +29,7 @@
             android:exported="false" />
         <receiver
             android:name=".WeatherWidgetProvider"
+            android:icon="@mipmap/ic_zwerk_weather"
             android:exported="false"
             android:label="@string/weather_widget_name">
             <intent-filter>
@@ -43,7 +45,30 @@
                 android:resource="@xml/weather_widget_info" />
         </receiver>
         <receiver
+            android:name=".WeatherSmallWidgetProvider"
+            android:icon="@mipmap/ic_zwerk_weather"
+            android:exported="false"
+            android:label="@string/weather_small_widget_name">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data android:name="android.appwidget.provider"
+                android:resource="@xml/weather_small_widget_info" />
+        </receiver>
+        <receiver
+            android:name=".WeatherMiniWidgetProvider"
+            android:icon="@mipmap/ic_zwerk_weather"
+            android:exported="false"
+            android:label="@string/weather_mini_widget_name">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data android:name="android.appwidget.provider"
+                android:resource="@xml/weather_mini_widget_info" />
+        </receiver>
+        <receiver
             android:name=".PrecipitationWidgetProvider"
+            android:icon="@mipmap/ic_zwerk_weather"
             android:exported="false"
             android:label="@string/precipitation_widget_name">
             <intent-filter>

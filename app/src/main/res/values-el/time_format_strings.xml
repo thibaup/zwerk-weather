@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="settings_hour_format">Μορφή ώρας</string>
+    <string name="settings_hour_format_12">12ωρη</string>
+    <string name="settings_hour_format_24">24ωρη</string>
+</resources>

@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="widget_background_title">Keep widgets updated</string>
+    <string name="widget_background_message">Allow background activity so widgets can refresh when the app is closed. Open Battery usage in your app settings and choose Allow all, Unrestricted, or the equivalent option on your phone.</string>
+    <string name="widget_background_summary">Allow background activity to help widgets refresh.</string>
+    <string name="widget_background_settings">Open app settings</string>
+    <string name="widget_background_confirmed">Already enabled</string>
+    <string name="widget_background_later">Not now</string>
+    <string name="widget_background_unavailable">Could not open system settings.</string>
+</resources>

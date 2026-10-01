@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="settings_export_logs">Diagnosztikai naplók exportálása</string>
+    <string name="settings_export_logs_summary">Jelentés mentése a hibák kivizsgálásához.</string>
+    <string name="settings_logs_saved">A diagnosztikai jelentés mentve.</string>
+    <string name="settings_logs_failed">A diagnosztikai jelentést nem sikerült menteni.</string>
+</resources>

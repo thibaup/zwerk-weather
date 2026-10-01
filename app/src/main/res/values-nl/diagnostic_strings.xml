@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="settings_export_logs">Diagnostische logs exporteren</string>
+    <string name="settings_export_logs_summary">Sla een rapport op om problemen te onderzoeken.</string>
+    <string name="settings_logs_saved">Diagnostisch rapport opgeslagen.</string>
+    <string name="settings_logs_failed">Het diagnostische rapport kon niet worden opgeslagen.</string>
+</resources>

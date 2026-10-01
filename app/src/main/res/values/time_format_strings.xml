@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="settings_hour_format">Time format</string>
+    <string name="settings_hour_format_12">12-hour</string>
+    <string name="settings_hour_format_24">24-hour</string>
+    <string name="weather_small_widget_name" translatable="false">Zwerk Weather 2×2</string>
+    <string name="weather_mini_widget_name" translatable="false">Zwerk Weather 2×1</string>
+</resources>

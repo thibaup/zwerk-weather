@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="settings_export_logs">Exportovat diagnostické záznamy</string>
+    <string name="settings_export_logs_summary">Uložte zprávu pro řešení problémů.</string>
+    <string name="settings_logs_saved">Diagnostická zpráva byla uložena.</string>
+    <string name="settings_logs_failed">Diagnostickou zprávu se nepodařilo uložit.</string>
+</resources>

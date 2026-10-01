@@ -1313,8 +1313,7 @@ abstract class WeatherOverviewRenderingActivity extends MinuteForecastRenderingA
         if (instant == null) return "";
         try {
             ZoneId zone = responseZone(lastCurrentWeather, lastHourlyWeather, lastDailyWeather);
-            return DateTimeFormatter.ofPattern("EEE d MMM, HH:mm", Locale.getDefault())
-                    .format(instant.atZone(zone));
+            return WeatherTimeFormat.dated(this, instant, zone, "EEE d MMM,");
         } catch (Exception ignored) {
             return value;
         }
@@ -2285,7 +2284,7 @@ abstract class WeatherOverviewRenderingActivity extends MinuteForecastRenderingA
         JSONArray hours = forecast == null ? null : forecast.optJSONArray("hourlyForecasts");
         if (hours == null) return null;
         LocalDate date = hourLocalDate(selectedWeather, zone);
-        String clock = hourLabel(selectedWeather, zone);
+        String clock = rawHourLabel(selectedWeather, zone);
         for (int i = 0; i < hours.length(); i++) {
             JSONObject hour = hours.optJSONObject(i);
             if (hour == null || !optionalTimeMatches(hour.optString("dateTime", ""),
@@ -2391,7 +2390,7 @@ abstract class WeatherOverviewRenderingActivity extends MinuteForecastRenderingA
         JSONArray times = hourly == null ? null : hourly.optJSONArray("time");
         if (times == null) return -1;
         LocalDate date = hourLocalDate(selectedWeather, zone);
-        String clock = hourLabel(selectedWeather, zone);
+        String clock = rawHourLabel(selectedWeather, zone);
         for (int i = 0; i < times.length(); i++) {
             String time = times.optString(i, "");
             if (optionalTimeMatches(time, date, clock, zone)) return i;
@@ -3746,8 +3745,7 @@ abstract class WeatherOverviewRenderingActivity extends MinuteForecastRenderingA
         Instant instant = parseInstant(value);
         if (instant == null) return "";
         try {
-            return DateTimeFormatter.ofPattern("EEE HH:mm", Locale.getDefault())
-                    .format(instant.atZone(zone));
+            return WeatherTimeFormat.dated(this, instant, zone, "EEE");
         } catch (Exception ignored) {
             return "";
         }
@@ -4536,9 +4534,7 @@ abstract class WeatherOverviewRenderingActivity extends MinuteForecastRenderingA
     String dataAgeLabel(JSONObject current) {
         if (current != null && current.optBoolean(SavedForecast.FALLBACK, false)) {
             long fetchedAt = current.optLong(SavedForecast.FETCHED_AT, 0L);
-            String savedAt = DateTimeFormatter.ofLocalizedDateTime(java.time.format.FormatStyle.SHORT)
-                    .withLocale(Locale.getDefault()).withZone(ZoneId.systemDefault())
-                    .format(Instant.ofEpochMilli(fetchedAt));
+            String savedAt = WeatherTimeFormat.saved(this, fetchedAt, ZoneId.systemDefault());
             return getString(R.string.forecast_saved_status, savedAt);
         }
         boolean openMeteo = current != null && current.has("_openMeteo");

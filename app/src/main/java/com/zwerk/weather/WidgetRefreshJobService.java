@@ -24,12 +24,15 @@ public final class WidgetRefreshJobService extends JobService {
         activeJobs.put(params.getJobId(), params);
         if (worker != null) return true;
         WORKERS.incrementAndGet();
+        DiagnosticLog.event(DiagnosticLog.Area.WIDGET, DiagnosticLog.Event.REFRESH_STARTED);
         worker = new Thread(() -> {
             boolean success = false;
             try { success = WidgetRefreshManager.refresh(getApplicationContext()); }
-            catch (Exception ignored) { /* Keep unexpected refresh failures retryable. */ }
+            catch (Exception failure) { DiagnosticLog.error(DiagnosticLog.Area.WIDGET, failure); }
             finally {
                 final boolean completed = success;
+                DiagnosticLog.event(DiagnosticLog.Area.WIDGET, completed
+                        ? DiagnosticLog.Event.REFRESH_SUCCEEDED : DiagnosticLog.Event.REFRESH_PENDING);
                 main.post(() -> {
                     ArrayList<JobParameters> finishing = new ArrayList<>(activeJobs.values());
                     activeJobs.clear();
@@ -49,6 +52,7 @@ public final class WidgetRefreshJobService extends JobService {
     }
 
     @Override public boolean onStopJob(JobParameters params) {
+        DiagnosticLog.event(DiagnosticLog.Area.WIDGET, DiagnosticLog.Event.REFRESH_STOPPED);
         if (activeJobs.get(params.getJobId()) == params) {
             activeJobs.remove(params.getJobId());
             if (activeJobs.isEmpty() && worker != null) worker.interrupt();

@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="settings_export_logs">Eksporter diagnoselogger</string>
+    <string name="settings_export_logs_summary">Lagre en rapport for feilsøking.</string>
+    <string name="settings_logs_saved">Diagnoserapport lagret.</string>
+    <string name="settings_logs_failed">Kunne ikke lagre diagnoserapporten.</string>
+</resources>

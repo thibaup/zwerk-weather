@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="widget_background_title">Održavajte widgete ažurnima</string>
+    <string name="widget_background_message">Dopustite aktivnost u pozadini kako bi se widgeti osvježavali kad je aplikacija zatvorena. Otvorite Potrošnju baterije u postavkama aplikacije i odaberite Dopusti sve, Bez ograničenja ili odgovarajuću opciju na telefonu.</string>
+    <string name="widget_background_summary">Dopustite aktivnost u pozadini za osvježavanje widgeta.</string>
+    <string name="widget_background_settings">Otvori postavke aplikacije</string>
+    <string name="widget_background_confirmed">Već omogućeno</string>
+    <string name="widget_background_later">Ne sada</string>
+    <string name="widget_background_unavailable">Nije moguće otvoriti postavke sustava.</string>
+</resources>

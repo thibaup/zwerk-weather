@@ -483,6 +483,7 @@ abstract class WeatherApiActivity extends MinuteForecastViewsActivity {
                 if (isDebugBuild()) {
                     Log.d(LOG_TAG, "retry generation=" + generation + " endpoint=" + endpointKind);
                 }
+                DiagnosticLog.event(DiagnosticLog.Area.WEATHER, DiagnosticLog.Event.RETRY);
                 JSONObject response = request(address);
                 if (!requestScopeCurrent(generation)) throw new SupersededWeatherRequestException();
                 return response;
@@ -1155,6 +1156,7 @@ abstract class WeatherApiActivity extends MinuteForecastViewsActivity {
         ApiRequestBudgetManager.Decision budget = ApiRequestBudgetManager.tryAcquire(
                 this, ApiRequestBudgetManager.Category.WEATHER);
         if (!budget.allowed) {
+            DiagnosticLog.event(DiagnosticLog.Area.WEATHER, DiagnosticLog.Event.REQUEST_LIMIT);
             throw new WeatherRequestException(
                     -2,
                     false,
@@ -1163,6 +1165,7 @@ abstract class WeatherApiActivity extends MinuteForecastViewsActivity {
                     budget.message,
                     "");
         }
+        long diagnosticStart = android.os.SystemClock.elapsedRealtime();
         HttpURLConnection connection = (HttpURLConnection) new URL(address).openConnection();
         connection.setConnectTimeout(12000);
         connection.setReadTimeout(18000);
@@ -1171,6 +1174,7 @@ abstract class WeatherApiActivity extends MinuteForecastViewsActivity {
 
         try {
             int code = connection.getResponseCode();
+            DiagnosticLog.http(DiagnosticLog.Area.WEATHER, code, android.os.SystemClock.elapsedRealtime() - diagnosticStart);
             if (code < 200 || code >= 300) {
                 String errorBody = readUtf8Bounded(connection.getErrorStream(), ERROR_BODY_LIMIT_BYTES);
                 ServiceErrorInfo info = parseSafeServiceError(errorBody);
@@ -1209,6 +1213,7 @@ abstract class WeatherApiActivity extends MinuteForecastViewsActivity {
                         "Invalid JSON response");
             }
         } catch (SocketTimeoutException ignored) {
+            DiagnosticLog.error(DiagnosticLog.Area.WEATHER, ignored);
             throw new WeatherRequestException(
                     -1,
                     true,
@@ -1217,6 +1222,7 @@ abstract class WeatherApiActivity extends MinuteForecastViewsActivity {
                     "Weather service timed out",
                     "Network timeout");
         } catch (IOException ignored) {
+            DiagnosticLog.error(DiagnosticLog.Area.WEATHER, ignored);
             throw new WeatherRequestException(
                     -1,
                     true,

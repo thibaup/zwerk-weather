@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="widget_background_title">Menține widgeturile actualizate</string>
+    <string name="widget_background_message">Permite activitatea în fundal pentru actualizarea widgeturilor când aplicația este închisă. Deschide Utilizarea bateriei în setările aplicației și alege Permite tot, Fără restricții sau opțiunea echivalentă de pe telefon.</string>
+    <string name="widget_background_summary">Permite activitatea în fundal pentru actualizarea widgeturilor.</string>
+    <string name="widget_background_settings">Deschide setările aplicației</string>
+    <string name="widget_background_confirmed">Deja activat</string>
+    <string name="widget_background_later">Nu acum</string>
+    <string name="widget_background_unavailable">Nu s-au putut deschide setările sistemului.</string>
+</resources>
