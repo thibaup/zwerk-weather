@@ -230,6 +230,8 @@ abstract class ForecastViewsActivity extends WeatherInteractionViewsActivity {
 
     void updatePreviewSubtitle() {
         if (previewSubtitle == null || locationArea == null) return;
+        String locationDescription = forecastLocationName()
+                + (usingDeviceLocation ? ". " + UiTranslations.text(this, "Device location") : "");
         if (forecastPreview.isPreviewing()) {
             String text = UiTranslations.text(this, forecastPreview.previewLabel)
                     + " · " + UiTranslations.text(this, forecastPreview.previewScene.condition)
@@ -237,12 +239,12 @@ abstract class ForecastViewsActivity extends WeatherInteractionViewsActivity {
             previewSubtitle.setText(text);
             previewSubtitle.setVisibility(View.VISIBLE);
             locationArea.setContentDescription(
-                    forecastLocationName() + ". " + text
+                    locationDescription + ". " + text
                             + ". Tap to restore current weather. Swipe left or right to switch saved locations.");
         } else {
             previewSubtitle.setText("");
             previewSubtitle.setVisibility(View.GONE);
-            locationArea.setContentDescription(forecastLocationName()
+            locationArea.setContentDescription(locationDescription
                     + ". Current forecast location. Swipe left or right to switch saved locations.");
         }
     }

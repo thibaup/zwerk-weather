@@ -10,6 +10,8 @@ import android.graphics.drawable.ColorDrawable;
 import android.graphics.drawable.StateListDrawable;
 import android.view.View;
 import android.view.ViewGroup;
+import android.view.MotionEvent;
+import android.view.ViewConfiguration;
 import android.view.accessibility.AccessibilityNodeInfo;
 
 import java.util.function.IntConsumer;
@@ -32,6 +34,13 @@ final class HourlyDayChartView extends ViewGroup {
     private final double maximum;
     private final double maximumRain;
     private int selectedHour = -1;
+    private final IntConsumer hourClicked;
+    private final int touchSlop;
+    private float downX;
+    private float downY;
+    private boolean scrubbing;
+    private boolean verticalGesture;
+    private boolean ignoreGesture;
 
     HourlyDayChartView(Context context, double[] temperatures, double[] precipitation,
             String[] times, String[] temperatureLabels, String[] rainLabels, String[] descriptions,
@@ -44,6 +53,8 @@ final class HourlyDayChartView extends ViewGroup {
         this.rainLabels = rainLabels;
         this.keys = keys;
         this.selectionChanged = selectionChanged;
+        this.hourClicked = hourClicked;
+        touchSlop = ViewConfiguration.get(context).getScaledTouchSlop();
         density = getResources().getDisplayMetrics().density;
         textScale = getResources().getDisplayMetrics().scaledDensity;
         double low = Double.POSITIVE_INFINITY;
@@ -86,6 +97,69 @@ final class HourlyDayChartView extends ViewGroup {
     }
 
     boolean hasRain() { return hasRain; }
+
+    @Override public boolean dispatchTouchEvent(MotionEvent event) {
+        int action = event.getActionMasked();
+        if (action == MotionEvent.ACTION_DOWN) {
+            downX = event.getX();
+            downY = event.getY();
+            scrubbing = false;
+            verticalGesture = false;
+            ignoreGesture = false;
+            // Keep the first move so we can distinguish scrubbing from page scrolling.
+            disallowParentIntercept(true);
+        } else if (action == MotionEvent.ACTION_POINTER_DOWN) {
+            ignoreGesture = true;
+        }
+        boolean handled = super.dispatchTouchEvent(event);
+        if (action == MotionEvent.ACTION_UP || action == MotionEvent.ACTION_CANCEL) {
+            scrubbing = false;
+            disallowParentIntercept(false);
+        }
+        return handled;
+    }
+
+    @Override public boolean onInterceptTouchEvent(MotionEvent event) {
+        if (ignoreGesture) return true;
+        if (event.getActionMasked() == MotionEvent.ACTION_MOVE && !verticalGesture) {
+            float dx = Math.abs(event.getX() - downX);
+            float dy = Math.abs(event.getY() - downY);
+            if (!scrubbing && Math.max(dx, dy) > touchSlop) {
+                scrubbing = dx > dy;
+                verticalGesture = !scrubbing;
+                if (verticalGesture) disallowParentIntercept(false);
+                // This MOVE cancels the child target; Android only routes later
+                // events to onTouchEvent, so update the first scrub here as well.
+                if (scrubbing) scrubTo(event.getX());
+            }
+        }
+        // Cancel a pending child click even when no further MOVE arrives before UP.
+        return scrubbing || verticalGesture;
+    }
+
+    @Override public boolean onTouchEvent(MotionEvent event) {
+        if (ignoreGesture || verticalGesture) return true;
+        int action = event.getActionMasked();
+        if (scrubbing && (action == MotionEvent.ACTION_MOVE || action == MotionEvent.ACTION_UP)) {
+            scrubTo(event.getX());
+            return true;
+        }
+        return scrubbing || super.onTouchEvent(event);
+    }
+
+    private void scrubTo(float x) {
+        int count = getChildCount();
+        if (count == 0) return;
+        int hour = Math.max(0, Math.min(count - 1,
+                (int) (x * count / Math.max(1, getWidth()))));
+        // The preview callback toggles on a second selection. A drag must keep
+        // the current hour selected, including when returning to a previous hour.
+        if (hour != selectedHour) hourClicked.accept(hour);
+    }
+
+    private void disallowParentIntercept(boolean disallow) {
+        if (getParent() != null) getParent().requestDisallowInterceptTouchEvent(disallow);
+    }
 
     void syncPreview(String key) {
         int next = -1;

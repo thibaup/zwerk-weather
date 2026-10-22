@@ -551,7 +551,7 @@ abstract class WeatherApiActivity extends MinuteForecastViewsActivity {
         displayedForecastLongitude = lon;
         displayedForecastLocationId = locationId;
         displayedForecastLocationName = locationName;
-        if (locationTitle != null) locationTitle.setText(forecastLocationName());
+        if (locationTitle != null) locationTitle.setText(locationHeaderLabel(forecastLocationName()));
     }
 
     void finishWeatherLoadFailure(Exception error, int generation) {

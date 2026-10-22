@@ -331,6 +331,7 @@ public class MainActivity extends WeatherSettingsFlowActivity implements DeviceL
         });
 
         locationTitle = text(locationName, 20, false, WHITE);
+        locationTitle.setText(locationHeaderLabel(locationName));
         locationTitle.setTypeface(Typeface.create("sans-serif", Typeface.NORMAL));
         locationTitle.setGravity(Gravity.CENTER_VERTICAL);
         locationTitle.setSingleLine(true);
@@ -1960,7 +1961,7 @@ public class MainActivity extends WeatherSettingsFlowActivity implements DeviceL
         locationName = explicitName != null
                 ? explicitName
                 : String.format(Locale.US, "%.3f°, %.3f°", lat, lon);
-        locationTitle.setText(lastCurrentWeather == null ? locationName : forecastLocationName());
+        locationTitle.setText(locationHeaderLabel(lastCurrentWeather == null ? locationName : forecastLocationName()));
         getPreferences(MODE_PRIVATE).edit()
                 .putFloat("lat", (float) lat)
                 .putFloat("lon", (float) lon)
@@ -2042,7 +2043,7 @@ public class MainActivity extends WeatherSettingsFlowActivity implements DeviceL
                         WeatherWidgetProvider.requestRefresh(this);
                     }
                     if (displayedForecastMatchesSelection()) displayedForecastLocationName = resolved;
-                    locationTitle.setText(lastCurrentWeather == null ? resolved : forecastLocationName());
+                    locationTitle.setText(locationHeaderLabel(lastCurrentWeather == null ? resolved : forecastLocationName()));
                     updatePreviewSubtitle();
                 });
             } catch (Exception ignored) {

@@ -215,6 +215,42 @@ abstract class WeatherActivityFoundation extends Activity {
     String selectedLocationId = "";
     boolean usingDeviceLocation;
 
+    CharSequence locationHeaderLabel(String name) {
+        if (!usingDeviceLocation) return name;
+        android.text.SpannableString label = new android.text.SpannableString("\uFFFC " + name);
+        label.setSpan(new LiveLocationSpan(), 0, 1, android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
+        return label;
+    }
+
+    /** Draw the pin with the app palette instead of the system's multicolor emoji. */
+    private static final class LiveLocationSpan extends android.text.style.ReplacementSpan {
+        @Override public int getSize(Paint paint, CharSequence text, int start, int end,
+                Paint.FontMetricsInt metrics) {
+            return Math.round(paint.getTextSize());
+        }
+
+        @Override public void draw(Canvas canvas, CharSequence text, int start, int end,
+                float x, int top, int y, int bottom, Paint textPaint) {
+            float size = textPaint.getTextSize();
+            Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG);
+            paint.setColor(ACCENT_BLUE);
+            Path pin = new Path();
+            pin.moveTo(12, 22);
+            pin.cubicTo(10, 19, 4, 13, 4, 9);
+            pin.cubicTo(4, -1, 20, -1, 20, 9);
+            pin.cubicTo(20, 13, 14, 19, 12, 22);
+            pin.close();
+            pin.addCircle(12, 9, 3, Path.Direction.CW);
+            pin.setFillType(Path.FillType.EVEN_ODD);
+            Paint.FontMetrics font = textPaint.getFontMetrics();
+            canvas.save();
+            canvas.translate(x, y + (font.ascent + font.descent - size) / 2f);
+            canvas.scale(size / 24f, size / 24f);
+            canvas.drawPath(pin, paint);
+            canvas.restore();
+        }
+    }
+
     String forecastLocationName() {
         return displayedForecastLocationName == null ? locationName : displayedForecastLocationName;
     }

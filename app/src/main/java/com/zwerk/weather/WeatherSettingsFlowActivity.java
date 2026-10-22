@@ -130,7 +130,7 @@ abstract class WeatherSettingsFlowActivity extends WeatherOverviewRenderingActiv
         selectedLocationId = data.getStringExtra(CityManagerActivity.EXTRA_LOCATION_ID);
         if (selectedLocationId == null) selectedLocationId = "";
         usingDeviceLocation = data.getBooleanExtra(CityManagerActivity.EXTRA_IS_DEVICE, false);
-        locationTitle.setText(lastCurrentWeather == null ? locationName : forecastLocationName());
+        locationTitle.setText(locationHeaderLabel(lastCurrentWeather == null ? locationName : forecastLocationName()));
         getPreferences(MODE_PRIVATE).edit()
                 .putFloat("lat", (float) lat)
                 .putFloat("lon", (float) lon)
