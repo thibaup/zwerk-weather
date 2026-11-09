@@ -716,7 +716,7 @@ final class OpenMeteoForecastClient {
                 + (showersMm == null ? 0d : Math.max(0d, showersMm));
         if (snow > 0d && snow >= rainWaterMm) return "SNOW";
         if (rainWaterMm > 0d || (qpfMm != null && qpfMm > 0d)) return "RAIN";
-        return "NONE";
+        return qpfMm == null && rainMm == null && showersMm == null ? "" : "NONE";
     }
 
     private static Double snowWaterEquivalentMm(

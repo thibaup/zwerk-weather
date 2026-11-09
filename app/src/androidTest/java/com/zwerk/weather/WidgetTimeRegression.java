@@ -18,7 +18,6 @@ import org.json.JSONObject;
 
 import java.io.File;
 import java.io.FileOutputStream;
-import java.lang.reflect.Method;
 import java.time.Instant;
 import java.time.ZoneId;
 import java.util.HashMap;
@@ -73,7 +72,6 @@ final class WidgetTimeRegression {
         check(WeatherTimeFormat.SYSTEM.equals(WeatherTimeFormat.selected(context)), "invalid preference falls back");
     }
 
-    @SuppressWarnings({"unchecked", "rawtypes"})
     private void checkWidgets(Context context, SharedPreferences snapshot, SharedPreferences ui) throws Exception {
         long now = System.currentTimeMillis();
         long start = now / 3_600_000L * 3_600_000L;
@@ -85,6 +83,7 @@ final class WidgetTimeRegression {
                 .putLong(WeatherWidgetProvider.KEY_UPDATED_EPOCH_MS, now)
                 .putLong(WeatherWidgetProvider.KEY_OBSERVATION_EPOCH_MS, now)
                 .putString(WeatherWidgetProvider.KEY_CITY, "A very long location name")
+                .putString(PrecipitationWidgetProvider.KEY_LOCATION_SCOPE, "different-city")
                 .putInt(WeatherWidgetProvider.KEY_TEMPERATURE, -99)
                 .putInt(WeatherWidgetProvider.KEY_DAILY_HIGH, -10)
                 .putInt(WeatherWidgetProvider.KEY_DAILY_LOW, -99)
@@ -92,14 +91,12 @@ final class WidgetTimeRegression {
                 .putString(WeatherWidgetProvider.KEY_CONDITION_TYPE, "partly")
                 .putString(WeatherWidgetProvider.KEY_HOURLY_JSON, hours.toString()).commit();
         ui.edit().putString(WeatherTimeFormat.PREF, WeatherTimeFormat.TWELVE).commit();
-        Class<? extends Enum> modes = (Class<? extends Enum>) Class.forName(
-                "com.zwerk.weather.WeatherWidgetProvider$WidgetMode");
-        Method build = WeatherWidgetProvider.class.getDeclaredMethod("buildMode", Context.class, modes);
-        build.setAccessible(true);
+        WidgetConfiguration defaults = new WidgetConfiguration("", 100, true, true);
         Object[][] sizes = {{"MINI",109,56}, {"MINI",180,90}, {"SMALL",109,118},
                 {"SMALL",180,180}, {"NORMAL",240,118}, {"ROOMY",280,152}, {"TALL",280,192}};
         for (Object[] size : sizes) {
-            RemoteViews remote = (RemoteViews) build.invoke(null, context, Enum.valueOf(modes, (String) size[0]));
+            RemoteViews remote = WeatherWidgetProvider.buildMode(context,
+                    WeatherWidgetProvider.WidgetMode.valueOf((String) size[0]), 0, defaults, null, snapshot);
             View widget = render(context, remote, (int) size[1], (int) size[2]);
             TextView temperature = widget.findViewById(R.id.widget_temperature);
             check(temperature.getText().toString().equals("-99°F"), "signed temperature and units survive rendering");
@@ -120,9 +117,33 @@ final class WidgetTimeRegression {
                 check(time.getText().toString().contains("M"), "forecast widget honors 12-hour setting");
             }
         }
+        WidgetConfiguration minimal = new WidgetConfiguration("", 80, false, false);
+        RemoteViews custom = WeatherWidgetProvider.buildMode(context,
+                WeatherWidgetProvider.WidgetMode.TALL, 0, minimal, null, snapshot);
+        View customWidget = render(context, custom, 280, 192);
+        check(customWidget.findViewById(R.id.widget_high_low).getVisibility() == View.GONE,
+                "widget detail visibility follows its own configuration");
+        check(customWidget.findViewById(R.id.widget_hour_strip).getVisibility() == View.GONE,
+                "widget hourly strip can be hidden independently");
+        CityManagerActivity.LocationSnapshot pinned = new CityManagerActivity.LocationSnapshot(
+                "widget-pin-fixture", "Brussels", 50.85, 4.35, false, "", "");
+        View loading = render(context, WeatherWidgetProvider.buildMode(context,
+                WeatherWidgetProvider.WidgetMode.TALL, 0, defaults, pinned, snapshot), 280, 192);
+        check(((TextView) loading.findViewById(R.id.widget_city)).getText().toString().equals("Brussels"),
+                "a pinned widget names its city while its own forecast is loading");
+        check(((TextView) loading.findViewById(R.id.widget_temperature)).getText().toString().startsWith("—"),
+                "a pinned widget cannot display another city's cached temperature");
+        snapshot.edit().putString(PrecipitationWidgetProvider.KEY_LOCATION_SCOPE,
+                PrecipitationWidgetData.locationScope(pinned.lat, pinned.lon, OpenMeteoConfig.cacheScope(context)))
+                .commit();
+        View loaded = render(context, WeatherWidgetProvider.buildMode(context,
+                WeatherWidgetProvider.WidgetMode.TALL, 0, defaults, pinned, snapshot), 280, 192);
+        check(((TextView) loaded.findViewById(R.id.widget_temperature)).getText().toString().equals("-99°F"),
+                "a matching pinned forecast renders normally");
         snapshot.edit().putBoolean(WeatherWidgetProvider.KEY_HAS_SNAPSHOT, false).commit();
         for (String mode : new String[]{"MINI", "SMALL"}) {
-            RemoteViews remote = (RemoteViews) build.invoke(null, context, Enum.valueOf(modes, mode));
+            RemoteViews remote = WeatherWidgetProvider.buildMode(context,
+                    WeatherWidgetProvider.WidgetMode.valueOf(mode), 0, defaults, null, snapshot);
             View widget = render(context, remote, 109, mode.equals("MINI") ? 56 : 118);
             check(((TextView) widget.findViewById(R.id.widget_temperature)).getText().toString().startsWith("—"),
                     "empty snapshot shows a safe placeholder");

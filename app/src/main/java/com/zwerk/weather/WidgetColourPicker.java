@@ -18,6 +18,8 @@ import android.widget.TextView;
 import java.util.Locale;
 
 /** Colour selection stays local until the enclosing dialog's Apply action. */
+// Created by Settings with the current colour, accent and background mode.
+@android.annotation.SuppressLint("ViewConstructor")
 final class WidgetColourPicker extends LinearLayout {
     private final float[] hsv = new float[3];
     private final SeekBar[] sliders = new SeekBar[3];
@@ -120,7 +122,7 @@ final class WidgetColourPicker extends LinearLayout {
             for (int i = 0; i < sliders.length; i++) {
                 int value = Math.round(i == 0 ? hsv[i] : hsv[i] * 100f);
                 sliders[i].setProgress(value);
-                values[i].setText(value + (i == 0 ? "°" : "%"));
+                values[i].setText(String.format(Locale.getDefault(), i == 0 ? "%d°" : "%d%%", value));
             }
             GradientDrawable background = new GradientDrawable(
                     GradientDrawable.Orientation.TOP_BOTTOM, WidgetBackground.colours(colour, gradient));

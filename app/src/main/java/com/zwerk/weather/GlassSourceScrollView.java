@@ -68,7 +68,7 @@ class GlassSourceScrollView extends ScrollView {
         super.onDetachedFromWindow();
     }
 
-    @android.annotation.TargetApi(29)
+    @androidx.annotation.RequiresApi(29)
     private static final class Api29 {
         static void drawContent(GlassSourceScrollView owner, Canvas canvas) {
             android.graphics.RenderNode node = (android.graphics.RenderNode) owner.contentNode;

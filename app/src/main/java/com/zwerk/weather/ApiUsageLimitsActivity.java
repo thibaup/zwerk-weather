@@ -475,7 +475,7 @@ public final class ApiUsageLimitsActivity extends Activity {
         background.setCornerRadius(dp(13));
         background.setStroke(dp(1), Color.argb(115, 163, 211, 246));
         field.setBackground(background);
-        if (value > 0) field.setText(Integer.toString(value));
+        if (value > 0) field.setText(String.format(Locale.getDefault(), "%d", value));
         field.setSelection(field.getText().length());
         return field;
     }

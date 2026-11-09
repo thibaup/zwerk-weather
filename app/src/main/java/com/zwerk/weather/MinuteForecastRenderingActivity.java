@@ -347,6 +347,7 @@ abstract class MinuteForecastRenderingActivity extends MinuteForecastActivity {
                 true,
                 WHITE);
         graphBody.addView(graphTitle);
+        addRainSummary(graphBody, state.response, windowStart, windowEnd, zone);
 
         LinearLayout metricRow = new LinearLayout(this);
         metricRow.setOrientation(LinearLayout.HORIZONTAL);
@@ -387,6 +388,49 @@ abstract class MinuteForecastRenderingActivity extends MinuteForecastActivity {
         graphLp.topMargin = dp(3);
         graphBody.addView(graph, graphLp);
         addMinutePageCard(page, graphBody, 10);
+    }
+
+    private void addRainSummary(LinearLayout body, JSONObject response, Instant from,
+            Instant until, ZoneId zone) {
+        Instant coveredUntil = PrecipitationForecast.continuousCoverageEnd(response, from, until);
+        PrecipitationForecast.RainEpisode rain = PrecipitationForecast.nextRain(
+                response, from, until.minusMillis(1));
+        String summary = "";
+        if (rain != null) {
+            boolean underway = !rain.start.isAfter(from);
+            // An episode ending at the edge of available data gives no evidence of when rain stops.
+            boolean endsInDryWeather = rain.end.isBefore(coveredUntil)
+                    && PrecipitationForecast.isDry(response, rain.end,
+                            rain.end.plusSeconds(60).isAfter(coveredUntil)
+                                    ? coveredUntil : rain.end.plusSeconds(60));
+            if (endsInDryWeather) {
+                summary = underway
+                        ? rainSummaryText("Rain through about %1$s", formatTime(rain.end, zone))
+                        : rainSummaryText("Rain around %1$s–%2$s",
+                                formatTime(rain.start, zone), formatTime(rain.end, zone));
+            } else {
+                summary = underway ? UiTranslations.text(this, "Rain expected now")
+                        : rainSummaryText("Rain expected around %1$s", formatTime(rain.start, zone));
+            }
+        } else if (coveredUntil.isAfter(from.plusSeconds(60))
+                && PrecipitationForecast.isDry(response, from, coveredUntil)) {
+            summary = rainSummaryText("Dry through %1$s", formatTime(coveredUntil, zone));
+        }
+        if (!summary.isEmpty()) body.addView(text(summary, 15, true, WHITE));
+
+        String source = OpenMeteoConfig.isPrecipitationOpenMeteo(this)
+                ? "Open-Meteo · " + UiTranslations.text(this, "15-minute model forecast")
+                : "Google Weather · " + UiTranslations.text(this, "Minute forecast");
+        String coverage = coveredUntil.isBefore(until)
+                ? coveredUntil.isAfter(from)
+                        ? rainSummaryText("Continuous coverage through %1$s", formatTime(coveredUntil, zone))
+                        : UiTranslations.text(this, "No continuous coverage from now")
+                : rainSummaryText("Coverage through %1$s", formatTime(until, zone));
+        body.addView(text(source + " · " + coverage, 12, false, SOFT_WHITE));
+    }
+
+    private String rainSummaryText(String pattern, Object... values) {
+        return String.format(Locale.getDefault(), UiTranslations.text(this, pattern), values);
     }
 
     LinearLayout minuteMetricCell(String label, TextView value) {

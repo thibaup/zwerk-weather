@@ -83,5 +83,6 @@
     <string name="weather_widget_loading">Frissítés…</string>
     <string name="forecast_saved_status">Mentett előrejelzés · %1$s</string>
     <string name="forecast_temperature">Hőmérséklet</string>
-    <string name="hourly_day_graph_hint">Koppints a grafikonra az óránkénti részletekért</string>
+    <string name="widget_layout_now">Most</string>
+    <string name="widget_layout_preview_condition">Borult</string>
 </resources>

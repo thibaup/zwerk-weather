@@ -16,7 +16,7 @@ If a tile reports `API_KEY_SERVICE_BLOCKED`, confirm that the required API is en
 
 Fresh forecasts are reused for one hour. Open-Meteo saved forecasts can remain available offline for up to 48 hours. Google current conditions and hourly forecasts expire after one hour under [Google Weather API caching terms](https://cloud.google.com/maps-platform/terms/maps-service-terms).
 
-Widgets refresh in the background, but Android may delay scheduled work. The **Zwerk Precipitation** widget shows precipitation amounts for the next six hours in millimetres.
+Widgets refresh in the background, but Android may delay scheduled work. The **Zwerk Precipitation** widget shows precipitation amounts for the next six hours in millimetres. The Rain page, precipitation widget, and background rain alerts use the precipitation provider setting. Widgets can follow the app location or be pinned to a saved city.
 
 With Open-Meteo **Best Match**, short-term precipitation uses Météo-France Seamless inside its model area and automatic selection elsewhere. Explicit model choices are respected. Amounts and precipitation chances come from different forecast fields. The chance field is hidden when no probabilities are returned. See the [Météo-France model documentation](https://open-meteo.com/en/docs/meteofrance-api).
 
@@ -36,7 +36,7 @@ The debug APK is written to:
 app/build/outputs/apk/debug/app-debug.apk
 ```
 
-Optional checks:
+The Android workflow runs the standalone forecast checks before building and linting. To run both checks locally:
 
 ```powershell
 .\gradlew.bat :app:lintDebug --no-daemon

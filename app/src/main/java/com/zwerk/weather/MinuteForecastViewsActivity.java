@@ -39,6 +39,7 @@ abstract class MinuteForecastViewsActivity extends ForecastViewsActivity {
         private final Paint markerGlowPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
         private final Path areaPath = new Path();
         private final Path topPath = new Path();
+        private LinearGradient areaGradient;
         private MinuteSelectionListener selectionListener;
         private int selectedIndex;
         private long selectedTimeMillis = Long.MIN_VALUE;
@@ -80,6 +81,20 @@ abstract class MinuteForecastViewsActivity extends ForecastViewsActivity {
             selectedTimeMillis = nearestSelectableTime(Instant.now().toEpochMilli());
             selectedIndex = segmentIndexForTime(selectedTimeMillis);
             updateAccessibility(false);
+        }
+
+        @Override
+        protected void onSizeChanged(int w, int h, int oldw, int oldh) {
+            super.onSizeChanged(w, h, oldw, oldh);
+            float top = dp(29);
+            float bottom = Math.max(top + dp(90), h - dp(10));
+            areaGradient = new LinearGradient(
+                    0, top, 0, bottom,
+                    new int[]{
+                            Color.argb(210, 125, 224, 255),
+                            Color.argb(168, 55, 160, 246),
+                            Color.argb(92, 31, 102, 211)},
+                    new float[]{0f, 0.52f, 1f}, Shader.TileMode.CLAMP);
         }
 
         void setSelectionListener(MinuteSelectionListener listener) {
@@ -224,17 +239,7 @@ abstract class MinuteForecastViewsActivity extends ForecastViewsActivity {
                 areaPath.close();
             }
 
-            areaPaint.setShader(new LinearGradient(
-                    0,
-                    plotTop,
-                    0,
-                    plotBottom,
-                    new int[]{
-                            Color.argb(210, 125, 224, 255),
-                            Color.argb(168, 55, 160, 246),
-                            Color.argb(92, 31, 102, 211)},
-                    new float[]{0f, 0.52f, 1f},
-                    Shader.TileMode.CLAMP));
+            areaPaint.setShader(areaGradient);
             canvas.drawPath(areaPath, areaPaint);
             areaPaint.setShader(null);
 

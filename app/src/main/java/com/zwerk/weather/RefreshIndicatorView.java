@@ -16,7 +16,10 @@ final class RefreshIndicatorView extends View {
     private final Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG);
     private final Paint textPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
     private final RectF rect = new RectF();
+    private final RectF spinnerBounds = new RectF();
     private final Path arrow = new Path();
+    private final Paint.FontMetrics textMetrics = new Paint.FontMetrics();
+    private LinearGradient backgroundGradient;
     private float pullFraction;
     private boolean releaseReady;
     private boolean refreshing;
@@ -41,7 +44,21 @@ final class RefreshIndicatorView extends View {
         topColor = withMinimumAlpha(top, 152);
         bottomColor = withMinimumAlpha(bottom, 126);
         accentColor = accent;
+        updateBackgroundGradient();
         invalidate();
+    }
+
+    @Override
+    protected void onSizeChanged(int w, int h, int oldw, int oldh) {
+        super.onSizeChanged(w, h, oldw, oldh);
+        updateBackgroundGradient();
+    }
+
+    private void updateBackgroundGradient() {
+        float h = getHeight();
+        backgroundGradient = h > 0f
+                ? new LinearGradient(0, 0, 0, h, topColor, bottomColor, Shader.TileMode.CLAMP)
+                : null;
     }
 
     void beginPull() {
@@ -122,10 +139,7 @@ final class RefreshIndicatorView extends View {
 
         rect.set(dp(1), dp(1), w - dp(1), h - dp(1));
         paint.setStyle(Paint.Style.FILL);
-        paint.setShader(new LinearGradient(
-                0, 0, 0, h,
-                topColor, bottomColor,
-                Shader.TileMode.CLAMP));
+        paint.setShader(backgroundGradient);
         canvas.drawRoundRect(rect, h * 0.48f, h * 0.48f, paint);
         paint.setShader(null);
         paint.setStyle(Paint.Style.STROKE);
@@ -143,8 +157,8 @@ final class RefreshIndicatorView extends View {
 
         if (refreshing) {
             float start = ((SystemClock.uptimeMillis() - refreshStarted) % 900L) / 900f * 360f - 90f;
-            canvas.drawArc(new RectF(cx - dp(7), cy - dp(7), cx + dp(7), cy + dp(7)),
-                    start, 250f, false, paint);
+            spinnerBounds.set(cx - dp(7), cy - dp(7), cx + dp(7), cy + dp(7));
+            canvas.drawArc(spinnerBounds, start, 250f, false, paint);
             postInvalidateOnAnimation();
         } else {
             float rotation = Math.min(1f, pullFraction) * 180f;
@@ -166,8 +180,8 @@ final class RefreshIndicatorView extends View {
                 : releaseReady ? "Release to refresh" : "Pull to refresh";
         textPaint.setColor(WHITE);
         textPaint.setTextSize(dp(11.5f));
-        Paint.FontMetrics metrics = textPaint.getFontMetrics();
-        float baseline = cy - (metrics.ascent + metrics.descent) / 2f;
+        textPaint.getFontMetrics(textMetrics);
+        float baseline = cy - (textMetrics.ascent + textMetrics.descent) / 2f;
         canvas.drawText(label, dp(38), baseline, textPaint);
     }
 

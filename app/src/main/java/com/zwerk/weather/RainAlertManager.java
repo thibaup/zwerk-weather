@@ -15,24 +15,20 @@ import android.content.pm.PackageInfo;
 import android.content.pm.PackageManager;
 import android.os.Build;
 
-import org.json.JSONArray;
 import org.json.JSONObject;
 
 import java.io.BufferedReader;
-import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.io.FileInputStream;
-import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.net.HttpURLConnection;
-import java.net.URL;
-import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.time.Duration;
+import java.time.Duration;
 import java.time.Instant;
-import java.util.ArrayList;
-import java.util.Comparator;
+
+import com.zwerk.weather.PrecipitationForecast.RainEpisode;
 import java.util.Locale;
 
 public final class RainAlertManager {
@@ -40,17 +36,13 @@ public final class RainAlertManager {
     private static final String PREF_RAIN_ALERTS = "rain_alerts";
     private static final String STATE_PREFS = "rain_alert_state_v1";
     private static final String API_KEY_FILE = "weather_api_key";
-    private static final String API_ROOT = "https://weather.googleapis.com/v1/";
-    private static final int MINUTE_PAGE_SIZE = 180;
     private static final int JOB_ID = 0x05A772A1;
     private static final int IMMEDIATE_JOB_ID = 0x05A772A2;
     private static final long PERIOD_MILLIS = 15L * 60L * 1000L;
     private static final long FLEX_MILLIS = 5L * 60L * 1000L;
     private static final long ALERT_WINDOW_MILLIS = 30L * 60L * 1000L;
-    private static final long EPISODE_JOIN_GAP_MILLIS = 5L * 60L * 1000L;
     private static final long EPISODE_MATCH_TOLERANCE_MILLIS = 20L * 60L * 1000L;
     private static final long ALERT_COOLDOWN_MILLIS = 60L * 60L * 1000L;
-    private static final int RESPONSE_LIMIT_BYTES = 2 * 1024 * 1024;
     private static final String CHANNEL_ID = "rain_alerts";
     private static final int NOTIFICATION_ID = 0x5241494E;
     private static final Object ALERT_LOCK = new Object();
@@ -104,61 +96,34 @@ public final class RainAlertManager {
         LocationTarget location = resolveLocation(app);
         if (location == null) return;
 
-        if (OpenMeteoConfig.isOpenMeteo(app)) {
-            try {
-                JSONObject response = OpenMeteoForecastClient.loadMinute(
-                        app, location.lat, location.lon, OpenMeteoConfig.model(app),
-                        OpenMeteoConfig.readCustomerKey(app));
-                if (!Thread.currentThread().isInterrupted()
-                        && OpenMeteoConfig.isOpenMeteo(app)) {
-                    evaluateMinuteForecast(app, response, location.lat, location.lon, location.name);
-                }
-            } catch (Exception ignored) {
-                // Rain checks are best-effort.
-            }
-            return;
-        }
-
-        String key = readApiKey(app);
-        if (key.isEmpty() || Thread.currentThread().isInterrupted()) return;
-
-        if (OpenMeteoConfig.isOpenMeteo(app)) return;
-
-        ApiRequestBudgetManager.Decision budget = ApiRequestBudgetManager.tryAcquire(
-                app, ApiRequestBudgetManager.Category.WEATHER);
-        if (!budget.allowed || Thread.currentThread().isInterrupted()) return;
-
-        HttpURLConnection connection = null;
+        String source = OpenMeteoConfig.precipitationCacheScope(app);
         try {
-            String address = minuteForecastAddress(key, location.lat, location.lon);
-            if (OpenMeteoConfig.isOpenMeteo(app)) return;
-            connection = (HttpURLConnection) new URL(address).openConnection();
-            connection.setRequestMethod("GET");
-            connection.setConnectTimeout(12000);
-            connection.setReadTimeout(18000);
-            connection.setRequestProperty("Accept", "application/json");
-            applyAndroidApiKeyRestrictionHeaders(app, connection);
-
-            int code = connection.getResponseCode();
-            if (code < 200 || code >= 300) {
-                closeQuietly(connection.getErrorStream());
-                return;
-            }
-
             JSONObject response;
-            try (InputStream input = connection.getInputStream()) {
-                String body = readUtf8Bounded(input, RESPONSE_LIMIT_BYTES);
-                if (body.isEmpty()) return;
-                response = new JSONObject(body);
+            if (OpenMeteoConfig.GOOGLE.equals(source)) {
+                String key = readApiKey(app);
+                if (key.isEmpty()) return;
+                response = PrecipitationForecast.loadGoogle(key, location.lat, location.lon,
+                        Instant.now(), Duration.ofMillis(ALERT_WINDOW_MILLIS), address -> {
+                            if (!scopeCurrent(app, source, location)) throw new InterruptedException();
+                            return BackgroundWeatherRequest.request(app, address, DiagnosticLog.Area.PRECIPITATION);
+                        });
+            } else {
+                response = OpenMeteoForecastClient.loadMinute(app, location.lat, location.lon,
+                        OpenMeteoConfig.model(app), OpenMeteoConfig.readCustomerKey(app));
             }
-            if (!Thread.currentThread().isInterrupted()) {
+            if (scopeCurrent(app, source, location)) {
                 evaluateMinuteForecast(app, response, location.lat, location.lon, location.name);
             }
         } catch (Exception ignored) {
-            // Background rain checks are best-effort. Unsupported and transient responses are silent.
-        } finally {
-            if (connection != null) connection.disconnect();
+            // A failed or superseded refresh should never produce a notification.
         }
+    }
+
+    private static boolean scopeCurrent(Context context, String source, LocationTarget requested) {
+        if (Thread.currentThread().isInterrupted()
+                || !source.equals(OpenMeteoConfig.precipitationCacheScope(context))) return false;
+        LocationTarget selected = resolveLocation(context);
+        return selected != null && selected.lat == requested.lat && selected.lon == requested.lon;
     }
 
     /** Evaluates an already-fetched minute response and posts at most one deduplicated alert. */
@@ -173,7 +138,8 @@ public final class RainAlertManager {
         if (!validCoordinates(lat, lon)) return false;
 
         Instant now = Instant.now();
-        RainEpisode episode = imminentEpisode(response, now);
+        RainEpisode episode = PrecipitationForecast.nextRain(response, now,
+                now.plusMillis(ALERT_WINDOW_MILLIS));
         if (episode == null) return false;
 
         synchronized (ALERT_LOCK) {
@@ -205,73 +171,6 @@ public final class RainAlertManager {
                     .apply();
             return true;
         }
-    }
-
-    private static RainEpisode imminentEpisode(JSONObject response, Instant now) {
-        JSONArray rawSegments = response.optJSONArray("segments");
-        if (rawSegments == null || rawSegments.length() == 0) return null;
-
-        ArrayList<RainSegment> rain = new ArrayList<>();
-        for (int i = 0; i < rawSegments.length(); i++) {
-            RainSegment segment = parseCredibleRain(rawSegments.optJSONObject(i));
-            if (segment != null) rain.add(segment);
-        }
-        if (rain.isEmpty()) return null;
-        rain.sort(Comparator.comparing(segment -> segment.start));
-
-        ArrayList<RainEpisode> episodes = new ArrayList<>();
-        RainEpisode current = null;
-        for (RainSegment segment : rain) {
-            if (current == null
-                    || segment.start.toEpochMilli()
-                    > current.end.toEpochMilli() + EPISODE_JOIN_GAP_MILLIS) {
-                current = new RainEpisode(
-                        segment.start, segment.end, segment.probability, segment.intensity);
-                episodes.add(current);
-            } else if (segment.end.isAfter(current.end)) {
-                current.end = segment.end;
-            }
-        }
-
-        Instant latestStart = now.plusMillis(ALERT_WINDOW_MILLIS);
-        for (RainEpisode episode : episodes) {
-            if (!episode.end.isAfter(now)) continue;
-            if (episode.start.isAfter(latestStart)) continue;
-            return episode;
-        }
-        return null;
-    }
-
-    private static RainSegment parseCredibleRain(JSONObject raw) {
-        if (raw == null || !"RAIN".equalsIgnoreCase(raw.optString("type", ""))) return null;
-        JSONObject frame = raw.optJSONObject("timeFrame");
-        Instant start = parseInstant(frame == null ? "" : frame.optString("startTime", ""));
-        Instant end = parseInstant(frame == null ? "" : frame.optString("endTime", ""));
-        if (start == null || end == null || !end.isAfter(start)) return null;
-
-        JSONObject qpf = raw.optJSONObject("qpf");
-        Double qpfQuantity = optionalFiniteDouble(qpf, "quantity");
-        boolean positiveQpf = qpfQuantity != null && qpfQuantity > 0d;
-
-        Integer probability = null;
-        if (raw.has("probability") && !raw.isNull("probability")) {
-            try {
-                probability = raw.getInt("probability");
-                if (probability < 0 || probability > 100) probability = null;
-            } catch (Exception ignored) { }
-        }
-        String intensity = raw.optString("intensity", "").trim();
-        boolean meaningfulIntensity = "LIGHT".equalsIgnoreCase(intensity)
-                || "MODERATE".equalsIgnoreCase(intensity)
-                || "HEAVY".equalsIgnoreCase(intensity);
-
-        // Positive returned QPF is the preferred evidence. If QPF is absent entirely,
-        // require both a meaningful rain intensity and a strong probability; probability alone never fires.
-        boolean credible = positiveQpf
-                || (qpfQuantity == null && meaningfulIntensity
-                && probability != null && probability >= 70);
-        if (!credible) return null;
-        return new RainSegment(start, end, probability, intensity);
     }
 
     private static boolean postNotification(
@@ -398,15 +297,6 @@ public final class RainAlertManager {
         }
     }
 
-    private static String minuteForecastAddress(String key, double lat, double lon) throws Exception {
-        return API_ROOT + "forecast/minutes:lookup"
-                + "?key=" + URLEncoder.encode(key, StandardCharsets.UTF_8.name())
-                + "&location.latitude=" + lat
-                + "&location.longitude=" + lon
-                + "&unitsSystem=METRIC"
-                + "&pageSize=" + MINUTE_PAGE_SIZE;
-    }
-
     static void applyAndroidApiKeyRestrictionHeaders(
             Context context, HttpURLConnection connection) {
         if (connection == null) return;
@@ -433,40 +323,6 @@ public final class RainAlertManager {
             return value.toString();
         } catch (Exception ignored) {
             return "";
-        }
-    }
-
-    private static String readUtf8Bounded(InputStream input, int limitBytes) throws Exception {
-        if (input == null) return "";
-        ByteArrayOutputStream output = new ByteArrayOutputStream();
-        byte[] buffer = new byte[8192];
-        int total = 0;
-        int read;
-        while ((read = input.read(buffer)) != -1) {
-            total += read;
-            if (total > limitBytes) return "";
-            output.write(buffer, 0, read);
-        }
-        return output.toString(StandardCharsets.UTF_8.name()).trim();
-    }
-
-    private static void closeQuietly(InputStream input) {
-        if (input == null) return;
-        try { input.close(); } catch (Exception ignored) { }
-    }
-
-    private static Instant parseInstant(String value) {
-        if (value == null || value.trim().isEmpty()) return null;
-        try { return Instant.parse(value.trim()); } catch (Exception ignored) { return null; }
-    }
-
-    private static Double optionalFiniteDouble(JSONObject object, String key) {
-        if (object == null || !object.has(key) || object.isNull(key)) return null;
-        try {
-            double value = object.getDouble(key);
-            return Double.isFinite(value) ? value : null;
-        } catch (Exception ignored) {
-            return null;
         }
     }
 
@@ -505,31 +361,4 @@ public final class RainAlertManager {
         }
     }
 
-    private static final class RainSegment {
-        final Instant start;
-        final Instant end;
-        final Integer probability;
-        final String intensity;
-
-        RainSegment(Instant start, Instant end, Integer probability, String intensity) {
-            this.start = start;
-            this.end = end;
-            this.probability = probability;
-            this.intensity = intensity == null ? "" : intensity;
-        }
-    }
-
-    private static final class RainEpisode {
-        final Instant start;
-        Instant end;
-        final Integer probability;
-        final String intensity;
-
-        RainEpisode(Instant start, Instant end, Integer probability, String intensity) {
-            this.start = start;
-            this.end = end;
-            this.probability = probability;
-            this.intensity = intensity == null ? "" : intensity;
-        }
-    }
 }

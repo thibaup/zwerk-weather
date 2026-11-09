@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
-<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android" xmlns:tools="http://schemas.android.com/tools"
     android:id="@+id/widget_root"
     android:layout_width="match_parent"
     android:layout_height="match_parent">
@@ -31,12 +31,15 @@
             android:textColor="#EEFFFFFF"
             android:textSize="14sp" />
 
+        <!-- The weighted body fills available height; its 2:1 horizontal split keeps temperature legible during resizing. -->
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="0dp"
             android:layout_weight="1"
             android:gravity="center_vertical"
-            android:orientation="horizontal">
+            android:orientation="horizontal"
+            android:baselineAligned="false"
+            tools:ignore="NestedWeights">
 
             <TextView
                 android:id="@+id/widget_temperature"
@@ -51,7 +54,7 @@
                 android:gravity="center_vertical"
                 android:includeFontPadding="false"
                 android:maxLines="1"
-                android:text="—°"
+                android:text="@string/widget_layout_unknown_temperature"
                 android:textColor="#FFFFFFFF"
                 android:textSize="52sp" />
 
@@ -78,7 +81,7 @@
             android:gravity="center_vertical"
             android:includeFontPadding="false"
             android:maxLines="1"
-            android:text="—"
+            android:text="@string/widget_layout_unknown_value"
             android:textColor="#DBFFFFFF"
             android:textSize="14sp" />
     </LinearLayout>

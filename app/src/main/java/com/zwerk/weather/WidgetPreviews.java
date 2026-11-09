@@ -1,6 +1,5 @@
 package com.zwerk.weather;
 
-import android.annotation.TargetApi;
 import android.appwidget.AppWidgetManager;
 import android.appwidget.AppWidgetProviderInfo;
 import android.content.ComponentName;
@@ -16,7 +15,7 @@ final class WidgetPreviews {
         if (Build.VERSION.SDK_INT >= 35) Api35.publish(context);
     }
 
-    @TargetApi(35)
+    @androidx.annotation.RequiresApi(35)
     private static final class Api35 {
         static void publish(Context context) {
             Class<?>[] providers = {WeatherWidgetProvider.class, WeatherSmallWidgetProvider.class,

@@ -7,6 +7,8 @@ import android.graphics.Paint;
 import android.graphics.Path;
 import android.view.View;
 
+// Created programmatically with the navigation icon kind supplied by its caller.
+@android.annotation.SuppressLint("ViewConstructor")
 final class NavigationIconView extends View {
     static final int OVERVIEW = 0, FORECAST = 1, RAIN = 2, RADAR = 3, SETTINGS = 4;
     private final int kind;

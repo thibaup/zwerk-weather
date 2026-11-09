@@ -1,6 +1,5 @@
 package com.zwerk.weather;
 
-import android.annotation.TargetApi;
 import android.app.PendingIntent;
 import android.app.AlarmManager;
 import android.appwidget.AppWidgetManager;
@@ -64,16 +63,20 @@ public class WeatherWidgetProvider extends AppWidgetProvider {
     private static final String ACTION_REFRESH =
             "com.zwerk.weather.action.REFRESH_WEATHER_WIDGET";
 
-    private static final int NORMAL_HEIGHT_DP = 118;
-    private static final int ROOMY_HEIGHT_DP = 152;
-    private static final int TALL_HEIGHT_DP = 192;
+    enum WidgetMode {
+        MINI(109, 56),
+        SMALL(109, 118),
+        NORMAL(240, 118),
+        ROOMY(280, 152),
+        TALL(280, 192);
 
-    private enum WidgetMode {
-        MINI,
-        SMALL,
-        NORMAL,
-        ROOMY,
-        TALL
+        final int width;
+        final int height;
+
+        WidgetMode(int width, int height) {
+            this.width = width;
+            this.height = height;
+        }
     }
 
     private static final int[] NORMAL_HOUR_TIME_IDS = {
@@ -181,7 +184,10 @@ public class WeatherWidgetProvider extends AppWidgetProvider {
     }
 
     @Override
-    public void onDeleted(Context context, int[] appWidgetIds) { scheduleNextUpdate(context); }
+    public void onDeleted(Context context, int[] appWidgetIds) {
+        WidgetConfiguration.delete(context, appWidgetIds);
+        scheduleNextUpdate(context);
+    }
 
     private static void updateAll(Context context) {
         WidgetRefreshManager.reconcile(context);
@@ -225,15 +231,21 @@ public class WeatherWidgetProvider extends AppWidgetProvider {
     private static void scheduleNextUpdate(Context context) {
         cancelClockUpdate(context);
         int[] ids = widgetIds(context);
-        SharedPreferences prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
         if (ids.length == 0) return;
         long now = System.currentTimeMillis();
-        WeatherWidgetTimeline timeline = new WeatherWidgetTimeline(prefs, now);
-        long next = now + 5L * 60_000L;
-        if (prefs.getBoolean(KEY_HAS_SNAPSHOT, false) && timeline.retained) {
-            next = timeline.nextChange(now);
-            long refreshAt = timeline.fetchedAt + WidgetRefreshPolicy.REFRESH_MILLIS;
-            next = Math.min(next, refreshAt > now ? refreshAt : now + 5L * 60_000L);
+        long next = Long.MAX_VALUE;
+        for (int id : ids) {
+            CityManagerActivity.LocationSnapshot city = WidgetConfiguration.read(context, id).city(context);
+            SharedPreferences prefs = WidgetConfiguration.snapshot(context, city == null ? "" : city.id);
+            WeatherWidgetTimeline timeline = new WeatherWidgetTimeline(prefs, now);
+            long nextForWidget = now + 5L * 60_000L;
+            if (prefs.getBoolean(KEY_HAS_SNAPSHOT, false) && timeline.retained
+                    && WidgetConfiguration.snapshotMatches(context, prefs, city)) {
+                long refreshAt = timeline.fetchedAt + WidgetRefreshPolicy.REFRESH_MILLIS;
+                nextForWidget = Math.min(timeline.nextChange(now),
+                        refreshAt > now ? refreshAt : nextForWidget);
+            }
+            next = Math.min(next, nextForWidget);
         }
         AlarmManager alarms = (AlarmManager) context.getSystemService(Context.ALARM_SERVICE);
         // A non-wakeup, inexact local redraw. Android may defer it while the device sleeps;
@@ -245,12 +257,14 @@ public class WeatherWidgetProvider extends AppWidgetProvider {
      * API 31+ receives responsive variants in one RemoteViews. Older releases select from the
      * launcher option range and repaint on every option change.
      */
-    private static RemoteViews buildViews(Context context, int appWidgetId) {
+    static RemoteViews buildViews(Context context, int appWidgetId) {
         return buildViews(context, appWidgetId, null);
     }
 
     private static RemoteViews buildViews(Context context, int appWidgetId, Bundle optionsHint) {
-        SharedPreferences snapshot = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
+        WidgetConfiguration config = WidgetConfiguration.read(context, appWidgetId);
+        CityManagerActivity.LocationSnapshot pinned = config.city(context);
+        SharedPreferences snapshot = WidgetConfiguration.snapshot(context, pinned == null ? "" : pinned.id);
         if (!snapshot.getBoolean(KEY_HAS_SNAPSHOT, false)) {
             DiagnosticLog.event(DiagnosticLog.Area.WIDGET, DiagnosticLog.Event.SNAPSHOT_MISSING);
         } else if (!ForecastClock.withinAge(snapshot.getLong(KEY_UPDATED_EPOCH_MS, 0L),
@@ -258,11 +272,11 @@ public class WeatherWidgetProvider extends AppWidgetProvider {
             DiagnosticLog.event(DiagnosticLog.Area.WIDGET, DiagnosticLog.Event.CACHE_EXPIRED);
         }
         Context localized = AppLocaleManager.wrap(context);
-        RemoteViews mini = buildMode(localized, WidgetMode.MINI);
-        RemoteViews small = buildMode(localized, WidgetMode.SMALL);
-        RemoteViews normal = buildMode(localized, WidgetMode.NORMAL);
-        RemoteViews roomy = buildMode(localized, WidgetMode.ROOMY);
-        RemoteViews tall = buildMode(localized, WidgetMode.TALL);
+        RemoteViews mini = buildMode(localized, WidgetMode.MINI, appWidgetId, config, pinned, snapshot);
+        RemoteViews small = buildMode(localized, WidgetMode.SMALL, appWidgetId, config, pinned, snapshot);
+        RemoteViews normal = buildMode(localized, WidgetMode.NORMAL, appWidgetId, config, pinned, snapshot);
+        RemoteViews roomy = buildMode(localized, WidgetMode.ROOMY, appWidgetId, config, pinned, snapshot);
+        RemoteViews tall = buildMode(localized, WidgetMode.TALL, appWidgetId, config, pinned, snapshot);
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
             try {
@@ -282,7 +296,7 @@ public class WeatherWidgetProvider extends AppWidgetProvider {
         return mini;
     }
 
-    private static WidgetMode modeForOptions(Bundle options) {
+    static WidgetMode modeForOptions(Bundle options) {
         if (options == null) return WidgetMode.NORMAL;
         int min = options.getInt(AppWidgetManager.OPTION_APPWIDGET_MIN_HEIGHT, 0);
         int max = options.getInt(AppWidgetManager.OPTION_APPWIDGET_MAX_HEIGHT, 0);
@@ -291,13 +305,30 @@ public class WeatherWidgetProvider extends AppWidgetProvider {
         int maxWidth = options.getInt(AppWidgetManager.OPTION_APPWIDGET_MAX_WIDTH, 0);
         int width = minWidth > 0 && maxWidth > 0 ? Math.min(minWidth, maxWidth) : Math.max(minWidth, maxWidth);
         if (available <= 0) return WidgetMode.NORMAL;
-        if (available >= TALL_HEIGHT_DP && (width <= 0 || width >= 280)) return WidgetMode.TALL;
-        if (available >= ROOMY_HEIGHT_DP && (width <= 0 || width >= 280)) return WidgetMode.ROOMY;
-        if (available >= NORMAL_HEIGHT_DP && (width <= 0 || width >= 240)) return WidgetMode.NORMAL;
-        return available >= NORMAL_HEIGHT_DP ? WidgetMode.SMALL : WidgetMode.MINI;
+        if (available >= WidgetMode.TALL.height && (width <= 0 || width >= WidgetMode.TALL.width)) {
+            return WidgetMode.TALL;
+        }
+        if (available >= WidgetMode.ROOMY.height && (width <= 0 || width >= WidgetMode.ROOMY.width)) {
+            return WidgetMode.ROOMY;
+        }
+        if (available >= WidgetMode.NORMAL.height && (width <= 0 || width >= WidgetMode.NORMAL.width)) {
+            return WidgetMode.NORMAL;
+        }
+        return available >= WidgetMode.SMALL.height ? WidgetMode.SMALL : WidgetMode.MINI;
     }
 
-    private static RemoteViews buildMode(Context context, WidgetMode mode) {
+    static WidgetMode modeForSize(float width, float height) {
+        // RemoteViews rounds each available dimension up before finding the closest fit.
+        // Both dimensions are nondecreasing across these variants.
+        WidgetMode best = WidgetMode.MINI;
+        for (WidgetMode mode : WidgetMode.values()) {
+            if (mode.width <= Math.ceil(width) && mode.height <= Math.ceil(height)) best = mode;
+        }
+        return best;
+    }
+
+    static RemoteViews buildMode(Context context, WidgetMode mode, int id,
+            WidgetConfiguration config, CityManagerActivity.LocationSnapshot pinned, SharedPreferences prefs) {
         int layout;
         if (mode == WidgetMode.MINI) layout = R.layout.widget_weather_mini;
         else if (mode == WidgetMode.SMALL) layout = R.layout.widget_weather_small;
@@ -306,18 +337,19 @@ public class WeatherWidgetProvider extends AppWidgetProvider {
         else layout = R.layout.widget_weather;
 
         RemoteViews views = new RemoteViews(context.getPackageName(), layout);
-        bindLaunchIntent(context, views, mode);
+        if (id != AppWidgetManager.INVALID_APPWIDGET_ID) bindLaunchIntent(context, views, mode, id);
 
-        SharedPreferences prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
+        String city = pinned == null
+                ? clean(prefs.getString(KEY_CITY, "Zwerk Weather"), "Zwerk Weather") : pinned.name;
         long now = System.currentTimeMillis();
         WeatherWidgetTimeline timeline = new WeatherWidgetTimeline(prefs, now);
-        if (!prefs.getBoolean(KEY_HAS_SNAPSHOT, false) || !timeline.retained) {
-            renderPlaceholder(context, views, mode);
-            applyAppearance(context, views, mode, "cloudy", true);
+        if (!prefs.getBoolean(KEY_HAS_SNAPSHOT, false) || !timeline.retained
+                || !WidgetConfiguration.snapshotMatches(context, prefs, pinned)) {
+            renderPlaceholder(context, views, mode, config, city);
+            applyAppearance(context, views, mode, config, "cloudy", true);
             return views;
         }
 
-        String city = clean(prefs.getString(KEY_CITY, "Zwerk Weather"), "Zwerk Weather");
         int temperature = prefs.getInt(KEY_TEMPERATURE, Integer.MIN_VALUE);
         String unit = clean(prefs.getString(KEY_UNIT, "°C"), "°C");
         String condition = clean(prefs.getString(KEY_CONDITION, "Forecast"), "Forecast");
@@ -356,35 +388,35 @@ public class WeatherWidgetProvider extends AppWidgetProvider {
             localizedAdvice = context.getString(R.string.forecast_saved_status, savedAt);
         }
 
-        views.setTextViewText(R.id.widget_city, city);
-        views.setTextViewText(R.id.widget_temperature, temperatureLabel(temperature, unit));
+        config.setText(views, R.id.widget_city, city);
+        config.setText(views, R.id.widget_temperature, temperatureLabel(temperature, unit));
         String localizedCondition = UiTranslations.text(context, condition);
-        views.setTextViewText(R.id.widget_condition, localizedCondition);
+        config.setText(views, R.id.widget_condition, localizedCondition);
         views.setImageViewResource(R.id.widget_glyph, iconFor(conditionType, daytime));
-        views.setTextViewText(R.id.widget_high_low, highLowLabel(context, high, low));
+        config.setText(views, R.id.widget_high_low, highLowLabel(context, high, low));
         views.setViewVisibility(R.id.widget_hour_strip,
-                hasHourlyStrip(mode) ? View.VISIBLE : View.GONE);
+                hasHourlyStrip(mode) && config.showForecast ? View.VISIBLE : View.GONE);
 
         if (mode == WidgetMode.NORMAL || mode == WidgetMode.ROOMY) {
             bindHourlyStrip(
                     context,
                     views,
-                    timeline, now,
+                    timeline, now, config, pinned != null ? timeline.zone : ZoneId.systemDefault(),
                     NORMAL_HOUR_TIME_IDS,
                     NORMAL_HOUR_GLYPH_IDS,
                     NORMAL_HOUR_TEMP_IDS);
         } else if (mode == WidgetMode.TALL) {
-            views.setTextViewText(R.id.widget_advice, localizedAdvice);
+            config.setText(views, R.id.widget_advice, localizedAdvice);
             bindHourlyStrip(
                     context,
                     views,
-                    timeline, now,
+                    timeline, now, config, pinned != null ? timeline.zone : ZoneId.systemDefault(),
                     TALL_HOUR_TIME_IDS,
                     TALL_HOUR_GLYPH_IDS,
                     TALL_HOUR_TEMP_IDS);
         }
 
-        String range = highLowLabel(context, high, low);
+        String range = config.showDetails ? highLowLabel(context, high, low) : "";
         views.setContentDescription(R.id.widget_root,
                 String.format(Locale.getDefault(), "%s, %s%s, %s, %s. %s",
                         city,
@@ -392,23 +424,25 @@ public class WeatherWidgetProvider extends AppWidgetProvider {
                         temperature == Integer.MIN_VALUE ? "" : unit,
                         localizedCondition,
                         range,
-                        mode == WidgetMode.TALL ? localizedAdvice : ""));
-        applyAppearance(context, views, mode, conditionType, daytime);
+                        mode == WidgetMode.TALL && config.showDetails ? localizedAdvice : ""));
+        applyAppearance(context, views, mode, config, conditionType, daytime);
         return views;
     }
 
     private static void applyAppearance(Context context, RemoteViews views, WidgetMode mode,
-            String conditionType, boolean daytime) {
+            WidgetConfiguration config, String conditionType, boolean daytime) {
         WidgetBackground.apply(context, views, R.id.widget_scene, conditionType, daytime);
         views.setInt(R.id.widget_hour_strip, "setBackgroundColor", Color.TRANSPARENT);
         views.setViewVisibility(R.id.widget_hour_strip,
-                hasHourlyStrip(mode) ? View.VISIBLE : View.GONE);
+                hasHourlyStrip(mode) && config.showForecast ? View.VISIBLE : View.GONE);
         views.setViewVisibility(R.id.widget_glyph, View.VISIBLE);
+        views.setViewVisibility(R.id.widget_high_low,
+                mode != WidgetMode.MINI && config.showDetails ? View.VISIBLE : View.GONE);
         if (mode == WidgetMode.TALL) views.setViewVisibility(R.id.widget_advice,
-                View.VISIBLE);
+                config.showDetails ? View.VISIBLE : View.GONE);
     }
 
-    private static boolean hasHourlyStrip(WidgetMode mode) {
+    static boolean hasHourlyStrip(WidgetMode mode) {
         return mode != WidgetMode.MINI && mode != WidgetMode.SMALL;
     }
 
@@ -429,7 +463,7 @@ public class WeatherWidgetProvider extends AppWidgetProvider {
     private static void bindHourlyStrip(
             Context context,
             RemoteViews views,
-            WeatherWidgetTimeline timeline, long now,
+            WeatherWidgetTimeline timeline, long now, WidgetConfiguration config, ZoneId zone,
             int[] timeIds,
             int[] glyphIds,
             int[] tempIds) {
@@ -446,7 +480,7 @@ public class WeatherWidgetProvider extends AppWidgetProvider {
             }
 
             JSONObject hour = entry.hour;
-            String time = WeatherTimeFormat.hour(context, entry.time, ZoneId.systemDefault());
+            String time = WeatherTimeFormat.hour(context, entry.time, zone);
             int temperature = hour.optInt("temperature", Integer.MIN_VALUE);
             String condition = clean(hour.optString("condition", "Forecast"), "Forecast");
             String conditionType = clean(hour.optString("conditionType", condition), condition);
@@ -455,7 +489,7 @@ public class WeatherWidgetProvider extends AppWidgetProvider {
             views.setViewVisibility(timeIds[i], View.VISIBLE);
             views.setViewVisibility(glyphIds[i], View.VISIBLE);
             views.setViewVisibility(tempIds[i], View.VISIBLE);
-            views.setTextViewText(timeIds[i], !entry.isSunEvent() && ForecastClock.contains(hour.optLong("start", 0L),
+            config.setText(views, timeIds[i], !entry.isSunEvent() && ForecastClock.contains(hour.optLong("start", 0L),
                     hour.optLong("end", 0L), now)
                     ? UiTranslations.text(context, "Now") : time);
             views.setImageViewResource(glyphIds[i], entry.isSunEvent()
@@ -465,30 +499,29 @@ public class WeatherWidgetProvider extends AppWidgetProvider {
                     ? UiTranslations.text(context, "sunrise".equals(entry.sunEvent) ? "Sunrise" : "Sunset")
                             + " " + time
                     : null);
-            views.setTextViewText(tempIds[i],
+            config.setText(views, tempIds[i],
                     temperature == Integer.MIN_VALUE ? "—" : temperature + "°");
         }
     }
 
-    private static void renderPlaceholder(Context context, RemoteViews views, WidgetMode mode) {
-        SharedPreferences prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
-        String city = clean(prefs.getString(KEY_CITY, "Zwerk Weather"), "Zwerk Weather");
-        views.setTextViewText(R.id.widget_city, city);
-        views.setTextViewText(R.id.widget_temperature, temperatureLabel(Integer.MIN_VALUE, "°"));
-        views.setTextViewText(R.id.widget_condition, UiTranslations.text(context, "Refreshing…"));
+    private static void renderPlaceholder(Context context, RemoteViews views, WidgetMode mode,
+            WidgetConfiguration config, String city) {
+        config.setText(views, R.id.widget_city, city);
+        config.setText(views, R.id.widget_temperature, temperatureLabel(Integer.MIN_VALUE, "°"));
+        config.setText(views, R.id.widget_condition, UiTranslations.text(context, "Refreshing…"));
         views.setImageViewResource(R.id.widget_glyph, R.drawable.widget_ic_cloud);
-        views.setTextViewText(R.id.widget_high_low, "—");
+        config.setText(views, R.id.widget_high_low, "—");
         views.setViewVisibility(R.id.widget_hour_strip,
-                hasHourlyStrip(mode) ? View.VISIBLE : View.GONE);
+                hasHourlyStrip(mode) && config.showForecast ? View.VISIBLE : View.GONE);
         views.setViewVisibility(R.id.widget_glyph, View.VISIBLE);
 
         if (mode == WidgetMode.NORMAL || mode == WidgetMode.ROOMY) {
-            bindPlaceholderHours(context, views, NORMAL_HOUR_TIME_IDS,
+            bindPlaceholderHours(context, views, config, NORMAL_HOUR_TIME_IDS,
                     NORMAL_HOUR_GLYPH_IDS, NORMAL_HOUR_TEMP_IDS);
         } else if (mode == WidgetMode.TALL) {
-            views.setTextViewText(R.id.widget_advice,
+            config.setText(views, R.id.widget_advice,
                     UiTranslations.text(context, "Refreshing forecast…"));
-            bindPlaceholderHours(context, views, TALL_HOUR_TIME_IDS,
+            bindPlaceholderHours(context, views, config, TALL_HOUR_TIME_IDS,
                     TALL_HOUR_GLYPH_IDS, TALL_HOUR_TEMP_IDS);
         }
         views.setContentDescription(R.id.widget_root, city + ". "
@@ -497,7 +530,7 @@ public class WeatherWidgetProvider extends AppWidgetProvider {
 
     private static void bindPlaceholderHours(
             Context context,
-            RemoteViews views,
+            RemoteViews views, WidgetConfiguration config,
             int[] timeIds,
             int[] glyphIds,
             int[] tempIds) {
@@ -506,27 +539,28 @@ public class WeatherWidgetProvider extends AppWidgetProvider {
             views.setViewVisibility(timeIds[i], View.VISIBLE);
             views.setViewVisibility(glyphIds[i], View.VISIBLE);
             views.setViewVisibility(tempIds[i], View.VISIBLE);
-            views.setTextViewText(timeIds[i],
+            config.setText(views, timeIds[i],
                     i == 0 ? UiTranslations.text(context, "Now") : "—");
             views.setImageViewResource(glyphIds[i], R.drawable.widget_ic_cloud);
-            views.setTextViewText(tempIds[i], "—");
+            config.setText(views, tempIds[i], "—");
         }
     }
 
-    private static void bindLaunchIntent(Context context, RemoteViews views, WidgetMode mode) {
+    private static void bindLaunchIntent(Context context, RemoteViews views, WidgetMode mode, int id) {
         Intent launch = new Intent(context, MainActivity.class)
                 .setAction(Intent.ACTION_MAIN)
+                .putExtra(AppWidgetManager.EXTRA_APPWIDGET_ID, id)
                 .addCategory(Intent.CATEGORY_LAUNCHER)
                 .addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP | Intent.FLAG_ACTIVITY_SINGLE_TOP);
         PendingIntent pending = PendingIntent.getActivity(
                 context,
-                4107,
+                id,
                 launch,
                 PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
         views.setOnClickPendingIntent(R.id.widget_root, pending);
         if (mode == WidgetMode.TALL) {
             Intent refresh = new Intent(launch).setAction(MainActivity.ACTION_WIDGET_REFRESH);
-            PendingIntent refreshPending = PendingIntent.getActivity(context, 4109, refresh,
+            PendingIntent refreshPending = PendingIntent.getActivity(context, id, refresh,
                     PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
             views.setOnClickPendingIntent(R.id.widget_advice, refreshPending);
         }
@@ -608,15 +642,16 @@ public class WeatherWidgetProvider extends AppWidgetProvider {
     private static final class Api31Responsive {
         private Api31Responsive() {}
 
-        @TargetApi(31)
+        @androidx.annotation.RequiresApi(31)
         static RemoteViews remoteViews(RemoteViews mini, RemoteViews small, RemoteViews normal,
                 RemoteViews roomy, RemoteViews tall) {
             Map<SizeF, RemoteViews> variants = new HashMap<>();
-            variants.put(new SizeF(109f, 56f), mini);
-            variants.put(new SizeF(109f, NORMAL_HEIGHT_DP), small);
-            variants.put(new SizeF(240f, NORMAL_HEIGHT_DP), normal);
-            variants.put(new SizeF(280f, ROOMY_HEIGHT_DP), roomy);
-            variants.put(new SizeF(280f, TALL_HEIGHT_DP), tall);
+            WidgetMode[] modes = WidgetMode.values();
+            RemoteViews[] layouts = {mini, small, normal, roomy, tall};
+            for (int i = 0; i < modes.length; i++) {
+                WidgetMode mode = modes[i];
+                variants.put(new SizeF(mode.width, mode.height), layouts[i]);
+            }
             return new RemoteViews(variants);
         }
     }

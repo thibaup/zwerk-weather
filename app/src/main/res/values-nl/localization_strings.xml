@@ -83,5 +83,6 @@
     <string name="weather_widget_loading">Vernieuwen…</string>
     <string name="forecast_saved_status">Opgeslagen voorspelling · %1$s</string>
     <string name="forecast_temperature">Temperatuur</string>
-    <string name="hourly_day_graph_hint">Tik op de grafiek voor uurgegevens</string>
+    <string name="widget_layout_now">Nu</string>
+    <string name="widget_layout_preview_condition">Geheel bewolkt</string>
 </resources>

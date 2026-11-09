@@ -18,7 +18,7 @@ final class OemBackdropBlur {
         if (Build.VERSION.SDK_INT >= 31) Api31.apply(view, null);
     }
 
-    @android.annotation.TargetApi(31)
+    @androidx.annotation.RequiresApi(31)
     private static final class Api31 {
         private static Method setter;
         private static boolean resolved;

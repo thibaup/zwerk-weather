@@ -13,8 +13,8 @@ import java.io.BufferedReader;
 import java.io.File;
 import java.io.FileReader;
 import java.io.FileOutputStream;
-import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
+import java.time.Duration;
 import java.time.Instant;
 import java.util.Locale;
 import java.util.concurrent.ThreadLocalRandom;
@@ -52,11 +52,11 @@ abstract class MinuteForecastActivity extends OptionalWeatherDataActivity {
         }
     }
 
-    File minuteForecastCacheFile(double lat, double lon, String language) {
+    File minuteForecastCacheFile(double lat, double lon, String language, String source) {
         String identity = Double.toHexString(lat)
                 + "|" + Double.toHexString(lon)
                 + "|" + (language == null ? "" : language)
-                + "|rain-v2|" + OpenMeteoConfig.precipitationCacheScope(this);
+                + "|rain-v2|" + source;
         String name = MINUTE_CACHE_FILE_PREFIX
                 + Integer.toHexString(identity.hashCode())
                 + MINUTE_CACHE_FILE_SUFFIX;
@@ -66,9 +66,9 @@ abstract class MinuteForecastActivity extends OptionalWeatherDataActivity {
     MinuteCacheSnapshot readFreshMinuteForecastCache(
             double lat,
             double lon,
-            String language) {
+            String language, String source) {
         cleanupMinuteForecastCaches();
-        File cacheFile = minuteForecastCacheFile(lat, lon, language);
+        File cacheFile = minuteForecastCacheFile(lat, lon, language, source);
         if (!cacheFile.isFile()) return null;
         try (BufferedReader reader = new BufferedReader(new FileReader(cacheFile))) {
             StringBuilder body = new StringBuilder();
@@ -109,10 +109,10 @@ abstract class MinuteForecastActivity extends OptionalWeatherDataActivity {
             double lon,
             String language,
             long fetchedAtMillis,
-            JSONObject rawResponse) {
+            JSONObject rawResponse, String source) {
         if (rawResponse == null || fetchedAtMillis <= 0L) return;
         cleanupMinuteForecastCaches();
-        File cacheFile = minuteForecastCacheFile(lat, lon, language);
+        File cacheFile = minuteForecastCacheFile(lat, lon, language, source);
         File tempFile = new File(cacheFile.getParentFile(), cacheFile.getName() + ".tmp");
         try {
             JSONObject root = new JSONObject();
@@ -200,6 +200,7 @@ abstract class MinuteForecastActivity extends OptionalWeatherDataActivity {
 
     void ensureMinuteForecast(boolean forceNetwork) {
         final int generation = weatherRequestGeneration;
+        final String source = OpenMeteoConfig.precipitationCacheScope(this);
         final double lat = latitude;
         final double lon = longitude;
         final String language = Locale.getDefault().toLanguageTag();
@@ -226,10 +227,11 @@ abstract class MinuteForecastActivity extends OptionalWeatherDataActivity {
         if (pendingRequestState == null) return;
         final MinuteForecastState requestState = pendingRequestState;
 
+        final String model = OpenMeteoConfig.model(this);
         executor.execute(() -> {
             try {
                 if (!forceNetwork) {
-                    MinuteCacheSnapshot cached = readFreshMinuteForecastCache(lat, lon, language);
+                    MinuteCacheSnapshot cached = readFreshMinuteForecastCache(lat, lon, language, source);
                     if (cached != null) {
                         MinuteForecastState ready = new MinuteForecastState(
                                 generation,
@@ -241,29 +243,29 @@ abstract class MinuteForecastActivity extends OptionalWeatherDataActivity {
                                 cached.response,
                                 "",
                                 false);
-                        runOnUiThread(() -> finishMinuteForecastRequest(requestState, ready));
+                        runOnUiThread(() -> finishMinuteForecastRequest(requestState, ready, source));
                         return;
                     }
                 }
-                if (!minuteRequestScopeCurrent(requestState)) {
+                if (!minuteRequestScopeCurrent(requestState, source)) {
                     throw new SupersededWeatherRequestException();
                 }
                 JSONObject raw;
-                if (OpenMeteoConfig.isPrecipitationOpenMeteo(this)) {
+                if (!OpenMeteoConfig.GOOGLE.equals(source)) {
                     raw = OpenMeteoForecastClient.loadMinute(
-                            this, lat, lon, OpenMeteoConfig.model(this),
+                            this, lat, lon, model,
                             OpenMeteoConfig.readCustomerKey(this));
                 } else {
                     String key = readApiKey();
                     if (key.isEmpty()) throw new IllegalStateException("API key is not configured");
-                    String address = minuteForecastAddress(key, lat, lon);
-                    raw = requestMinuteLogical(address, requestState);
+                    raw = PrecipitationForecast.loadGoogle(key, lat, lon, Instant.now(),
+                            Duration.ofHours(6), address -> requestMinuteLogical(address, requestState, source));
                 }
-                if (!minuteRequestScopeCurrent(requestState)) {
+                if (!minuteRequestScopeCurrent(requestState, source)) {
                     throw new SupersededWeatherRequestException();
                 }
                 long fetchedAtMillis = System.currentTimeMillis();
-                persistMinuteForecastCacheQuietly(lat, lon, language, fetchedAtMillis, raw);
+                persistMinuteForecastCacheQuietly(lat, lon, language, fetchedAtMillis, raw, source);
                 JSONObject filtered = filterElapsedMinuteResponse(raw, Instant.now());
                 MinuteForecastState ready = new MinuteForecastState(
                         generation,
@@ -275,8 +277,8 @@ abstract class MinuteForecastActivity extends OptionalWeatherDataActivity {
                         filtered,
                         "",
                         false);
-                runOnUiThread(() -> finishMinuteForecastRequest(requestState, ready));
-            } catch (SupersededWeatherRequestException ignored) {
+                runOnUiThread(() -> finishMinuteForecastRequest(requestState, ready, source));
+            } catch (SupersededWeatherRequestException | InterruptedException ignored) {
                 // A newer location/generation owns the screen; discard this result silently.
             } catch (Exception error) {
                 boolean unsupported = minuteForecastUnsupported(error);
@@ -290,16 +292,16 @@ abstract class MinuteForecastActivity extends OptionalWeatherDataActivity {
                         null,
                         minuteForecastErrorMessage(error, unsupported),
                         unsupported);
-                runOnUiThread(() -> finishMinuteForecastRequest(requestState, failed));
+                runOnUiThread(() -> finishMinuteForecastRequest(requestState, failed, source));
             }
         });
     }
 
     void finishMinuteForecastRequest(
             MinuteForecastState requestState,
-            MinuteForecastState resultState) {
+            MinuteForecastState resultState, String source) {
         synchronized (minuteForecastLock) {
-            if (minuteForecastState != requestState) return;
+            if (!minuteRequestScopeCurrent(requestState, source)) return;
             if (!resultState.matches(
                     weatherRequestGeneration,
                     latitude,
@@ -357,10 +359,11 @@ abstract class MinuteForecastActivity extends OptionalWeatherDataActivity {
         minuteExpirationRunnable = null;
     }
 
-    boolean minuteRequestScopeCurrent(MinuteForecastState requestState) {
+    boolean minuteRequestScopeCurrent(MinuteForecastState requestState, String source) {
         synchronized (minuteForecastLock) {
             return minuteForecastState == requestState
                     && requestState != null
+                    && source.equals(OpenMeteoConfig.precipitationCacheScope(this))
                     && requestState.matches(
                             weatherRequestGeneration,
                             latitude,
@@ -369,48 +372,37 @@ abstract class MinuteForecastActivity extends OptionalWeatherDataActivity {
         }
     }
 
-    String minuteForecastAddress(String key, double lat, double lon) throws Exception {
-        return API_ROOT + "forecast/minutes:lookup"
-                + "?key=" + URLEncoder.encode(key, StandardCharsets.UTF_8.name())
-                + "&location.latitude=" + lat
-                + "&location.longitude=" + lon
-                + "&unitsSystem=METRIC"
-                + "&pageSize=" + MINUTE_PAGE_SIZE;
-    }
-
     JSONObject requestMinuteLogical(
             String address,
-            MinuteForecastState requestState) throws Exception {
-        if (!minuteRequestScopeCurrent(requestState)) {
-            throw new SupersededWeatherRequestException();
-        }
+            MinuteForecastState requestState, String source) throws Exception {
+        if (!minuteRequestScopeCurrent(requestState, source)) throw new InterruptedException();
         if (isDebugBuild()) {
             Log.d(LOG_TAG, "request generation=" + requestState.generation + " endpoint=minute");
         }
         try {
-            JSONObject response = request(address);
-            if (!minuteRequestScopeCurrent(requestState)) {
-                throw new SupersededWeatherRequestException();
+            JSONObject response = request(address, true);
+            if (!minuteRequestScopeCurrent(requestState, source)) {
+                throw new InterruptedException();
             }
             return response;
         } catch (WeatherRequestException error) {
             if (error.statusCode == 408 || error.statusCode >= 500) {
                 long jitter = 180L + ThreadLocalRandom.current().nextInt(121);
                 SystemClock.sleep(jitter);
-                if (!minuteRequestScopeCurrent(requestState)) {
-                    throw new SupersededWeatherRequestException();
+                if (!minuteRequestScopeCurrent(requestState, source)) {
+                    throw new InterruptedException();
                 }
                 if (isDebugBuild()) {
                     Log.d(LOG_TAG, "retry generation=" + requestState.generation + " endpoint=minute");
                 }
                 DiagnosticLog.event(DiagnosticLog.Area.PRECIPITATION, DiagnosticLog.Event.RETRY);
-                JSONObject response = request(address);
-                if (!minuteRequestScopeCurrent(requestState)) {
-                    throw new SupersededWeatherRequestException();
+                JSONObject response = request(address, true);
+                if (!minuteRequestScopeCurrent(requestState, source)) {
+                    throw new InterruptedException();
                 }
                 return response;
             }
-            // Never auto-retry 429; pagination is also never followed automatically.
+            // Never auto-retry 429.
             throw error;
         }
     }

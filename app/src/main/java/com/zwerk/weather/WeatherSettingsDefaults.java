@@ -17,6 +17,7 @@ final class WeatherSettingsDefaults {
                 "precipitation_page_enabled", "radar_page_enabled", "forecast_page_mode",
                 "daily_mode", "widget_show_hourly", "widget_show_advice", "widget_show_icon",
                 WeatherPreferences.PREF_TILE_TRANSPARENCY, WeatherPreferences.PREF_RADAR_MAP_THEME,
+                WeatherPreferences.PREF_SHOW_YESTERDAY,
                 OpenMeteoConfig.PREF_PROVIDER, OpenMeteoConfig.PREF_PRECIPITATION_PROVIDER,
                 OpenMeteoConfig.PREF_MODEL, "google_air_quality_enabled", "google_pollen_enabled",
                 WeatherWidgetProvider.PREF_TRANSPARENCY, WeatherWidgetProvider.PREF_GRADIENT,

@@ -35,6 +35,12 @@ final class WeatherWidgetSnapshotPublisher {
 
     boolean publish(JSONObject current, JSONObject today, JSONObject hourly, JSONObject daily,
             ZoneId zone, String locationName, double latitude, double longitude) {
+        return publish(current, today, hourly, daily, zone, locationName, latitude, longitude,
+                WidgetConfiguration.snapshot(context, ""));
+    }
+
+    boolean publish(JSONObject current, JSONObject today, JSONObject hourly, JSONObject daily,
+            ZoneId zone, String locationName, double latitude, double longitude, SharedPreferences prefs) {
         Integer temperature = formatter.degreesOrNull(current == null ? null : current.optJSONObject("temperature"));
         if (temperature == null) return false;
 
@@ -114,8 +120,6 @@ final class WeatherWidgetSnapshotPublisher {
         long fetchedAt = current.optLong(SavedForecast.FETCHED_AT, observation.toEpochMilli());
 
         synchronized (WeatherWidgetSnapshotPublisher.class) {
-            SharedPreferences prefs = context.getSharedPreferences(
-                    WeatherWidgetProvider.PREFS_NAME, Context.MODE_PRIVATE);
             String locationScope = PrecipitationWidgetData.locationScope(
                     latitude, longitude, current.has("_openMeteo")
                             ? OpenMeteoConfig.cacheScope(context) : OpenMeteoConfig.GOOGLE);
@@ -127,15 +131,15 @@ final class WeatherWidgetSnapshotPublisher {
                     && fetchedAt < prefs.getLong(WeatherWidgetProvider.KEY_UPDATED_EPOCH_MS, 0L)) return true;
             // A rerender of the same cached response can temporarily lack optional pages.
             // Preserve its intervals; never renew older data using a new fetch timestamp.
-                if (validExisting && locationScope.equals(prefs.getString(PrecipitationWidgetProvider.KEY_LOCATION_SCOPE, ""))
-                        && fetchedAt == prefs.getLong(WeatherWidgetProvider.KEY_UPDATED_EPOCH_MS, 0L)
-                        && formatter.temperatureUnitSymbol().equals(prefs.getString(WeatherWidgetProvider.KEY_UNIT, ""))) {
-                    try {
-                        if (compactHours.length() == 0) compactHours = new JSONArray(prefs.getString(
-                                WeatherWidgetProvider.KEY_HOURLY_JSON, "[]"));
-                        if (compactDays.length() == 0) compactDays = new JSONArray(prefs.getString(
-                                WeatherWidgetProvider.KEY_DAILY_JSON, "[]"));
-                    } catch (Exception ignored) { }
+            if (validExisting && locationScope.equals(prefs.getString(PrecipitationWidgetProvider.KEY_LOCATION_SCOPE, ""))
+                    && fetchedAt == prefs.getLong(WeatherWidgetProvider.KEY_UPDATED_EPOCH_MS, 0L)
+                    && formatter.temperatureUnitSymbol().equals(prefs.getString(WeatherWidgetProvider.KEY_UNIT, ""))) {
+                try {
+                    if (compactHours.length() == 0) compactHours = new JSONArray(prefs.getString(
+                            WeatherWidgetProvider.KEY_HOURLY_JSON, "[]"));
+                    if (compactDays.length() == 0) compactDays = new JSONArray(prefs.getString(
+                            WeatherWidgetProvider.KEY_DAILY_JSON, "[]"));
+                } catch (Exception ignored) { }
             }
             SharedPreferences.Editor editor = prefs.edit()
                     .putBoolean(WeatherWidgetProvider.KEY_HAS_SNAPSHOT, true)

@@ -83,5 +83,6 @@
     <string name="weather_widget_loading">Обновление…</string>
     <string name="forecast_saved_status">Сохранённый прогноз · %1$s</string>
     <string name="forecast_temperature">Температура</string>
-    <string name="hourly_day_graph_hint">Нажмите на график, чтобы увидеть почасовые данные</string>
+    <string name="widget_layout_now">Сейчас</string>
+    <string name="widget_layout_preview_condition">Пасмурно</string>
 </resources>

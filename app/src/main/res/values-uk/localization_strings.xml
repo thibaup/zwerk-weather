@@ -83,5 +83,6 @@
     <string name="weather_widget_loading">Оновлення…</string>
     <string name="forecast_saved_status">Збережений прогноз · %1$s</string>
     <string name="forecast_temperature">Температура</string>
-    <string name="hourly_day_graph_hint">Натисніть на графік, щоб побачити погодинні дані</string>
+    <string name="widget_layout_now">Зараз</string>
+    <string name="widget_layout_preview_condition">Хмарно</string>
 </resources>

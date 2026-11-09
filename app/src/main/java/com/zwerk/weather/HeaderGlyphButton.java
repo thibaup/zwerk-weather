@@ -6,6 +6,8 @@ import android.graphics.Color;
 import android.graphics.Paint;
 import android.view.View;
 
+// Created programmatically with the glyph kind supplied by its caller.
+@android.annotation.SuppressLint("ViewConstructor")
 final class HeaderGlyphButton extends View {
     static final int MENU_PLUS = 1;
     static final int SETTINGS = 2;

@@ -83,5 +83,6 @@
     <string name="weather_widget_loading">Se actualizează…</string>
     <string name="forecast_saved_status">Prognoză salvată · %1$s</string>
     <string name="forecast_temperature">Temperatură</string>
-    <string name="hourly_day_graph_hint">Atinge graficul pentru detalii orare</string>
+    <string name="widget_layout_now">Acum</string>
+    <string name="widget_layout_preview_condition">Acoperit</string>
 </resources>

@@ -229,7 +229,8 @@ public final class ApiRequestBudgetManager {
             editor.putString(KEY_MONTH, month);
             for (Category category : Category.values()) editor.putInt(monthCountKey(category), 0);
         }
-        editor.commit();
+        // The request reservation commits both counters before any network call.
+        editor.apply();
     }
 
     private static String counterDay(String profile, ZonedDateTime googleNow) {

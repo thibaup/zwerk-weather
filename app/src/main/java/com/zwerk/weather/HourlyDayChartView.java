@@ -16,6 +16,7 @@ import android.view.accessibility.AccessibilityNodeInfo;
 
 import java.util.function.IntConsumer;
 
+// This chart is created in code with the hourly data and selection callbacks it needs.
 @android.annotation.SuppressLint("ViewConstructor")
 final class HourlyDayChartView extends ViewGroup {
     private final double[] temperatures;
@@ -24,6 +25,7 @@ final class HourlyDayChartView extends ViewGroup {
     private final String[] temperatureLabels;
     private final String[] rainLabels;
     private final String[] keys;
+    private final int defaultHour;
     private final IntConsumer selectionChanged;
     private final Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG);
     private final Path curve = new Path();
@@ -44,7 +46,7 @@ final class HourlyDayChartView extends ViewGroup {
 
     HourlyDayChartView(Context context, double[] temperatures, double[] precipitation,
             String[] times, String[] temperatureLabels, String[] rainLabels, String[] descriptions,
-            String[] keys, IntConsumer hourClicked, IntConsumer selectionChanged) {
+            String[] keys, int defaultHour, IntConsumer hourClicked, IntConsumer selectionChanged) {
         super(context);
         this.temperatures = temperatures;
         this.precipitation = precipitation;
@@ -52,6 +54,7 @@ final class HourlyDayChartView extends ViewGroup {
         this.temperatureLabels = temperatureLabels;
         this.rainLabels = rainLabels;
         this.keys = keys;
+        this.defaultHour = defaultHour;
         this.selectionChanged = selectionChanged;
         this.hourClicked = hourClicked;
         touchSlop = ViewConfiguration.get(context).getScaledTouchSlop();
@@ -137,6 +140,8 @@ final class HourlyDayChartView extends ViewGroup {
         return scrubbing || verticalGesture;
     }
 
+    // Only drags reach the chart itself. Taps remain clicks on its accessible hour children.
+    @android.annotation.SuppressLint("ClickableViewAccessibility")
     @Override public boolean onTouchEvent(MotionEvent event) {
         if (ignoreGesture || verticalGesture) return true;
         int action = event.getActionMasked();
@@ -162,7 +167,7 @@ final class HourlyDayChartView extends ViewGroup {
     }
 
     void syncPreview(String key) {
-        int next = -1;
+        int next = defaultHour;
         for (int i = 0; i < keys.length; i++) {
             if (keys[i].equals(key)) { next = i; break; }
         }

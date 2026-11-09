@@ -83,5 +83,6 @@
     <string name="weather_widget_loading">Aktualisieren…</string>
     <string name="forecast_saved_status">Gespeicherte Vorhersage · %1$s</string>
     <string name="forecast_temperature">Temperatur</string>
-    <string name="hourly_day_graph_hint">Tippe auf die Grafik für stündliche Details</string>
+    <string name="widget_layout_now">Jetzt</string>
+    <string name="widget_layout_preview_condition">Bedeckt</string>
 </resources>

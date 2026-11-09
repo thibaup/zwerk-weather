@@ -65,6 +65,6 @@
             android:scaleType="fitXY"
             android:contentDescription="@null"
             android:importantForAccessibility="no"
-            android:src="@drawable/widget_precipitation_preview" />
+            android:src="@drawable/widget_precipitation_chart_preview" />
     </LinearLayout>
 </FrameLayout>

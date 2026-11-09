@@ -10,6 +10,9 @@
     <application
         android:name=".WeatherApplication"
         android:allowBackup="false"
+        android:fullBackupContent="false"
+        android:dataExtractionRules="@xml/data_extraction_rules"
+        android:supportsRtl="false"
         android:icon="@mipmap/ic_zwerk_weather"
         android:label="Zwerk Weather"
         android:roundIcon="@mipmap/ic_zwerk_weather"
@@ -27,6 +30,13 @@
         <activity
             android:name=".CityManagerActivity"
             android:exported="false" />
+        <activity
+            android:name=".WidgetConfigurationActivity"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_CONFIGURE" />
+            </intent-filter>
+        </activity>
         <receiver
             android:name=".WeatherWidgetProvider"
             android:icon="@mipmap/ic_zwerk_weather"

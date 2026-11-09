@@ -27,7 +27,7 @@ $stubs = @{
 foreach ($entry in $stubs.GetEnumerator()) {
     [System.IO.File]::WriteAllText((Join-Path $testDir $entry.Key), $entry.Value)
 }
-$sources = @('ForecastClock.java','ForecastDiskCache.java','HourlyCoverageQueue.java','SavedForecast.java','WeatherWidgetTimeline.java','WeatherTimeFormat.java','PrecipitationWidgetData.java','RadarPlaybackClock.java','PrecipitationWindow.java','PrecipitationModelPolicy.java','CitySearchClient.java','LocationNaming.java','RadarMapTransform.java','WeatherModels.java','BlurKernel.java') |
+$sources = @('ForecastClock.java','ForecastDiskCache.java','HourlyCoverageQueue.java','SavedForecast.java','WeatherWidgetTimeline.java','WeatherTimeFormat.java','PrecipitationWidgetData.java','PrecipitationForecast.java','RadarPlaybackClock.java','PrecipitationWindow.java','PrecipitationModelPolicy.java','CitySearchClient.java','LocationNaming.java','RadarMapTransform.java','WeatherModels.java','BlurKernel.java') |
     ForEach-Object { Join-Path $sourceDir $_ }
 $sources += Get-ChildItem -LiteralPath $testDir -Filter '*.java' | Select-Object -ExpandProperty FullName
 $sources += Join-Path $PSScriptRoot 'ForecastOfflineWidgetTest.java'
@@ -35,6 +35,7 @@ $sources += Join-Path $sourceDir 'WidgetRefreshPolicy.java'
 $sources += Join-Path $PSScriptRoot 'PrecipitationWidgetDataTest.java'
 $sources += Join-Path $PSScriptRoot 'WidgetRefreshPolicyTest.java'
 $sources += Join-Path $PSScriptRoot 'PrecipitationForecastTest.java'
+$sources += Join-Path $PSScriptRoot 'PrecipitationCoverageTest.java'
 $sources += Join-Path $PSScriptRoot 'CityRadarTest.java'
 $sources += Join-Path $PSScriptRoot 'SceneAnimationTest.java'
 $sources += Join-Path $PSScriptRoot 'ForecastCachingTest.java'
@@ -49,6 +50,8 @@ if ($LASTEXITCODE -ne 0) { throw 'Six-hour widget tests failed.' }
 if ($LASTEXITCODE -ne 0) { throw 'Widget refresh policy tests failed.' }
 & java -cp ($testDir + [System.IO.Path]::PathSeparator + $jsonJar) com.zwerk.weather.PrecipitationForecastTest
 if ($LASTEXITCODE -ne 0) { throw 'Precipitation tests failed.' }
+& java -cp ($testDir + [System.IO.Path]::PathSeparator + $jsonJar) com.zwerk.weather.PrecipitationCoverageTest
+if ($LASTEXITCODE -ne 0) { throw 'Precipitation coverage tests failed.' }
 
 & java -cp ($testDir + [System.IO.Path]::PathSeparator + $jsonJar) com.zwerk.weather.CityRadarTest
 if ($LASTEXITCODE -ne 0) { throw 'City/radar tests failed.' }

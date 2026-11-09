@@ -3,6 +3,7 @@ package com.zwerk.weather;
 import android.animation.ValueAnimator;
 import android.app.Activity;
 import android.app.Dialog;
+import android.appwidget.AppWidgetManager;
 import android.content.Context;
 import android.content.Intent;
 import android.content.pm.PackageManager;
@@ -32,6 +33,7 @@ import android.view.View;
 import android.view.ViewGroup;
 import android.view.Window;
 import android.view.WindowManager;
+import android.view.accessibility.AccessibilityNodeInfo;
 import android.widget.Button;
 import android.widget.EditText;
 import android.widget.FrameLayout;
@@ -102,9 +104,6 @@ public class MainActivity extends WeatherSettingsFlowActivity implements DeviceL
     private View modeSwitchThumb;
     private ValueAnimator modeSwitchAnimator;
     private float modeSwitchProgress;
-    private float locationGestureStartX;
-    private float locationGestureStartY;
-    private boolean locationGestureActive;
     private static final long STATUS_AGE_REFRESH_INTERVAL_MILLIS = 15_000L;
     private final Handler statusAgeHandler = new Handler(Looper.getMainLooper());
     private boolean statusAgeRefreshRunning;
@@ -148,6 +147,8 @@ public class MainActivity extends WeatherSettingsFlowActivity implements DeviceL
         longitude = getPreferences(MODE_PRIVATE).getFloat("lon", (float) longitude);
         locationName = getPreferences(MODE_PRIVATE).getString("name", locationName);
         CityManagerActivity.migrateLegacyMainActivityPreferences(this);
+        CityManagerActivity.LocationSnapshot widgetCity = consumeWidgetCity(getIntent());
+        if (widgetCity != null) CityManagerActivity.selectLocation(this, widgetCity.id);
         CityManagerActivity.LocationSnapshot selected = CityManagerActivity.getSelectedLocation(this);
         if (selected != null) {
             selectedLocationId = selected.id;
@@ -167,7 +168,7 @@ public class MainActivity extends WeatherSettingsFlowActivity implements DeviceL
 
         restoredSettingsState = state == null ? null : state.getBundle("settings_screen");
         buildShell();
-        if (state != null && !widgetRefreshRequested) {
+        if (state != null && !widgetRefreshRequested && widgetCity == null) {
             int restoredPage = state.getInt("selected_page", PAGE_OVERVIEW);
             selectedForecastPage = forecastPageEnabled(restoredPage) ? restoredPage : PAGE_OVERVIEW;
             activePageContent = activeForecastPageContent();
@@ -191,11 +192,24 @@ public class MainActivity extends WeatherSettingsFlowActivity implements DeviceL
     @Override protected void onNewIntent(Intent intent) {
         super.onNewIntent(intent);
         setIntent(intent);
+        CityManagerActivity.LocationSnapshot widgetCity = consumeWidgetCity(intent);
+        boolean changedCity = widgetCity != null && !widgetCity.id.equals(selectedLocationId)
+                && CityManagerActivity.selectLocation(this, widgetCity.id);
+        if (changedCity) {
+            applySelectedLocationResult(new Intent()
+                    .putExtra(CityManagerActivity.EXTRA_LOCATION_ID, widgetCity.id)
+                    .putExtra(CityManagerActivity.EXTRA_LOCATION_NAME, widgetCity.name)
+                    .putExtra(CityManagerActivity.EXTRA_LATITUDE, widgetCity.lat)
+                    .putExtra(CityManagerActivity.EXTRA_LONGITUDE, widgetCity.lon));
+        }
         if (consumeWidgetPrecipitationIntent(intent)) {
             if (precipitationPageEnabled) switchForecastMode(PAGE_PRECIPITATION);
             return;
         }
-        if (!consumeWidgetRefreshIntent(intent)) return;
+        if (!consumeWidgetRefreshIntent(intent)) {
+            if (widgetCity != null) switchForecastMode(PAGE_OVERVIEW);
+            return;
+        }
         suppressNextResumeWeatherLoad = true;
         cancelForecastSwipe();
         switchForecastMode(PAGE_OVERVIEW);
@@ -203,9 +217,16 @@ public class MainActivity extends WeatherSettingsFlowActivity implements DeviceL
         if (!OpenMeteoConfig.isOpenMeteo(this) && !hasConfiguredApiKey()) {
             forceNextWeatherLoad = true;
             showApiKeySetupDialog();
-        } else {
+        } else if (!changedCity) {
             performPullRefresh();
         }
+    }
+
+    private CityManagerActivity.LocationSnapshot consumeWidgetCity(Intent intent) {
+        if (intent == null) return null;
+        int id = intent.getIntExtra(AppWidgetManager.EXTRA_APPWIDGET_ID, AppWidgetManager.INVALID_APPWIDGET_ID);
+        intent.removeExtra(AppWidgetManager.EXTRA_APPWIDGET_ID);
+        return WidgetConfiguration.owns(this, id) ? WidgetConfiguration.read(this, id).city(this) : null;
     }
 
     private static boolean consumeWidgetRefreshIntent(Intent intent) {
@@ -286,7 +307,7 @@ public class MainActivity extends WeatherSettingsFlowActivity implements DeviceL
         toolbar.setPadding(dp(18), dp(2), dp(18), 0);
         toolbar.setBackgroundColor(Color.TRANSPARENT);
 
-        locationArea = new LinearLayout(this);
+        locationArea = new LocationSwipeLayout(this);
         locationArea.setOrientation(LinearLayout.VERTICAL);
         locationArea.setGravity(Gravity.CENTER_VERTICAL);
         locationArea.setClickable(true);
@@ -294,39 +315,12 @@ public class MainActivity extends WeatherSettingsFlowActivity implements DeviceL
         locationArea.setOnClickListener(v -> {
             if (forecastPreview.isPreviewing()) {
                 forecastPreview.restore(true);
-                if (expandedDayIndex >= 0) {
+                if (expandedDayIndex != -1) {
                     expandedDayIndex = -1;
                     rerenderDailyPage();
                 }
             } else {
                 openCityManager();
-            }
-        });
-        locationArea.setOnTouchListener((view, event) -> {
-            switch (event.getActionMasked()) {
-                case MotionEvent.ACTION_DOWN:
-                    locationGestureStartX = event.getX();
-                    locationGestureStartY = event.getY();
-                    locationGestureActive = true;
-                    return true;
-                case MotionEvent.ACTION_UP:
-                    if (!locationGestureActive) return true;
-                    locationGestureActive = false;
-                    float dx = event.getX() - locationGestureStartX;
-                    float dy = event.getY() - locationGestureStartY;
-                    int slop = ViewConfiguration.get(view.getContext()).getScaledTouchSlop();
-                    if (Math.abs(dx) >= Math.max(dp(56), slop * 2)
-                            && Math.abs(dx) > Math.abs(dy) * 1.35f) {
-                        cycleSavedLocation(dx < 0 ? 1 : -1);
-                    } else {
-                        view.performClick();
-                    }
-                    return true;
-                case MotionEvent.ACTION_CANCEL:
-                    locationGestureActive = false;
-                    return true;
-                default:
-                    return locationGestureActive;
             }
         });
 
@@ -436,6 +430,82 @@ public class MainActivity extends WeatherSettingsFlowActivity implements DeviceL
         notifyActiveForecastStatusChanged();
         content.addView(forecastPageHost, new LinearLayout.LayoutParams(-1, -2));
         updatePreviewSubtitle();
+    }
+
+    /** The header clicks to open locations and swipes to cycle through saved locations. */
+    private final class LocationSwipeLayout extends LinearLayout {
+        private final int touchSlop;
+        private float startX;
+        private float startY;
+        private boolean gestureActive;
+
+        LocationSwipeLayout(Context context) {
+            super(context);
+            touchSlop = ViewConfiguration.get(context).getScaledTouchSlop();
+        }
+
+        @Override public boolean onTouchEvent(MotionEvent event) {
+            switch (event.getActionMasked()) {
+                case MotionEvent.ACTION_DOWN:
+                    startX = event.getX();
+                    startY = event.getY();
+                    gestureActive = true;
+                    return true;
+                case MotionEvent.ACTION_POINTER_DOWN:
+                    // Ignore multi-touch when deciding whether to swipe or activate the header.
+                    gestureActive = false;
+                    return true;
+                case MotionEvent.ACTION_POINTER_UP:
+                    return true;
+                case MotionEvent.ACTION_UP:
+                    if (!gestureActive) return true;
+                    gestureActive = false;
+                    float dx = event.getX() - startX;
+                    float dy = event.getY() - startY;
+                    if (Math.abs(dx) >= Math.max(dp(56), touchSlop * 2)
+                            && Math.abs(dx) > Math.abs(dy) * 1.35f) {
+                        cycleSavedLocation(dx < 0 ? 1 : -1);
+                    } else if (Math.abs(dx) <= touchSlop && Math.abs(dy) <= touchSlop) {
+                        performClick();
+                    }
+                    return true;
+                case MotionEvent.ACTION_CANCEL:
+                    gestureActive = false;
+                    return true;
+                case MotionEvent.ACTION_MOVE:
+                    return true;
+                default:
+                    return gestureActive;
+            }
+        }
+
+        @Override public boolean performClick() {
+            return super.performClick();
+        }
+
+        @Override public void onInitializeAccessibilityNodeInfo(AccessibilityNodeInfo info) {
+            super.onInitializeAccessibilityNodeInfo(info);
+            if (CityManagerActivity.getStoredLocations(MainActivity.this).size() < 2) return;
+            info.setScrollable(true);
+            info.addAction(new AccessibilityNodeInfo.AccessibilityAction(
+                    AccessibilityNodeInfo.AccessibilityAction.ACTION_SCROLL_FORWARD.getId(),
+                    UiTranslations.text(getContext(), "Next saved location")));
+            info.addAction(new AccessibilityNodeInfo.AccessibilityAction(
+                    AccessibilityNodeInfo.AccessibilityAction.ACTION_SCROLL_BACKWARD.getId(),
+                    UiTranslations.text(getContext(), "Previous saved location")));
+        }
+
+        @Override public boolean performAccessibilityAction(int action, Bundle arguments) {
+            if (action == AccessibilityNodeInfo.AccessibilityAction.ACTION_SCROLL_FORWARD.getId()
+                    || action == AccessibilityNodeInfo.AccessibilityAction.ACTION_SCROLL_BACKWARD.getId()) {
+                if (CityManagerActivity.getStoredLocations(MainActivity.this).size() < 2) return false;
+                cycleSavedLocation(action
+                        == AccessibilityNodeInfo.AccessibilityAction.ACTION_SCROLL_FORWARD.getId()
+                        ? 1 : -1);
+                return true;
+            }
+            return super.performAccessibilityAction(action, arguments);
+        }
     }
 
     private void cycleSavedLocation(int direction) {
@@ -706,6 +776,8 @@ public class MainActivity extends WeatherSettingsFlowActivity implements DeviceL
             return false;
         }
 
+        // Gesture-only pager. Each destination is also an accessible button in the dock.
+        @android.annotation.SuppressLint("ClickableViewAccessibility")
         @Override
         public boolean onTouchEvent(MotionEvent event) {
             if (settling) return true;
@@ -1124,6 +1196,7 @@ public class MainActivity extends WeatherSettingsFlowActivity implements DeviceL
         moveForecastErrorToPage();
         if (radarPageView != null) radarPageView.setActive(targetPage == PAGE_RADAR);
         if (targetPage == PAGE_SETTINGS) settingsScreen.onShown();
+        if (targetPage == PAGE_DAILY) updateDailyHistory();
         notifyActiveForecastStatusChanged();
         updateForecastModeButtons();
         if (mainScroll != null) {
@@ -1213,8 +1286,8 @@ public class MainActivity extends WeatherSettingsFlowActivity implements DeviceL
         } else if (lastCurrentWeather != null && weatherLoadActive) {
             status.setText(UiTranslations.text(this, "Updating forecast…"));
         } else if (lastCurrentWeather != null && forecastRefreshFailed) {
-            status.setText(UiTranslations.text(this, "Could not update forecast") + " · "
-                    + dataAgeLabel(lastCurrentWeather));
+            status.setText(String.format(Locale.getDefault(), "%1$s · %2$s",
+                    UiTranslations.text(this, "Could not update forecast"), dataAgeLabel(lastCurrentWeather)));
         } else if (lastCurrentWeather != null) {
             status.setText(dataAgeLabel(lastCurrentWeather));
         } else if (weatherLoadActive) {
@@ -1710,7 +1783,7 @@ public class MainActivity extends WeatherSettingsFlowActivity implements DeviceL
         else finish();
     }
 
-    @android.annotation.TargetApi(33)
+    @androidx.annotation.RequiresApi(33)
     private static final class MainBackNavigation {
         static void register(Activity activity, Runnable action) {
             activity.getOnBackInvokedDispatcher().registerOnBackInvokedCallback(

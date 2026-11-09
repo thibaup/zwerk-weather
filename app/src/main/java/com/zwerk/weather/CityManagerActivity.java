@@ -1,7 +1,6 @@
 package com.zwerk.weather;
 
 import android.annotation.SuppressLint;
-import android.annotation.TargetApi;
 import android.app.Activity;
 import android.app.AlertDialog;
 import android.content.Context;
@@ -1502,8 +1501,7 @@ public class CityManagerActivity extends Activity {
                 state.selectedId = id;
             }
             normalizeSelectedId(state);
-            writeStoreLocked(app, state);
-            target.edit().putBoolean(KEY_LEGACY_MIGRATED, true).commit();
+            writeStoreLocked(app, state, true);
             return true;
         }
     }
@@ -1527,6 +1525,7 @@ public class CityManagerActivity extends Activity {
             normalizeSelectedId(state);
             writeStoreLocked(context.getApplicationContext(), state);
         }
+        WidgetConfiguration.forgetCity(context, id);
     }
 
     private static StoreState readStore(Context context) {
@@ -1634,6 +1633,10 @@ public class CityManagerActivity extends Activity {
     }
 
     private static void writeStoreLocked(Context context, StoreState state) {
+        writeStoreLocked(context, state, false);
+    }
+
+    private static void writeStoreLocked(Context context, StoreState state, boolean legacyMigrated) {
         JSONArray array = new JSONArray();
         for (LocationSnapshot location : state.locations) {
             try {
@@ -1642,11 +1645,12 @@ public class CityManagerActivity extends Activity {
                 // Coordinates are validated before storage, so serialization failure is unexpected.
             }
         }
-        context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        SharedPreferences.Editor editor = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
                 .edit()
                 .putString(KEY_LOCATIONS_JSON, array.toString())
-                .putString(KEY_SELECTED_ID, cleanString(state.selectedId))
-                .commit();
+                .putString(KEY_SELECTED_ID, cleanString(state.selectedId));
+        if (legacyMigrated) editor.putBoolean(KEY_LEGACY_MIGRATED, true);
+        editor.apply();
     }
 
     private static String upsertLocked(StoreState state, LocationSnapshot incoming) {
@@ -2138,16 +2142,16 @@ public class CityManagerActivity extends Activity {
                 case TRASH:
                     canvas.drawLine(w * 0.31f, h * 0.34f, w * 0.69f, h * 0.34f, paint);
                     canvas.drawLine(w * 0.42f, h * 0.27f, w * 0.58f, h * 0.27f, paint);
-                    RectF bin = new RectF(w * 0.35f, h * 0.39f, w * 0.65f, h * 0.73f);
-                    canvas.drawRoundRect(bin, dp(2), dp(2), paint);
+                    canvas.drawRoundRect(w * 0.35f, h * 0.39f, w * 0.65f, h * 0.73f,
+                            dp(2), dp(2), paint);
                     canvas.drawLine(w * 0.45f, h * 0.46f, w * 0.45f, h * 0.66f, paint);
                     canvas.drawLine(w * 0.55f, h * 0.46f, w * 0.55f, h * 0.66f, paint);
                     break;
                 case LOCK:
-                    RectF body = new RectF(w * 0.34f, h * 0.47f, w * 0.66f, h * 0.72f);
-                    canvas.drawRoundRect(body, dp(2), dp(2), paint);
-                    RectF shackle = new RectF(w * 0.39f, h * 0.28f, w * 0.61f, h * 0.56f);
-                    canvas.drawArc(shackle, 180f, 180f, false, paint);
+                    canvas.drawRoundRect(w * 0.34f, h * 0.47f, w * 0.66f, h * 0.72f,
+                            dp(2), dp(2), paint);
+                    canvas.drawArc(w * 0.39f, h * 0.28f, w * 0.61f, h * 0.56f,
+                            180f, 180f, false, paint);
                     break;
                 default:
                     break;
@@ -2196,7 +2200,7 @@ public class CityManagerActivity extends Activity {
     }
 
     /** Platform predictive-back bridge, kept isolated from API 28-32 class verification. */
-    @TargetApi(33)
+    @androidx.annotation.RequiresApi(33)
     private static final class Api33BackNavigation {
         static void register(CityManagerActivity activity) {
             activity.getOnBackInvokedDispatcher().registerOnBackInvokedCallback(

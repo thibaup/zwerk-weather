@@ -23,9 +23,12 @@ import org.json.JSONObject;
 
 import java.io.File;
 import java.io.FileOutputStream;
-import java.lang.reflect.Method;
 import java.nio.file.Files;
+import java.time.Instant;
+import java.time.LocalDate;
+import java.time.ZoneId;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicReference;
@@ -79,6 +82,7 @@ public final class SettingsWidgetRegression extends Instrumentation {
                 } else {
                     checkSlider(context);
                     checkCharts(context);
+                    checkDayHistory(context);
                     checkReset(context);
                 }
             } catch (Throwable error) { failure.set(error); }
@@ -92,6 +96,106 @@ public final class SettingsWidgetRegression extends Instrumentation {
     private void check(boolean passed, String message) {
         checks++;
         if (!passed) throw new AssertionError(message);
+    }
+
+    private void checkDayHistory(Context context) throws Exception {
+        ZoneId zone = ZoneId.of("Europe/Brussels");
+        LocalDate today = LocalDate.of(2026, 10, 25);
+        Instant now = Instant.parse("2026-10-25T02:20:00Z");
+        JSONObject yesterday = historyHour("2026-10-24T21:00:00Z");
+        JSONObject firstRepeatedHour = historyHour("2026-10-25T00:00:00Z");
+        JSONObject secondRepeatedHour = historyHour("2026-10-25T01:00:00Z");
+        JSONObject current = historyHour("2026-10-25T02:00:00Z");
+        JSONObject next = historyHour("2026-10-25T03:00:00Z");
+        JSONArray history = new JSONArray().put(historyHour("2026-10-25T02:00:00Z")).put(secondRepeatedHour)
+                .put(firstRepeatedHour).put(yesterday);
+        JSONArray forecast = new JSONArray().put(next).put(current)
+                .put(historyHour("2026-10-25T01:00:00Z"));
+        List<JSONObject> hours = HourlyWeatherHistory.dayHours(forecast, history, today, zone, now);
+        check(hours.size() == 4 && hours.get(0) == firstRepeatedHour && hours.get(1) == secondRepeatedHour,
+                "Keep both fall-back hours in UTC order and prefer completed observations");
+        check(hours.get(2) == current && hours.get(3) == next,
+                "The incomplete history record must not replace the current forecast");
+        List<JSONObject> previous = HourlyWeatherHistory.dayHours(null, history, today.minusDays(1), zone, now);
+        check(previous.size() == 1 && previous.get(0) == yesterday,
+                "Yesterday contains only records on the location’s previous date");
+        int selected = HourlyWeatherHistory.currentHour(hours, now);
+        check(selected == 2 && HourlyWeatherHistory.currentHour(hours,
+                Instant.parse("2026-10-25T03:00:00Z")) == 3, "Select the interval containing now");
+        check(HourlyWeatherHistory.currentHour(previous, now) == -1, "Missing current hour has no selection");
+
+        firstRepeatedHour.put("temperature", new JSONObject().put("degrees", 5));
+        secondRepeatedHour.put("temperature", new JSONObject().put("degrees", -2));
+        next.put("temperature", new JSONObject().put("degrees", 11));
+        JSONObject cloudy = new JSONObject().put("type", "CLOUDY");
+        firstRepeatedHour.put("weatherCondition", cloudy);
+        secondRepeatedHour.put("weatherCondition", cloudy).put("isDaytime", false);
+        next.put("weatherCondition", new JSONObject().put("type", "CLEAR"));
+        HourlyWeatherHistory.Summary summary = HourlyWeatherHistory.summarize(hours,
+                temperature -> temperature == null ? null : temperature.optInt("degrees"));
+        check(summary.high() == 11 && summary.low() == -2, "Summarize the observed temperature range");
+        check(SceneSpec.glyphCondition(summary.representativeHour()).equals("CLOUDY"),
+                "Use the most common recorded condition for the icon");
+        check(HourlyWeatherHistory.summarize(previous, temperature -> null).representativeHour() == null,
+                "Missing observations do not produce a weather icon");
+        checkDailyLineHistory(context, summary);
+
+        String[] keys = {"hour:0", "hour:1", "hour:2", "hour:3"};
+        int[] changed = {-1};
+        HourlyDayChartView chart = new HourlyDayChartView(context, new double[4], new double[4],
+                keys, keys, keys, keys, keys, selected, index -> { }, index -> changed[0] = index);
+        chart.syncPreview("day:0");
+        check(changed[0] == selected && chart.getChildAt(selected).isSelected(),
+                "Today opens with its current chart column selected");
+        chart.syncPreview(keys[1]);
+        check(changed[0] == 1 && chart.getChildAt(1).isSelected(),
+                "An explicit hour overrides the default");
+        chart.syncPreview("");
+        check(changed[0] == selected && chart.getChildAt(selected).isSelected(),
+                "Clearing the preview returns to the current hour");
+    }
+
+    private void checkDailyLineHistory(Context context, HourlyWeatherHistory.Summary summary)
+            throws Exception {
+        MainActivity host = new MainActivity();
+        host.attachBaseContext(context);
+        JSONArray forecast = new JSONArray();
+        for (int i = 0; i < ForecastViewsActivity.ForecastChartView.MAX_FORECAST_DAYS; i++) {
+            forecast.put(new JSONObject().put("displayDate",
+                    new JSONObject().put("year", 2026).put("month", 10).put("day", 25 + i % 6)));
+        }
+        int[] selected = {-1};
+        ForecastViewsActivity.ForecastChartView chart = host.new ForecastChartView(
+                host, forecast, ZoneId.of("Europe/Brussels"), "Yesterday", "24 Oct", 1100, 520,
+                index -> selected[0] = index);
+        chart.updateYesterday(summary, "Partial");
+        check(chart.getContentDescription().toString().contains("Yesterday, Partial")
+                && chart.getContentDescription().toString().contains("high 11"),
+                "The historical range is described on the Line chart");
+        chart.measure(View.MeasureSpec.makeMeasureSpec(1100, View.MeasureSpec.EXACTLY),
+                View.MeasureSpec.makeMeasureSpec(520, View.MeasureSpec.EXACTLY));
+        chart.layout(0, 0, 1100, 520);
+        Bitmap image = Bitmap.createBitmap(1100, 520, Bitmap.Config.ARGB_8888);
+        try {
+            chart.draw(new Canvas(image));
+        } finally {
+            image.recycle();
+        }
+        long now = SystemClock.uptimeMillis();
+        event(chart, now, MotionEvent.ACTION_DOWN, 50, 50, 0);
+        event(chart, now, MotionEvent.ACTION_UP, 50, 50, 20);
+        check(selected[0] == WeatherOverviewRenderingActivity.YESTERDAY_INDEX, "First chart column opens yesterday");
+        event(chart, now, MotionEvent.ACTION_DOWN, 150, 50, 30);
+        event(chart, now, MotionEvent.ACTION_UP, 150, 50, 50);
+        check(selected[0] == 0, "Second chart column still opens today");
+        event(chart, now, MotionEvent.ACTION_DOWN, 1050, 50, 60);
+        event(chart, now, MotionEvent.ACTION_UP, 1050, 50, 80);
+        check(selected[0] == 9, "The tenth forecast day remains available");
+    }
+
+    private static JSONObject historyHour(String start) throws Exception {
+        return new JSONObject().put("interval", new JSONObject().put("startTime", start)
+                .put("endTime", Instant.parse(start).plusSeconds(3600).toString()));
     }
 
     private static void event(View view, long start, int action, float x, float y, int elapsed) {
@@ -143,7 +247,7 @@ public final class SettingsWidgetRegression extends Instrumentation {
                 .put("end", now + (i + 1) * 3_600_000L).put("precipitationMm", amounts[i]));
         PrecipitationWidgetData data = new PrecipitationWidgetData(hours, null, now);
         Bitmap bitmap = PrecipitationWidgetChart.render(data, 280, 80,
-                new String[]{"Now", "+3h", "+6h"}, "No forecast available");
+                new String[]{"Now", "+3h", "+6h"}, "No forecast available", 1f);
         check(bitmap.getWidth() == 560 && bitmap.getHeight() == 160, "chart resolution must follow allocation");
         check(Color.alpha(bitmap.getPixel(337, 50)) > 200, "rain bars must be visible above the baseline");
         check(Color.alpha(bitmap.getPixel(96, 50)) == 0, "zero quantity must not become a rain bar");
@@ -158,11 +262,10 @@ public final class SettingsWidgetRegression extends Instrumentation {
                     .putString(PrecipitationWidgetProvider.KEY_LOCATION_SCOPE, "rendering-test")
                     .putString(PrecipitationWidgetProvider.KEY_MINUTE_SCOPE, "")
                     .putBoolean(WeatherWidgetProvider.KEY_DAYTIME, false).commit();
-            Method builder = PrecipitationWidgetProvider.class.getDeclaredMethod("buildForSize",
-                    Context.class, int.class, int.class);
-            builder.setAccessible(true);
+            WidgetConfiguration defaults = new WidgetConfiguration("", 100, true, true);
             for (int[] size : new int[][]{{240, 118}, {320, 144}, {400, 220}}) {
-                RemoteViews remote = (RemoteViews) builder.invoke(null, context, size[0], size[1]);
+                RemoteViews remote = PrecipitationWidgetProvider.buildForSize(
+                        context, size[0], size[1], 0, defaults, null);
                 View widget = remote.apply(context, new LinearLayout(context));
                 float density = context.getResources().getDisplayMetrics().density;
                 int width = Math.round(size[0] * density), height = Math.round(size[1] * density);
@@ -175,7 +278,7 @@ public final class SettingsWidgetRegression extends Instrumentation {
                 ImageView chart = widget.findViewById(R.id.precip_widget_chart);
                 check(chart.getHeight() >= Math.round(40 * density), "chart must retain space at every supported size");
                 TextView title = widget.findViewById(R.id.precip_widget_title);
-                check(title.getText().toString().equals(UiTranslations.text(context, "Next 6 hours")),
+                check(title.getText().toString().startsWith(UiTranslations.text(context, "Next 6 hours")),
                         "widget title must describe the six-hour data window");
                 Bitmap preview = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888);
                 widget.draw(new Canvas(preview));
@@ -183,6 +286,18 @@ public final class SettingsWidgetRegression extends Instrumentation {
                         "widget-preview-" + size[0] + ".png"))) { preview.compress(Bitmap.CompressFormat.PNG, 100, out); }
                 preview.recycle();
             }
+            WidgetConfiguration compact = new WidgetConfiguration("", 120, false, false);
+            View widget = PrecipitationWidgetProvider.buildForSize(context, 320, 144, 0, compact, null)
+                    .apply(context, new LinearLayout(context));
+            TextView title = widget.findViewById(R.id.precip_widget_title);
+            check(title.getText().toString().equals(UiTranslations.text(context, "Next 6 hours")),
+                    "rain amount can be hidden independently of the chart");
+            check(widget.findViewById(R.id.precip_widget_chart).getVisibility() == View.VISIBLE,
+                    "rain chart stays visible when the legend and details are hidden");
+            check(title.getText() instanceof android.text.Spanned
+                    && ((android.text.Spanned) title.getText()).getSpans(0, title.length(),
+                            android.text.style.RelativeSizeSpan.class).length == 1,
+                    "widget text scaling reaches the launcher view");
         } finally { restore(snapshot, original); }
     }
 
@@ -198,7 +313,10 @@ public final class SettingsWidgetRegression extends Instrumentation {
         }
         try {
             SharedPreferences ui = context.getSharedPreferences(WeatherPreferences.PREFS_NAME, 0);
+            ui.edit().remove(WeatherPreferences.PREF_SHOW_YESTERDAY).commit();
+            check(!new WeatherPreferences(context).showYesterday(), "Yesterday is hidden by default");
             ui.edit().putInt(WeatherPreferences.PREF_TILE_TRANSPARENCY, 3).putString("temperature_unit", "F")
+                    .putBoolean(WeatherPreferences.PREF_SHOW_YESTERDAY, true)
                     .putString(WeatherPreferences.PREF_RADAR_MAP_THEME, WeatherPreferences.MAP_DARK)
                     .putBoolean("weather_animations", false).putBoolean("radar_page_enabled", false)
                     .putInt("widget_transparency", 88).putString("widget_colour", "custom")
@@ -210,6 +328,7 @@ public final class SettingsWidgetRegression extends Instrumentation {
             WeatherPreferences defaults = new WeatherPreferences(context);
             check(defaults.tileTransparency() == 70 && "C".equals(defaults.temperatureUnit()), "reset display and units");
             check(defaults.animationsAllowed() && ui.getBoolean("radar_page_enabled", true), "reset animation and pages");
+            check(!defaults.showYesterday(), "Reset hides Yesterday");
             check(defaults.radarMapTheme().equals(WeatherPreferences.MAP_AUTOMATIC), "reset automatic map appearance");
             check(!ui.contains("widget_transparency") && !ui.contains("widget_colour"), "reset widget preferences");
             for (WeatherDetailSettingsActivity.DetailOption option : WeatherDetailSettingsActivity.OPTIONS)

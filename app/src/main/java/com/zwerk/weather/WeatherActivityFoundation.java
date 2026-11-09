@@ -110,7 +110,6 @@ abstract class WeatherActivityFoundation extends Activity {
     static final String MINUTE_CACHE_LEGACY_PREFIX = "weather_minute_cache_";
     static final String MINUTE_CACHE_FILE_SUFFIX = ".json";
     static final long MINUTE_CACHE_MAX_AGE_MILLIS = 60L * 60L * 1000L;
-    static final int MINUTE_PAGE_SIZE = 180;
     static final int MINUTE_RANGE_TWO_HOURS = 2;
     static final int MINUTE_RANGE_SIX_HOURS = 6;
     static final long MINUTE_SELECTION_STEP_MILLIS = 2L * 60L * 1000L;

@@ -107,7 +107,7 @@ abstract class WeatherVisualEffectsActivity extends WeatherActivityFoundation {
 
         void release() {
             if (source != null) source.removeOnLayoutChangeListener(sourceLayoutListener);
-            if (oemBackdropBlurActive) Api31OplusHeaderBlur.clear(this);
+            if (Build.VERSION.SDK_INT >= 31 && oemBackdropBlurActive) Api31OplusHeaderBlur.clear(this);
             oemBackdropBlurActive = false;
             blurPermanentlyDisabled = true;
             discardRenderNode(blurNode);
@@ -131,7 +131,7 @@ abstract class WeatherVisualEffectsActivity extends WeatherActivityFoundation {
 
         @Override
         protected void onDetachedFromWindow() {
-            if (oemBackdropBlurActive) Api31OplusHeaderBlur.clear(this);
+            if (Build.VERSION.SDK_INT >= 31 && oemBackdropBlurActive) Api31OplusHeaderBlur.clear(this);
             oemBackdropBlurActive = false;
             super.onDetachedFromWindow();
         }
@@ -396,14 +396,14 @@ abstract class WeatherVisualEffectsActivity extends WeatherActivityFoundation {
         }
     }
 
-    @android.annotation.TargetApi(31)
+    @androidx.annotation.RequiresApi(31)
     static final class Api31OplusHeaderBlur {
         private static java.lang.reflect.Method setBackgroundEffect;
 
         private Api31OplusHeaderBlur() { }
 
         static boolean apply(View target) {
-            if (Build.VERSION.SDK_INT < 31 || target == null) return false;
+            if (target == null) return false;
             try {
                 Class<?> effectFactory = Class.forName("com.oplus.graphics.OplusRenderEffect");
                 java.lang.reflect.Method create = effectFactory.getMethod(
@@ -444,13 +444,12 @@ abstract class WeatherVisualEffectsActivity extends WeatherActivityFoundation {
         }
     }
 
-    @android.annotation.TargetApi(31)
+    @androidx.annotation.RequiresApi(31)
     static final class Api31HeaderBlur {
         private Api31HeaderBlur() { }
 
         static boolean draw(
                 HeaderGlassView owner, Canvas canvas, boolean refresh) {
-            if (Build.VERSION.SDK_INT < 31) return false;
             if (owner.floating) return drawFloating(owner, canvas, refresh);
             float strength = owner.backdropBlurStrength();
             if (owner.blurMaskShader == null) return false;
@@ -535,7 +534,7 @@ abstract class WeatherVisualEffectsActivity extends WeatherActivityFoundation {
         if (Build.VERSION.SDK_INT >= 29 && node != null) Api29RenderNodes.discard(node);
     }
 
-    @android.annotation.TargetApi(29)
+    @androidx.annotation.RequiresApi(29)
     private static final class Api29RenderNodes {
         static void discard(Object node) {
             if (node instanceof android.graphics.RenderNode) {
@@ -544,7 +543,7 @@ abstract class WeatherVisualEffectsActivity extends WeatherActivityFoundation {
         }
     }
 
-    @android.annotation.TargetApi(29)
+    @androidx.annotation.RequiresApi(29)
     static final class Api29SkyComposite {
         private Api29SkyComposite() { }
 
@@ -577,7 +576,7 @@ abstract class WeatherVisualEffectsActivity extends WeatherActivityFoundation {
         }
     }
 
-    @android.annotation.TargetApi(36)
+    @androidx.annotation.RequiresApi(36)
     static final class Api36SkyFrameRate {
         private Api36SkyFrameRate() { }
 
@@ -872,8 +871,11 @@ abstract class WeatherVisualEffectsActivity extends WeatherActivityFoundation {
                 if (backgroundBlurDepth > 0.002f) {
                     drawPortableBlurredComposite(canvas, now);
                 } else {
-                    if (cached) Api29SkyComposite.drawBackdrop(this, canvas);
-                    else drawComposite(canvas, now, true);
+                    if (Build.VERSION.SDK_INT >= 29 && cached) {
+                        Api29SkyComposite.drawBackdrop(this, canvas);
+                    } else {
+                        drawComposite(canvas, now, true);
+                    }
                 }
             }
             if (animationRunning && isAttachedToWindow()) {
@@ -1133,7 +1135,7 @@ abstract class WeatherVisualEffectsActivity extends WeatherActivityFoundation {
 
     }
 
-    @android.annotation.TargetApi(31)
+    @androidx.annotation.RequiresApi(31)
     static final class Api31BackgroundBlur {
         private Api31BackgroundBlur() { }
 
@@ -1148,7 +1150,7 @@ abstract class WeatherVisualEffectsActivity extends WeatherActivityFoundation {
         }
 
         static boolean draw(SkyLayout owner, Canvas canvas, long now) {
-            if (Build.VERSION.SDK_INT < 31 || owner == null || !canvas.isHardwareAccelerated()) {
+            if (owner == null || !canvas.isHardwareAccelerated()) {
                 return false;
             }
             int width = owner.getWidth();

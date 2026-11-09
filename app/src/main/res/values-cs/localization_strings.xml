@@ -83,5 +83,6 @@
     <string name="weather_widget_loading">Aktualizace…</string>
     <string name="forecast_saved_status">Uložená předpověď · %1$s</string>
     <string name="forecast_temperature">Teplota</string>
-    <string name="hourly_day_graph_hint">Klepnutím na graf zobrazíte hodinové podrobnosti</string>
+    <string name="widget_layout_now">Nyní</string>
+    <string name="widget_layout_preview_condition">Zataženo</string>
 </resources>

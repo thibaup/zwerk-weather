@@ -28,5 +28,9 @@ jobs:
       - name: Make Gradle wrapper executable
         run: chmod +x gradlew
 
+      - name: Run standalone forecast fixture tests
+        shell: pwsh
+        run: ./tests/run_forecast_tests.ps1
+
       - name: Build and lint
         run: ./gradlew :app:assembleDebug :app:lintDebug --no-daemon

@@ -254,7 +254,7 @@ final class RadarBackdrop {
         }
     }
 
-    @android.annotation.TargetApi(31)
+    @androidx.annotation.RequiresApi(31)
     private static final class Api31 {
         static Object effect(float x, float y) {
             return android.graphics.RenderEffect.createBlurEffect(x, y, Shader.TileMode.CLAMP);

@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="widget_layout_now">Now</string>
+    <string name="widget_layout_unknown_temperature" translatable="false">—°</string>
+    <string name="widget_layout_unknown_value" translatable="false">—</string>
+
+    <!-- Fixed sample values shown in launcher widget previews. -->
+    <string name="widget_layout_preview_city" translatable="false">London</string>
+    <string name="widget_layout_preview_condition">Overcast</string>
+    <string name="widget_layout_preview_temperature_24" translatable="false">24°C</string>
+    <string name="widget_layout_preview_temperature_25" translatable="false">25°C</string>
+    <string name="widget_layout_preview_high_low_large" translatable="false">"↑ 28°   ↓ 14°"</string>
+    <string name="widget_layout_preview_high_low_small" translatable="false">"↑ 26°   ↓ 18°"</string>
+    <string name="widget_layout_preview_hour_19" translatable="false">19:00</string>
+    <string name="widget_layout_preview_hour_20" translatable="false">20:00</string>
+    <string name="widget_layout_preview_hour_21" translatable="false">21:00</string>
+    <string name="widget_layout_preview_hour_22" translatable="false">22:00</string>
+    <string name="widget_layout_preview_hour_23" translatable="false">23:00</string>
+    <string name="widget_layout_preview_degree_18" translatable="false">18°</string>
+    <string name="widget_layout_preview_degree_19" translatable="false">19°</string>
+    <string name="widget_layout_preview_degree_20" translatable="false">20°</string>
+    <string name="widget_layout_preview_degree_21" translatable="false">21°</string>
+    <string name="widget_layout_preview_degree_23" translatable="false">23°</string>
+    <string name="widget_layout_preview_degree_25" translatable="false">25°</string>
+</resources>

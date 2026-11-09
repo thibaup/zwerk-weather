@@ -586,9 +586,10 @@ final class RadarPageView extends FrameLayout {
         RadarDataClient.Frame frame = timeline.frames.get(frameIndex);
         String time = WeatherTimeFormat.dated(getContext(),
                 Instant.ofEpochSecond(frame.timeSeconds), ZoneId.systemDefault(), "EEE");
-        frameTime.setText(UiTranslations.text(getContext(), !map.isFrameDisplayed(frame)
-                && !map.frameReady(frame) ? "Loading…" : frameIndex == timeline.frames.size() - 1 ? "Latest" : "Past")
-                + " · " + time);
+        String state = !map.isFrameDisplayed(frame) && !map.frameReady(frame) ? "Loading…"
+                : frameIndex == timeline.frames.size() - 1 ? "Latest" : "Past";
+        frameTime.setText(String.format(Locale.getDefault(), "%1$s · %2$s",
+                UiTranslations.text(getContext(), state), time));
     }
 
     private void togglePlayback() {

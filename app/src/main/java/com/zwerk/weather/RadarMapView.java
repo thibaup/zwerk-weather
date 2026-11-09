@@ -21,6 +21,8 @@ import android.view.animation.DecelerateInterpolator;
 import android.widget.OverScroller;
 import java.util.HashMap;
 
+// Map data and the viewport callback are required when this programmatic view is created.
+@android.annotation.SuppressLint("ViewConstructor")
 final class RadarMapView extends View {
     private static final int TILE_PX = 512;
     private static final int INVALID_POINTER_ID = -1;
@@ -682,8 +684,9 @@ final class RadarMapView extends View {
                         toWorldX(centerLon, zoom) * scale, toWorldY(centerLat, zoom) * scale, gutter);
             }
         };
-        if (hardware) layer.node = Api29RetainedMap.record(layer.node, width, height, gutter, draw);
-        else {
+        if (Build.VERSION.SDK_INT >= 29 && hardware) {
+            layer.node = Api29RetainedMap.record(layer.node, width, height, gutter, draw);
+        } else {
             float resolution = Math.min(1f, 1024f / Math.max(width + 2 * gutter, height + 2 * gutter));
             int bufferWidth = Math.max(1, Math.round((width + 2 * gutter) * resolution));
             int bufferHeight = Math.max(1, Math.round((height + 2 * gutter) * resolution));
@@ -722,7 +725,7 @@ final class RadarMapView extends View {
 
     private void clearRetainedLayers() { releaseLayer(retainedBase); releaseLayer(retainedRadar); }
 
-    @android.annotation.TargetApi(29)
+    @androidx.annotation.RequiresApi(29)
     private static final class Api29RetainedMap {
         static Object record(Object previous, int width, int height, int gutter,
                 java.util.function.Consumer<Canvas> draw) {
@@ -801,6 +804,9 @@ final class RadarMapView extends View {
         bitmapPaint.setAlpha(255);
     }
 
+    // The map handles pan/pinch/fling only. RadarPageView provides accessible zoom and
+    // recenter buttons, so there is no tap action to implement via performClick().
+    @android.annotation.SuppressLint("ClickableViewAccessibility")
     @Override public boolean onTouchEvent(MotionEvent event) {
         int action = event.getActionMasked();
         if (action == MotionEvent.ACTION_DOWN) {

@@ -12,7 +12,7 @@ final class PrecipitationWidgetChart {
     private PrecipitationWidgetChart() { }
 
     static Bitmap render(PrecipitationWidgetData data, int widthDp, int heightDp,
-            String[] timeLabels, String emptyLabel) {
+            String[] timeLabels, String emptyLabel, float textScale) {
         // Two pixels per dp keep bars and lettering sharp without large RemoteViews parcels.
         int width = Math.max(160, Math.min(600, widthDp));
         int height = Math.max(32, Math.min(280, heightDp));
@@ -20,11 +20,11 @@ final class PrecipitationWidgetChart {
         Canvas canvas = new Canvas(bitmap);
         canvas.scale(2f, 2f);
         Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG | Paint.DITHER_FLAG);
-        paint.setTextSize(10f);
-        float left = 43f;
+        paint.setTextSize(10f * textScale);
+        float left = 43f * textScale;
         float right = width - 4f;
         float top = 6f;
-        float bottom = height - 17f;
+        float bottom = height - (timeLabels == null ? 4f : 17f * textScale);
         float plotHeight = bottom - top;
         paint.setStrokeWidth(0.7f);
         double maximum = PrecipitationWidgetData.chartMaximum(data.peakMm);
@@ -66,8 +66,8 @@ final class PrecipitationWidgetChart {
         paint.setShader(null);
         paint.setStyle(Paint.Style.FILL);
         paint.setColor(Color.argb(235, 235, 249, 255));
-        paint.setTextSize(11f);
-        for (int tick = 0; tick < 3; tick++) {
+        paint.setTextSize(11f * textScale);
+        for (int tick = 0; timeLabels != null && tick < timeLabels.length; tick++) {
             float x = left + (right - left) * tick / 2f;
             paint.setTextAlign(tick == 0 ? Paint.Align.LEFT
                     : tick == 2 ? Paint.Align.RIGHT : Paint.Align.CENTER);
@@ -75,7 +75,7 @@ final class PrecipitationWidgetChart {
         }
         if (data.knownBins == 0) {
             paint.setTextAlign(Paint.Align.CENTER);
-            paint.setTextSize(11f);
+            paint.setTextSize(11f * textScale);
             canvas.drawText(emptyLabel, (left + right) / 2f,
                     top + plotHeight / 2f + 3f, paint);
         }

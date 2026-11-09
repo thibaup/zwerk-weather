@@ -10,7 +10,9 @@ import android.graphics.Rect;
 import android.graphics.Typeface;
 import android.graphics.drawable.ColorDrawable;
 import android.graphics.drawable.GradientDrawable;
+import android.icu.text.DisplayContext;
 import android.icu.text.RelativeDateTimeFormatter;
+import android.icu.util.ULocale;
 import android.graphics.drawable.StateListDrawable;
 import android.os.Build;
 import android.os.Bundle;
@@ -41,8 +43,13 @@ import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.Locale;
+import java.util.List;
+import java.util.function.IntConsumer;
 
 abstract class WeatherOverviewRenderingActivity extends MinuteForecastRenderingActivity {
+    static final int YESTERDAY_INDEX = -2;
+    private final HourlyWeatherHistory hourlyHistory = new HourlyWeatherHistory(this);
+    private DayDetailCoordinator dailyDetails;
     private static final int HOURLY_LABEL_COLOR = Color.rgb(230, 238, 247);
     static final String PREF_OVERVIEW_TILE_ORDER = "overview_information_tile_order_v1";
     static final String PREF_OVERVIEW_BLOCK_ORDER = "overview_top_level_order_v1";
@@ -1482,14 +1489,19 @@ abstract class WeatherOverviewRenderingActivity extends MinuteForecastRenderingA
         LinearLayout lineDetailHost = new LinearLayout(this);
         lineDetailHost.setOrientation(LinearLayout.VERTICAL);
         lineDetailHost.setVisibility(View.GONE);
-        DayDetailCoordinator details = new DayDetailCoordinator(days, hours, zone,
-                hourlyDiagnostic(hourly), lineDetailHost);
-        int count = days == null ? 0 : Math.min(10, days.length());
+        DayDetailCoordinator details = new DayDetailCoordinator(days, hours, zone, lineDetailHost);
+        dailyDetails = details;
+        int count = days == null ? 0 : Math.min(ForecastChartView.MAX_FORECAST_DAYS, days.length());
+        if (!details.showYesterday && expandedDayIndex == YESTERDAY_INDEX) expandedDayIndex = -1;
         details.expandedDay = Math.min(expandedDayIndex, count - 1);
-        int width = Math.max(getResources().getDisplayMetrics().widthPixels - dp(60), dp(82) * Math.max(1, count));
+        int columns = count + (details.showYesterday ? 1 : 0);
+        int width = Math.max(getResources().getDisplayMetrics().widthPixels - dp(60),
+                dp(82) * Math.max(1, columns));
         // Leave room below the low-temperature labels for the rain probability band.
         int height = dp(340);
-        ForecastChartView chart = new ForecastChartView(this, days, zone, width, height, details::toggleDay);
+        ForecastChartView chart = new ForecastChartView(this, days, zone,
+                details.showYesterday ? yesterdayLabel() : null, details.yesterdayDateLabel,
+                width, height, details::toggleDay);
         details.lineChart = chart;
         forecastPreview.registerChart(chart);
         GestureHorizontalScrollView chartScroller = new GestureHorizontalScrollView(this);
@@ -1512,6 +1524,7 @@ abstract class WeatherOverviewRenderingActivity extends MinuteForecastRenderingA
         boolean listMode = "list".equals(getSharedPreferences(UI_PREFS, MODE_PRIVATE)
                 .getString(PREF_DAILY_MODE, "list"));
         applyDailyMode(lineButton, listButton, linePanel, list, listMode);
+        if (isDailyForecastVisible()) details.loadVisibleHistory();
         details.setListMode(listMode);
         View.OnClickListener selectMode = v -> {
             boolean nextList = v == listButton;
@@ -1524,6 +1537,25 @@ abstract class WeatherOverviewRenderingActivity extends MinuteForecastRenderingA
         };
         lineButton.setOnClickListener(selectMode);
         listButton.setOnClickListener(selectMode);
+    }
+
+    private boolean isDailyForecastVisible() {
+        return dailyPageContent != null && this instanceof MainActivity
+                && ((MainActivity) this).activeForecastPageContent() == dailyPageContent;
+    }
+
+    private boolean shouldShowYesterday() {
+        return !OpenMeteoConfig.isOpenMeteo(this) && weatherPreferences.showYesterday();
+    }
+
+    void updateDailyHistory() {
+        if (dailyDetails == null || !dailyDetails.lineDetailHost.isAttachedToWindow()) return;
+        if (dailyDetails.showYesterday != shouldShowYesterday()) {
+            rerenderDailyPage();
+        } else if (isDailyForecastVisible()) {
+            dailyDetails.loadVisibleHistory();
+            dailyDetails.renderExpandedDay();
+        }
     }
 
     TextView dailyModeButton(String label, String accessibilityLabel) {
@@ -1582,6 +1614,9 @@ abstract class WeatherOverviewRenderingActivity extends MinuteForecastRenderingA
         LinearLayout list = new LinearLayout(this);
         list.setOrientation(LinearLayout.VERTICAL);
         list.setPadding(0, dp(3), 0, dp(3));
+        if (details.showYesterday) {
+            addDailyListItem(list, null, YESTERDAY_INDEX, zone, details);
+        }
 
         if (days == null || days.length() == 0) {
             TextView empty = text("Daily forecast unavailable", 14, false, SOFT_WHITE);
@@ -1590,93 +1625,118 @@ abstract class WeatherOverviewRenderingActivity extends MinuteForecastRenderingA
             return list;
         }
 
-        int count = Math.min(10, days.length());
+        int count = Math.min(ForecastChartView.MAX_FORECAST_DAYS, days.length());
         for (int i = 0; i < count; i++) {
             JSONObject day = days.optJSONObject(i);
-            if (day == null) continue;
-            final int dayIndex = i;
-
-            LinearLayout item = new LinearLayout(this);
-            item.setOrientation(LinearLayout.VERTICAL);
-            item.setPadding(dp(13), dp(6), dp(13), dp(6));
-            item.setBackground(newGlassDrawable(dp(25), false));
-
-            LinearLayout row = new LinearLayout(this);
-            row.setGravity(Gravity.CENTER_VERTICAL);
-            row.setMinimumHeight(dp(64));
-            row.setPadding(dp(6), dp(8), dp(4), dp(8));
-            row.setClickable(true);
-            row.setFocusable(true);
-            row.setBackground(previewTargetBackground(dp(16)));
-
-            String dayText = i == 0 ? "Today" : dayLabel(day, zone);
-            TextView label = text(dayText, 17, i == 0, WHITE);
-            TextView date = text(dayDateLabel(day, zone), 12, false, SOFT_WHITE);
-            LinearLayout dayLabels = new LinearLayout(this);
-            dayLabels.setOrientation(LinearLayout.VERTICAL);
-            dayLabels.addView(label);
-            dayLabels.addView(date);
-            row.addView(dayLabels, new LinearLayout.LayoutParams(0, -2, 1));
-
-            JSONObject daytime = day.optJSONObject("daytimeForecast");
-            WeatherGlyphView glyph = new WeatherGlyphView(
-                    this, SceneSpec.glyphCondition(daytime), true);
-            row.addView(glyph, new LinearLayout.LayoutParams(dp(34), dp(34)));
-
-            int p = dayProbability(day);
-            TextView rain = text(p >= 0 ? p + "%" : "—", 12, false, ACCENT_BLUE);
-            rain.setGravity(Gravity.END);
-            row.addView(rain, new LinearLayout.LayoutParams(dp(48), -2));
-
-            Integer hi = degreesOrNull(day.optJSONObject("maxTemperature"));
-            Integer lo = degreesOrNull(day.optJSONObject("minTemperature"));
-            String temperatures = (hi == null ? "—" : hi) + "°  " + (lo == null ? "—" : lo) + "°";
-            TextView temps = text(temperatures, 16, true, WHITE);
-            temps.setGravity(Gravity.END);
-            row.addView(temps, new LinearLayout.LayoutParams(dp(88), -2));
-
-            ForecastDisclosureView disclosure = new ForecastDisclosureView(this);
-            LinearLayout.LayoutParams disclosureLp = new LinearLayout.LayoutParams(dp(32), dp(40));
-            disclosureLp.leftMargin = dp(4);
-            row.addView(disclosure, disclosureLp);
-
-            StringBuilder rowDescription = new StringBuilder(dayText);
-            String condition = sceneForForecastDay(day, i).condition;
-            if (!"Unknown".equals(condition)) rowDescription.append(", ").append(condition);
-            if (hi != null) {
-                rowDescription.append(", high ").append(hi)
-                        .append(" degrees ").append(temperatureUnitWord());
-            }
-            if (lo != null) {
-                rowDescription.append(", low ").append(lo)
-                        .append(" degrees ").append(temperatureUnitWord());
-            }
-            if (p >= 0) rowDescription.append(", ").append(p).append(" percent precipitation");
-            rowDescription.append(". Tap for hourly details and to preview this day; tap again to return to now.");
-            row.setContentDescription(rowDescription.toString());
-            row.setOnClickListener(v -> details.toggleDay(dayIndex));
-            makeChildrenUnimportant(row);
-            forecastPreview.registerTarget(row, dayPreviewKey(dayIndex));
-            item.addView(row);
-
-            LinearLayout detailHost = new LinearLayout(this);
-            detailHost.setOrientation(LinearLayout.VERTICAL);
-            item.addView(detailHost, new LinearLayout.LayoutParams(-1, -2));
-            details.registerListDetailHost(dayIndex, detailHost, disclosure);
-
-            LinearLayout.LayoutParams itemLp = new LinearLayout.LayoutParams(-1, -2);
-            itemLp.bottomMargin = dp(10);
-            list.addView(item, itemLp);
+            if (day != null) addDailyListItem(list, day, i, zone, details);
         }
         return list;
+    }
+
+    private void addDailyListItem(LinearLayout list, JSONObject day, int dayIndex,
+            ZoneId zone, DayDetailCoordinator details) {
+        boolean yesterday = dayIndex == YESTERDAY_INDEX;
+        LinearLayout item = new LinearLayout(this);
+        item.setOrientation(LinearLayout.VERTICAL);
+        item.setPadding(dp(13), dp(6), dp(13), dp(6));
+        item.setBackground(newGlassDrawable(dp(25), false));
+
+        LinearLayout row = new LinearLayout(this);
+        row.setGravity(Gravity.CENTER_VERTICAL);
+        row.setMinimumHeight(dp(64));
+        row.setPadding(dp(6), dp(8), dp(4), dp(8));
+        row.setFocusable(true);
+        row.setBackground(previewTargetBackground(dp(16)));
+
+        String dayText = yesterday ? yesterdayLabel() : dayIndex == 0 ? "Today" : dayLabel(day, zone);
+        TextView label = text(dayText, 17, dayIndex == 0, WHITE);
+        TextView date = text(yesterday ? details.yesterdayDateLabel : dayDateLabel(day, zone),
+                12, false, SOFT_WHITE);
+        LinearLayout dayLabels = new LinearLayout(this);
+        dayLabels.setOrientation(LinearLayout.VERTICAL);
+        dayLabels.addView(label);
+        dayLabels.addView(date);
+        row.addView(dayLabels, new LinearLayout.LayoutParams(0, -2, 1));
+
+        View glyph = yesterday ? new FrameLayout(this)
+                : new WeatherGlyphView(this, SceneSpec.glyphCondition(day.optJSONObject("daytimeForecast")), true);
+        row.addView(glyph, new LinearLayout.LayoutParams(dp(34), dp(34)));
+
+        int probability = dayProbability(day);
+        TextView rain = text(probability >= 0 ? probability + "%" : "—", 12, false, ACCENT_BLUE);
+        rain.setGravity(Gravity.END);
+        row.addView(rain, new LinearLayout.LayoutParams(dp(48), -2));
+
+        Integer high = degreesOrNull(day == null ? null : day.optJSONObject("maxTemperature"));
+        Integer low = degreesOrNull(day == null ? null : day.optJSONObject("minTemperature"));
+        TextView temperatures = text(dayTemperatureRange(high, low), 16, true, WHITE);
+        temperatures.setGravity(Gravity.END);
+        row.addView(temperatures, new LinearLayout.LayoutParams(dp(88), -2));
+
+        ForecastDisclosureView disclosure = new ForecastDisclosureView(this);
+        LinearLayout.LayoutParams disclosureLp = new LinearLayout.LayoutParams(dp(32), dp(40));
+        disclosureLp.setMarginStart(dp(4));
+        row.addView(disclosure, disclosureLp);
+
+        row.setOnClickListener(v -> details.toggleDay(dayIndex));
+        makeChildrenUnimportant(row);
+        item.addView(row);
+
+        LinearLayout detailHost = new LinearLayout(this);
+        detailHost.setOrientation(LinearLayout.VERTICAL);
+        item.addView(detailHost, new LinearLayout.LayoutParams(-1, -2));
+        if (yesterday) {
+            details.yesterdayHost = detailHost;
+            details.yesterdayDisclosure = disclosure;
+            details.yesterdayTile = new YesterdayTile(row, date, (FrameLayout) glyph, temperatures);
+            row.setContentDescription(dayText + ", " + UiTranslations.text(this, "Hourly"));
+        } else {
+            row.setContentDescription(dailyRowDescription(dayText,
+                    sceneForForecastDay(day, dayIndex).condition, high, low, probability)
+                    + ". Tap for hourly details and to preview this day; tap again to return to now.");
+            forecastPreview.registerTarget(row, dayPreviewKey(dayIndex));
+            details.registerListDetailHost(dayIndex, detailHost, disclosure);
+        }
+
+        LinearLayout.LayoutParams itemLp = new LinearLayout.LayoutParams(-1, -2);
+        itemLp.bottomMargin = dp(10);
+        list.addView(item, itemLp);
+    }
+
+    private String dayTemperatureRange(Integer high, Integer low) {
+        return (high == null ? "—" : high + "°") + "  " + (low == null ? "—" : low + "°");
+    }
+
+    private String dailyRowDescription(String label, String condition, Integer high, Integer low,
+            int probability) {
+        StringBuilder out = new StringBuilder(label);
+        if (!"Unknown".equals(condition)) out.append(", ").append(condition);
+        if (high != null) out.append(", high ").append(high).append(" degrees ").append(temperatureUnitWord());
+        if (low != null) out.append(", low ").append(low).append(" degrees ").append(temperatureUnitWord());
+        if (probability >= 0) out.append(", ").append(probability).append(" percent precipitation");
+        return out.toString();
+    }
+
+    private record YesterdayTile(View row, TextView caption, FrameLayout glyph, TextView temperatures) { }
+
+    private String yesterdayLabel() {
+        return RelativeDateTimeFormatter.getInstance(ULocale.getDefault(), null,
+                RelativeDateTimeFormatter.Style.LONG, DisplayContext.CAPITALIZATION_FOR_BEGINNING_OF_SENTENCE)
+                .format(RelativeDateTimeFormatter.Direction.LAST, RelativeDateTimeFormatter.AbsoluteUnit.DAY);
     }
 
     final class DayDetailCoordinator implements HourlyCoverageCoordinator {
         private final JSONArray days;
         private final JSONArray hours;
         private final ZoneId zone;
-        private final String hourlyDiagnostic;
         private final LinearLayout lineDetailHost;
+        private final boolean showYesterday = shouldShowYesterday();
+        private final LocalDate yesterdayDate;
+        private final String yesterdayDateLabel;
+        private HourlyWeatherHistory.Result history;
+        private YesterdayTile yesterdayTile;
+        private LinearLayout yesterdayHost;
+        private ForecastDisclosureView yesterdayDisclosure;
         private final ArrayList<LinearLayout> listDetailHosts = new ArrayList<>();
         private final ArrayList<ForecastDisclosureView> disclosureViews = new ArrayList<>();
         private ForecastChartView lineChart;
@@ -1687,13 +1747,13 @@ abstract class WeatherOverviewRenderingActivity extends MinuteForecastRenderingA
                 JSONArray days,
                 JSONArray hours,
                 ZoneId zone,
-                String hourlyDiagnostic,
                 LinearLayout lineDetailHost) {
             this.days = days;
             this.hours = hours;
             this.zone = zone;
-            this.hourlyDiagnostic = hourlyDiagnostic == null ? "" : hourlyDiagnostic;
             this.lineDetailHost = lineDetailHost;
+            yesterdayDate = LocalDate.now(zone).minusDays(1);
+            yesterdayDateLabel = yesterdayDate.format(DateTimeFormatter.ofPattern("d MMM", Locale.getDefault()));
         }
 
         void registerListDetailHost(int index, LinearLayout host, ForecastDisclosureView disclosure) {
@@ -1709,16 +1769,21 @@ abstract class WeatherOverviewRenderingActivity extends MinuteForecastRenderingA
         }
 
         void toggleDay(int index) {
-            if (days == null || index < 0 || index >= days.length()) return;
+            if (index == YESTERDAY_INDEX) {
+                if (yesterdayHost == null) return;
+            } else if (days == null || index < 0 || index >= days.length()) {
+                return;
+            }
             boolean sameDay = expandedDay == index;
             LocalDate previousTarget = expandedDay >= 0
                     ? displayDate(days.optJSONObject(expandedDay), zone)
                     : null;
             expandedDay = sameDay ? -1 : index;
             expandedDayIndex = expandedDay;
-            if (sameDay) {
-                forecastPreview.restore(true);
-                hourlyCoverageQueue.cancel(hourlyPageState, previousTarget);
+            if (sameDay || index == YESTERDAY_INDEX) {
+                if (!sameDay) loadHistory(false);
+                forecastPreview.restore(sameDay);
+                if (previousTarget != null) hourlyCoverageQueue.cancel(hourlyPageState, previousTarget);
                 renderExpandedDay();
                 return;
             }
@@ -1733,42 +1798,98 @@ abstract class WeatherOverviewRenderingActivity extends MinuteForecastRenderingA
                     true,
                     day);
 
-            // Queue coverage before rendering so the loading state is visible immediately.
             LocalDate target = displayDate(day, zone);
+            if (LocalDate.now(zone).equals(target)) loadHistory(false);
+            // Queue coverage before rendering so the loading state is visible immediately.
             ensureHourlyCoverage(target, this);
             renderExpandedDay();
         }
 
         public void onHourlyCoverageChanged() {
             if (expandedDay < 0) return;
-            int pageScrollY = mainScroll == null ? 0 : mainScroll.getScrollY();
+            refreshExpandedDay();
+        }
+
+        private boolean isTodayExpanded() {
+            return expandedDay >= 0 && LocalDate.now(zone).equals(
+                    displayDate(days.optJSONObject(expandedDay), zone));
+        }
+
+        private void loadVisibleHistory() {
+            if (showYesterday || isTodayExpanded()) loadHistory(false);
+        }
+
+        private void loadHistory(boolean retry) {
+            history = hourlyHistory.load(retry, this::onHistoryChanged);
+            if (showYesterday && history != null) bindHistorySummary();
+        }
+
+        private void bindHistorySummary() {
+            List<JSONObject> recorded = HourlyWeatherHistory.dayHours(null, history.hours,
+                    yesterdayDate, zone, Instant.now());
+            HourlyWeatherHistory.Summary summary = HourlyWeatherHistory.summarize(recorded,
+                    WeatherOverviewRenderingActivity.this::degreesOrNull);
+            long dayHours = Duration.between(yesterdayDate.atStartOfDay(zone),
+                    yesterdayDate.plusDays(1).atStartOfDay(zone)).toHours();
+            String status = UiTranslations.text(WeatherOverviewRenderingActivity.this,
+                    history.loading ? "Loading…" : recorded.isEmpty() ? "Unavailable"
+                            : recorded.size() < dayHours ? "Partial" : "Recorded");
+            lineChart.updateYesterday(summary, status);
+            YesterdayTile tile = yesterdayTile;
+            String caption = yesterdayDateLabel + " · " + status;
+            tile.caption().setText(caption);
+            tile.temperatures().setText(dayTemperatureRange(summary.high(), summary.low()));
+            tile.glyph().removeAllViews();
+            JSONObject weather = summary.representativeHour();
+            if (weather != null) {
+                tile.glyph().addView(new WeatherGlyphView(WeatherOverviewRenderingActivity.this,
+                        SceneSpec.glyphCondition(weather), safeBoolean(weather, "isDaytime", true)),
+                        new FrameLayout.LayoutParams(-1, -1));
+            }
+            tile.row().setContentDescription(dailyRowDescription(yesterdayLabel() + ", " + caption,
+                    description(weather), summary.high(), summary.low(), -1)
+                    + ". Tap for hourly details.");
+        }
+
+        private void onHistoryChanged() {
+            if (dailyDetails != this) return;
+            if (showYesterday) bindHistorySummary();
+            if (expandedDay == YESTERDAY_INDEX || isTodayExpanded()) refreshExpandedDay();
+        }
+
+        private void refreshExpandedDay() {
+            boolean keepScroll = mainScroll != null && isDailyForecastVisible();
+            int pageScrollY = keepScroll ? mainScroll.getScrollY() : 0;
             renderExpandedDay();
-            if (mainScroll != null) {
-                mainScroll.post(() -> mainScroll.scrollTo(0, pageScrollY));
+            if (keepScroll) {
+                mainScroll.post(() -> {
+                    if (isDailyForecastVisible()) mainScroll.scrollTo(0, pageScrollY);
+                });
             }
         }
 
         private void renderExpandedDay() {
             if (lineChart != null) lineChart.setExpandedDay(expandedDay);
+            if (yesterdayHost != null) {
+                yesterdayDisclosure.setExpanded(expandedDay == YESTERDAY_INDEX);
+                clearDetailHost(yesterdayHost);
+            }
             for (int i = 0; i < disclosureViews.size(); i++) {
                 ForecastDisclosureView disclosure = disclosureViews.get(i);
                 if (disclosure != null) disclosure.setExpanded(i == expandedDay);
             }
-            forecastPreview.removeViewBindings(lineDetailHost);
-            lineDetailHost.removeAllViews();
+            clearDetailHost(lineDetailHost);
             lineDetailHost.setVisibility(View.GONE);
             for (LinearLayout host : listDetailHosts) {
-                if (host != null) {
-                    forecastPreview.removeViewBindings(host);
-                    host.removeAllViews();
-                }
+                if (host != null) clearDetailHost(host);
             }
-            if (expandedDay < 0) return;
+            if (expandedDay == -1) return;
 
             View detail = buildDayHourlyDetail(
                     expandedDay, days, hours, zone, hourlyDiagnostic(lastHourlyWeather), this);
-            if (listMode && expandedDay < listDetailHosts.size()) {
-                LinearLayout host = listDetailHosts.get(expandedDay);
+            if (listMode) {
+                LinearLayout host = expandedDay == YESTERDAY_INDEX ? yesterdayHost
+                        : expandedDay < listDetailHosts.size() ? listDetailHosts.get(expandedDay) : null;
                 if (host != null) {
                     LinearLayout.LayoutParams detailLp = new LinearLayout.LayoutParams(-1, -2);
                     detailLp.topMargin = dp(10);
@@ -1780,6 +1901,12 @@ abstract class WeatherOverviewRenderingActivity extends MinuteForecastRenderingA
                 lineDetailHost.addView(detail, new LinearLayout.LayoutParams(-1, -2));
                 lineDetailHost.setVisibility(View.VISIBLE);
             }
+        }
+
+        private void clearDetailHost(LinearLayout host) {
+            forecastPreview.removeViewBindings(host);
+            removePageGlassDrawables(host.getChildAt(0));
+            host.removeAllViews();
         }
     }
 
@@ -1795,31 +1922,40 @@ abstract class WeatherOverviewRenderingActivity extends MinuteForecastRenderingA
         detail.setPadding(dp(14), dp(14), dp(14), dp(16));
         detail.setBackground(newGlassDrawable(dp(18), true));
 
-        JSONObject day = days == null ? null : days.optJSONObject(dayIndex);
-        String dayName = dayIndex == 0 ? "Today" : dayLabel(day, zone);
-        String date = dayDateLabel(day, zone);
+        boolean yesterday = dayIndex == YESTERDAY_INDEX;
+        Instant now = Instant.now();
+        LocalDate today = now.atZone(zone).toLocalDate();
+        JSONObject day = yesterday || days == null ? null : days.optJSONObject(dayIndex);
+        LocalDate targetDate = yesterday ? coordinator.yesterdayDate : displayDate(day, zone);
+        boolean isToday = today.equals(targetDate);
+        String dayName = yesterday ? yesterdayLabel() : isToday ? "Today" : dayLabel(day, zone);
+        String date = targetDate == null ? ""
+                : targetDate.format(DateTimeFormatter.ofPattern("d MMM", Locale.getDefault()));
         TextView title = text(UiTranslations.text(this, dayName)
                 + (date.isEmpty() ? "" : "  " + date) + "  •  "
                 + UiTranslations.text(this, "Hourly"), 14, true, WHITE);
         detail.addView(title);
 
-        LocalDate targetDate = displayDate(day, zone);
+        HourlyWeatherHistory.Result history = yesterday || isToday ? coordinator.history : null;
+        List<JSONObject> matches = HourlyWeatherHistory.dayHours(yesterday ? null : hours,
+                history == null ? null : history.hours, targetDate, zone, now);
         HourlyPageState state = hourlyPageState;
-        boolean covered = state != null
+        boolean covered = !yesterday && state != null
                 && isHourlyStateCurrent(state)
                 && hourlyDateCovered(state, targetDate, zone);
-        boolean loadingTarget = !covered && isHourlyCoverageLoadingFor(targetDate);
+        boolean loadingTarget = !yesterday && !covered && isHourlyCoverageLoadingFor(targetDate);
 
-        ArrayList<JSONObject> matches = new ArrayList<>();
-        if (targetDate != null && hours != null) {
-            for (int i = 0; i < hours.length(); i++) {
-                JSONObject hour = hours.optJSONObject(i);
-                LocalDate hourDate = hourLocalDate(hour, zone);
-                if (hour != null && targetDate.equals(hourDate)) matches.add(hour);
+        if (yesterday) {
+            TextView range = text("Available hours from the past 24 hours", 12, false, HOURLY_LABEL_COLOR);
+            range.setPadding(0, dp(5), 0, 0);
+            detail.addView(range);
+            if (matches.isEmpty()) {
+                addHistoryStatus(detail, history, coordinator, true);
+                return detail;
             }
         }
 
-        if (loadingTarget) {
+        if (loadingTarget && matches.isEmpty()) {
             LinearLayout loading = new LinearLayout(this);
             loading.setOrientation(LinearLayout.HORIZONTAL);
             loading.setGravity(Gravity.CENTER_VERTICAL);
@@ -1840,6 +1976,10 @@ abstract class WeatherOverviewRenderingActivity extends MinuteForecastRenderingA
         }
 
         if (matches.isEmpty()) {
+            if (history != null && history.loading) {
+                addHistoryStatus(detail, history, coordinator, false);
+                return detail;
+            }
             boolean failed = state != null
                     && isHourlyStateCurrent(state)
                     && state.aggregate.optBoolean(HOURLY_LOAD_ERROR, false);
@@ -1873,10 +2013,13 @@ abstract class WeatherOverviewRenderingActivity extends MinuteForecastRenderingA
                 retryLp.topMargin = dp(8);
                 detail.addView(retry, retryLp);
             }
+            addHistoryStatus(detail, history, coordinator, false);
             return detail;
         }
 
         int count = matches.size();
+        int currentHour = isToday ? HourlyWeatherHistory.currentHour(matches, now) : -1;
+        int defaultHour = yesterday ? count - 1 : currentHour;
         double[] temperatures = new double[count];
         double[] rainAmounts = new double[count];
         String[] times = new String[count];
@@ -1897,10 +2040,11 @@ abstract class WeatherOverviewRenderingActivity extends MinuteForecastRenderingA
                     : inches ? quantity * 25.4d : quantity;
             rainAmounts[i] = isFahrenheitUnit() ? millimeters / 25.4d : millimeters;
             rainLabels[i] = precipitationAmountLabel(rainAmounts[i]);
-            times[i] = hourLabel(hour, zone);
+            times[i] = i == currentHour ? UiTranslations.text(this, "Now") : hourLabel(hour, zone);
             temperatureLabels[i] = temperature == null ? "—" : temperature + "°";
             keys[i] = hourPreviewKey(hour);
-            descriptions[i] = hourPreviewLabel(hour, zone) + ", " + description(hour)
+            descriptions[i] = (i == currentHour ? times[i] + ", " : "")
+                    + hourPreviewLabel(hour, zone) + ", " + description(hour)
                     + ", " + (temperature == null ? "—" : temperature + temperatureUnitSymbol())
                     + ", " + UiTranslations.text(this, "Precipitation") + " " + formatQpf(qpf);
         }
@@ -1910,26 +2054,39 @@ abstract class WeatherOverviewRenderingActivity extends MinuteForecastRenderingA
         selectedDetails.setVisibility(View.GONE);
         ArrayList<ForecastDisclosureView> hourDisclosures = new ArrayList<>();
         ArrayList<LinearLayout> hourDetailCells = new ArrayList<>();
+        GestureHorizontalScrollView hourlyScroller = new GestureHorizontalScrollView(this);
+        hourlyScroller.setHorizontalScrollBarEnabled(false);
+        hourlyScroller.setOverScrollMode(View.OVER_SCROLL_NEVER);
+        IntConsumer selectHour = index -> {
+            if (index == currentHour) {
+                forecastPreview.restore(true);
+            } else {
+                JSONObject hour = matches.get(index);
+                forecastPreview.select(keys[index], hourPreviewLabel(hour, zone),
+                        SceneSpec.fromWeather(hour, safeBoolean(hour, "isDaytime", true)),
+                        safeInt(hour, "uvIndex", -1), false, hour);
+            }
+        };
         HourlyDayChartView chart = new HourlyDayChartView(this, temperatures, rainAmounts,
-                times, temperatureLabels, rainLabels, descriptions, keys,
-                index -> {
-                    JSONObject hour = matches.get(index);
-                    forecastPreview.select(keys[index], hourPreviewLabel(hour, zone),
-                            SceneSpec.fromWeather(hour, safeBoolean(hour, "isDaytime", true)),
-                            safeInt(hour, "uvIndex", -1), false, hour);
-                },
+                times, temperatureLabels, rainLabels, descriptions, keys, defaultHour, selectHour,
                 index -> {
                     for (int i = 0; i < hourDisclosures.size(); i++) {
+                        boolean selected = i == index;
                         String action = UiTranslations.text(this,
-                                i == index ? "Hide details ↑" : "Show details ↓");
-                        hourDisclosures.get(i).setExpanded(i == index);
+                                selected ? "Hide details ↑" : "Show details ↓");
+                        hourDisclosures.get(i).setExpanded(selected);
+                        hourDetailCells.get(i).setSelected(selected);
                         hourDetailCells.get(i).setContentDescription(descriptions[i] + ". " + action);
                     }
+                    removePageGlassDrawables(selectedDetails);
                     selectedDetails.removeAllViews();
                     selectedDetails.setVisibility(index < 0 ? View.GONE : View.VISIBLE);
                     if (index >= 0) {
                         selectedDetails.addView(buildSelectedDayHourDetail(matches.get(index), zone),
                                 new LinearLayout.LayoutParams(-1, -2));
+                        View cell = hourDetailCells.get(index);
+                        hourlyScroller.post(() -> hourlyScroller.smoothScrollTo(
+                                cell.getLeft() + (cell.getWidth() - hourlyScroller.getWidth()) / 2, 0));
                     }
                 });
         String legend = getString(R.string.forecast_temperature) + " " + temperatureUnitSymbol();
@@ -1940,9 +2097,6 @@ abstract class WeatherOverviewRenderingActivity extends MinuteForecastRenderingA
         detail.addView(legendView);
 
         detail.addView(chart, new LinearLayout.LayoutParams(-1, -2));
-        GestureHorizontalScrollView hourlyScroller = new GestureHorizontalScrollView(this);
-        hourlyScroller.setHorizontalScrollBarEnabled(false);
-        hourlyScroller.setOverScrollMode(View.OVER_SCROLL_NEVER);
         LinearLayout hourlyRow = new LinearLayout(this);
         hourlyRow.setOrientation(LinearLayout.HORIZONTAL);
         hourlyRow.setPadding(dp(2), dp(6), dp(2), dp(8));
@@ -1978,7 +2132,10 @@ abstract class WeatherOverviewRenderingActivity extends MinuteForecastRenderingA
             rain.setPadding(0, dp(3), 0, 0);
             cell.addView(rain);
             hourDetailCells.add(cell);
-            configureHourPreviewCell(cell, hour, zone, false, descriptions[i]);
+            int hourIndex = i;
+            cell.setFocusable(true);
+            cell.setOnClickListener(v -> selectHour.accept(hourIndex));
+            makeChildrenUnimportant(cell);
             cell.setContentDescription(descriptions[i]
                     + ". " + UiTranslations.text(this, "Show details ↓"));
             cell.setBackground(dayHourlyCellBackground());
@@ -1996,11 +2153,11 @@ abstract class WeatherOverviewRenderingActivity extends MinuteForecastRenderingA
         detail.addView(selectedDetails, selectedLp);
         forecastPreview.registerHourlyChart(chart);
 
-        if (!covered && state != null && isHourlyStateCurrent(state)) {
+        if (!yesterday && !covered && state != null && isHourlyStateCurrent(state)) {
             boolean failed = state.aggregate.optBoolean(HOURLY_LOAD_ERROR, false);
             TextView partial = text(
-                    failed
-                            ? "Returned hours are partial because hourly continuation stopped."
+                    loadingTarget ? "Loading more hourly details…"
+                            : failed ? "Returned hours are partial because hourly continuation stopped."
                             : "Only the returned hours for this day are available.",
                     12,
                     false,
@@ -2008,7 +2165,7 @@ abstract class WeatherOverviewRenderingActivity extends MinuteForecastRenderingA
             LinearLayout.LayoutParams partialLp = new LinearLayout.LayoutParams(-1, -2);
             partialLp.topMargin = dp(6);
             detail.addView(partial, partialLp);
-            if (hourlyRetryPossible(state)) {
+            if (!loadingTarget && hourlyRetryPossible(state)) {
                 Button retry = button("Retry hourly details");
                 retry.setContentDescription("Retry remaining hourly details for " + dayName);
                 retry.setOnClickListener(v -> ensureHourlyCoverage(targetDate, coordinator));
@@ -2017,7 +2174,27 @@ abstract class WeatherOverviewRenderingActivity extends MinuteForecastRenderingA
                 detail.addView(retry, retryLp);
             }
         }
+        addHistoryStatus(detail, history, coordinator, false);
         return detail;
+    }
+
+    private void addHistoryStatus(LinearLayout detail, HourlyWeatherHistory.Result history,
+            DayDetailCoordinator coordinator, boolean showEmpty) {
+        if (history == null) return;
+        String message = history.loading ? "Loading weather history…" : history.error;
+        if (message == null && showEmpty) message = "No historical hourly data is available for this location.";
+        if (message == null) return;
+        TextView label = text(message, 12, false, HOURLY_LABEL_COLOR);
+        label.setPadding(0, dp(10), 0, dp(2));
+        detail.addView(label);
+        if (history.error != null) {
+            Button retry = button("Retry weather history");
+            retry.setOnClickListener(v -> {
+                coordinator.loadHistory(true);
+                coordinator.refreshExpandedDay();
+            });
+            detail.addView(retry, new LinearLayout.LayoutParams(-2, dp(44)));
+        }
     }
 
     private GradientDrawable hourlyDetailSurface(int color, int radiusPx, boolean selected) {
@@ -2699,7 +2876,7 @@ abstract class WeatherOverviewRenderingActivity extends MinuteForecastRenderingA
             LinearLayout layout = (LinearLayout) tile;
             View labelView = layout.getChildAt(1);
             if (labelView instanceof TextView) {
-                ((TextView) labelView).setText(label + "  ›");
+                ((TextView) labelView).setText(String.format(Locale.getDefault(), "%s  ›", label));
             }
             View valueView = layout.getChildAt(2);
             if (valueView instanceof TextView) {
@@ -4296,8 +4473,8 @@ abstract class WeatherOverviewRenderingActivity extends MinuteForecastRenderingA
             // Keep the last published forecast through a failed location/network update.
             forecastRefreshFailed = true;
             progress.setVisibility(View.GONE);
-            status.setText(UiTranslations.text(this, "Could not update forecast") + " · "
-                    + dataAgeLabel(lastCurrentWeather));
+            status.setText(String.format(Locale.getDefault(), "%1$s · %2$s",
+                    UiTranslations.text(this, "Could not update forecast"), dataAgeLabel(lastCurrentWeather)));
             return;
         }
         clearDynamicContent();

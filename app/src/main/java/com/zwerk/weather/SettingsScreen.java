@@ -2,10 +2,11 @@ package com.zwerk.weather;
 
 import android.Manifest;
 import android.animation.ValueAnimator;
-import android.annotation.TargetApi;
 import android.app.Activity;
 import android.app.Dialog;
 import android.app.NotificationManager;
+import android.appwidget.AppWidgetManager;
+import android.appwidget.AppWidgetProviderInfo;
 import android.content.Context;
 import android.content.Intent;
 import android.content.SharedPreferences;
@@ -459,6 +460,11 @@ final class SettingsScreen extends android.content.ContextWrapper {
                     getString(R.string.settings_radar_page_summary),
                     PREF_RADAR_PAGE,
                     true);
+            if (!OpenMeteoConfig.isOpenMeteo(this)) {
+                addSwitchRow("Show Yesterday",
+                        "Add Yesterday to Forecast. Earlier hours today stay visible.",
+                        WeatherPreferences.PREF_SHOW_YESTERDAY, false);
+            }
             addActionRow(
                     getString(R.string.settings_weather_details),
                     getString(R.string.settings_weather_details_summary),
@@ -484,6 +490,9 @@ final class SettingsScreen extends android.content.ContextWrapper {
                     15, () -> WeatherWidgetProvider.requestRefresh(this));
             addSwitchRow("Gradient background", "", WeatherWidgetProvider.PREF_GRADIENT, true);
             addActionRow("Background colour", "", this::showWidgetColourDialog);
+            if (WidgetRefreshManager.hasWidgets(this)) {
+                addActionRow("Configure home-screen widget", "", this::showWidgetConfigurationPicker);
+            }
             if (displayedWidgetBackgroundReminder) {
                 addActionRow(getString(R.string.widget_background_title),
                         getString(R.string.widget_background_summary), () -> {
@@ -687,11 +696,42 @@ final class SettingsScreen extends android.content.ContextWrapper {
             temperatureUnitChanged = true;
             displayUnitChanged = true;
             dialog.dismiss();
-            if (activity instanceof MainActivity) ((MainActivity) activity).applyTileTransparency();
+            if (activity instanceof MainActivity) {
+                MainActivity main = (MainActivity) activity;
+                main.applyTileTransparency();
+                main.updateDailyHistory();
+            }
             if (languageChanged) getWindow().getDecorView().post(this::recreate);
             else buildUi();
         });
         showGlassSettingsDialog(dialog, scroller, false, false);
+    }
+
+    private void showWidgetConfigurationPicker() {
+        int[] ids = WidgetConfiguration.widgetIds(this);
+        if (ids.length == 0) return;
+        if (ids.length == 1) {
+            openWidgetConfiguration(ids[0]);
+            return;
+        }
+        AppWidgetManager widgets = AppWidgetManager.getInstance(this);
+        String[] titles = new String[ids.length];
+        String[] subtitles = new String[ids.length];
+        for (int i = 0; i < ids.length; i++) {
+            AppWidgetProviderInfo info = widgets.getAppWidgetInfo(ids[i]);
+            titles[i] = info == null ? "Configure widget"
+                    : info.loadLabel(getPackageManager());
+            CityManagerActivity.LocationSnapshot city = WidgetConfiguration.read(this, ids[i]).city(this);
+            subtitles[i] = (city == null ? UiTranslations.text(this, "Use app location") : city.name)
+                    + " · #" + (i + 1);
+        }
+        showGlassChoiceDialog("Configure widget", titles, subtitles,
+                -1, false, index -> openWidgetConfiguration(ids[index]));
+    }
+
+    private void openWidgetConfiguration(int id) {
+        activity.startActivity(new Intent(this, WidgetConfigurationActivity.class)
+                .putExtra(AppWidgetManager.EXTRA_APPWIDGET_ID, id));
     }
 
     private void showWidgetColourDialog() {
@@ -758,7 +798,7 @@ final class SettingsScreen extends android.content.ContextWrapper {
         labels.addView(text(title, 17f, PRIMARY, false), new LinearLayout.LayoutParams(0, -2, 1f));
         SharedPreferences prefs = getSharedPreferences(UI_PREFS, MODE_PRIVATE);
         int value = Math.max(0, Math.min(100, prefs.getInt(key, defaultValue)));
-        TextView percentage = text(value + "%", 14f, SECONDARY, false);
+        TextView percentage = text(String.format(Locale.getDefault(), "%d%%", value), 14f, SECONDARY, false);
         labels.addView(percentage);
         row.addView(labels);
         SeekBar slider = new WeatherSeekBar(this);
@@ -769,7 +809,7 @@ final class SettingsScreen extends android.content.ContextWrapper {
         slider.setContentDescription(UiTranslations.text(this, title));
         slider.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
             public void onProgressChanged(SeekBar bar, int progress, boolean fromUser) {
-                percentage.setText(progress + "%");
+                percentage.setText(String.format(Locale.getDefault(), "%d%%", progress));
                 if (!fromUser) return;
                 prefs.edit().putInt(key, progress).apply();
                 // Debounce widget broadcasts, including keyboard/accessibility changes.
@@ -1502,6 +1542,11 @@ final class SettingsScreen extends android.content.ContextWrapper {
         return button;
     }
 
+    private static SceneSpec settingsScene(String key, boolean daytime) {
+        String effect = "day".equals(key) || "night".equals(key) ? "none" : key;
+        return new SceneSpec("night".equals(key) ? "night" : "day", effect, daytime, key);
+    }
+
     private final class ScenePreviewView extends View {
         private final WeatherAtmosphereRenderer atmosphere = new WeatherAtmosphereRenderer(
                 getResources().getDisplayMetrics().density);
@@ -1525,6 +1570,7 @@ final class SettingsScreen extends android.content.ContextWrapper {
         private final Shader[] fogBankShaders = new Shader[4];
 
         private String scene = "day";
+        private SceneSpec previewSpec = settingsScene(scene, true);
         private boolean animationRunning = true;
         private long frozenTime = SystemClock.uptimeMillis();
         private long thunderStarted = frozenTime;
@@ -1544,6 +1590,7 @@ final class SettingsScreen extends android.content.ContextWrapper {
         void setScene(String nextScene, String label) {
             String oldScene = scene;
             scene = nextScene == null ? "day" : nextScene;
+            if (!scene.equals(oldScene)) previewSpec = settingsScene(scene, !"night".equals(scene));
             if ("thunder".equals(scene) && !"thunder".equals(oldScene)) {
                 thunderStarted = visualNow();
             }
@@ -1671,11 +1718,6 @@ final class SettingsScreen extends android.content.ContextWrapper {
             canvas.drawRect(0, 0, w, h, paint);
 
             long now = visualNow();
-            boolean daytime = !"night".equals(scene);
-            String effect = "day".equals(scene) || "night".equals(scene)
-                    ? "none" : scene;
-            SceneSpec previewSpec = new SceneSpec(
-                    "night".equals(scene) ? "night" : "day", effect, daytime, scene);
             atmosphere.drawAmbient(canvas, w, h, now, previewSpec);
             if ("thunder".equals(scene)) {
                 atmosphere.drawRain(canvas, w, h, now, previewSpec);
@@ -1859,12 +1901,12 @@ final class SettingsScreen extends android.content.ContextWrapper {
         private long frozenTime = SystemClock.uptimeMillis();
         private long thunderStarted = frozenTime;
         private final String sceneKey;
-        private final boolean sceneDaytime;
+        private final SceneSpec backdropSpec;
 
         SettingsBackdropView(Context context, String sceneKey, boolean sceneDaytime) {
             super(context);
             this.sceneKey = sceneKey == null ? "day" : sceneKey;
-            this.sceneDaytime = sceneDaytime;
+            backdropSpec = settingsScene(this.sceneKey, sceneDaytime);
             setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
             for (int i = 0; i < particleX.length; i++) {
                 particleX[i] = ((i * 37) % 97) / 97f;
@@ -1923,7 +1965,7 @@ final class SettingsScreen extends android.content.ContextWrapper {
             } else if ("rain".equals(sceneKey)
                     || "thunder".equals(sceneKey)
                     || "fog".equals(sceneKey)) {
-                sky = sceneDaytime ? rainSky : nightSky;
+                sky = backdropSpec.daytime ? rainSky : nightSky;
             } else {
                 sky = daySky;
             }
@@ -1940,11 +1982,6 @@ final class SettingsScreen extends android.content.ContextWrapper {
             paint.setShader(null);
 
             long now = visualNow();
-            String effect = "day".equals(sceneKey) || "night".equals(sceneKey)
-                    ? "none" : sceneKey;
-            SceneSpec backdropSpec = new SceneSpec(
-                    "night".equals(sceneKey) ? "night" : "day",
-                    effect, sceneDaytime, sceneKey);
             atmosphere.drawAmbient(canvas, w, h, now, backdropSpec);
             if ("thunder".equals(sceneKey)) {
                 atmosphere.drawRain(canvas, w, h, now, backdropSpec);
@@ -2167,6 +2204,10 @@ final class SettingsScreen extends android.content.ContextWrapper {
             }
             if (PREF_ANIMATIONS.equals(preferenceKey) && backdrop != null) {
                 backdrop.setAnimationRunning(isChecked);
+            }
+            if (WeatherPreferences.PREF_SHOW_YESTERDAY.equals(preferenceKey)
+                    && activity instanceof MainActivity) {
+                ((MainActivity) activity).updateDailyHistory();
             }
             if (preferenceKey.startsWith("widget_")) WeatherWidgetProvider.requestRefresh(this);
             if (PREF_RAIN_ALERTS.equals(preferenceKey)) {
@@ -2860,7 +2901,7 @@ final class SettingsScreen extends android.content.ContextWrapper {
     }
 
     /** Platform predictive-back bridge isolated from API 28-32 class verification. */
-    @TargetApi(33)
+    @androidx.annotation.RequiresApi(33)
     private static final class Api33BackNavigation {
         static void register(Activity activity, Runnable callback) {
             activity.getOnBackInvokedDispatcher().registerOnBackInvokedCallback(

@@ -2,7 +2,6 @@ package com.zwerk.weather;
 
 import android.app.job.JobInfo;
 import android.app.job.JobScheduler;
-import android.appwidget.AppWidgetManager;
 import android.content.ComponentName;
 import android.content.Context;
 import android.content.SharedPreferences;
@@ -11,27 +10,27 @@ import android.net.NetworkCapabilities;
 import android.os.PersistableBundle;
 import org.json.JSONArray;
 import org.json.JSONObject;
-import java.io.ByteArrayOutputStream;
-import java.io.InputStream;
-import java.net.HttpURLConnection;
-import java.net.URL;
 import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
+import java.time.Duration;
+import java.time.Instant;
 import java.time.ZoneId;
+import java.util.LinkedHashMap;
+import java.util.Map;
 
 /** Network-constrained widget recovery. Receivers only render and schedule this worker. */
 final class WidgetRefreshManager {
     private static final int PERIODIC_JOB = 0x05A77301;
     private static final int RECOVERY_JOB = 0x05A77302;
+    private static final long MINUTE_RETRY_MILLIS = 15L * 60_000L;
+    private static final String MINUTE_ATTEMPT_AT = "minute_attempt_at";
+    private static final String MINUTE_ATTEMPT_SCOPE = "minute_attempt_scope";
     private static final String API_ROOT = "https://weather.googleapis.com/v1/";
     private WidgetRefreshManager() { }
 
     static boolean hasWidgets(Context context) {
         return WeatherWidgetProvider.widgetIds(context).length > 0
-                || hasWidget(context, PrecipitationWidgetProvider.class);
-    }
-    private static boolean hasWidget(Context context, Class<?> provider) {
-        return AppWidgetManager.getInstance(context).getAppWidgetIds(new ComponentName(context, provider)).length > 0;
+                || PrecipitationWidgetProvider.widgetIds(context).length > 0;
     }
 
     static void reconcile(Context context) {
@@ -42,7 +41,11 @@ final class WidgetRefreshManager {
             scheduler.cancel(RECOVERY_JOB);
             return;
         }
-        purgeExpired(context);
+        Map<String, Target> targets = Target.forWidgets(context);
+        purgeExpired(WidgetConfiguration.snapshot(context, ""));
+        for (Target target : targets.values()) {
+            if (!target.snapshotCity.isEmpty()) purgeExpired(target.snapshot(context));
+        }
         ComponentName service = new ComponentName(context, WidgetRefreshJobService.class);
         if (scheduler.getPendingJob(PERIODIC_JOB) == null) {
             scheduler.schedule(new JobInfo.Builder(PERIODIC_JOB, service)
@@ -52,23 +55,25 @@ final class WidgetRefreshManager {
         // Publishing sends widget redraw broadcasts while this job is still running.
         // Replacing its ID here would cancel the very refresh that just published.
         if (WidgetRefreshJobService.isRunning()) return;
-        Target target = Target.resolve(context);
-        if (target == null) { scheduler.cancel(RECOVERY_JOB); return; }
-        SharedPreferences prefs = snapshot(context);
+        if (targets.isEmpty()) { scheduler.cancel(RECOVERY_JOB); return; }
         long now = System.currentTimeMillis();
-        long fetchedAt = prefs.getLong(WeatherWidgetProvider.KEY_UPDATED_EPOCH_MS, 0L);
-        boolean precipitation = hasWidget(context, PrecipitationWidgetProvider.class);
-        long minutesAt = precipitation ? prefs.getLong(PrecipitationWidgetProvider.KEY_MINUTE_FETCHED_AT_MS, 0L) : 0L;
-        boolean immediate = needsBaseRefresh(context, target, now) || needsMinuteRefresh(context, now);
-        long dueAt = fetchedAt + WidgetRefreshPolicy.REFRESH_MILLIS;
-        if (precipitation) dueAt = Math.min(dueAt, minutesAt + WidgetRefreshPolicy.REFRESH_MILLIS);
+        long dueAt = Long.MAX_VALUE;
+        StringBuilder fingerprint = new StringBuilder();
+        for (Target target : targets.values()) {
+            SharedPreferences prefs = target.snapshot(context);
+            long fetchedAt = prefs.getLong(WeatherWidgetProvider.KEY_UPDATED_EPOCH_MS, 0L);
+            long minuteDueAt = minuteDueAt(context, target, now);
+            long baseDueAt = needsBaseRefresh(context, target, now)
+                    ? now : fetchedAt + WidgetRefreshPolicy.REFRESH_MILLIS;
+            dueAt = Math.min(dueAt, Math.min(baseDueAt, minuteDueAt));
+            fingerprint.append(target.snapshotCity).append('|').append(target.scope).append('|')
+                    .append(target.units).append('|').append(target.language).append('|')
+                    .append(target.precipitation ? target.precipitationProvider : "").append('|')
+                    .append(fetchedAt).append('|').append(minuteDueAt <= now ? 0L : minuteDueAt).append('\n');
+        }
+        boolean immediate = dueAt <= now;
         PersistableBundle plan = new PersistableBundle();
-        plan.putString("scope", target.scope);
-        plan.putString("units", target.units);
-        plan.putString("language", target.language);
-        plan.putString("precipitationProvider", target.precipitationProvider);
-        plan.putLong("fetchedAt", fetchedAt);
-        plan.putLong("minutesAt", minutesAt);
+        plan.putString("targets", fingerprint.toString());
         plan.putBoolean("immediate", immediate);
         JobInfo pending = scheduler.getPendingJob(RECOVERY_JOB);
         if (pending != null && samePlan(pending.getExtras(), plan)) return;
@@ -89,43 +94,46 @@ final class WidgetRefreshManager {
     }
 
     static boolean needsRefresh(Context context) {
-        if (!hasWidgets(context)) return false;
-        Target target = Target.resolve(context);
         long now = System.currentTimeMillis();
-        return target != null && (needsBaseRefresh(context, target, now) || needsMinuteRefresh(context, now));
+        for (Target target : Target.forWidgets(context).values()) {
+            if (needsBaseRefresh(context, target, now) || minuteDueAt(context, target, now) <= now) {
+                return true;
+            }
+        }
+        return false;
     }
 
-    private static boolean needsMinuteRefresh(Context context, long now) {
-        if (!hasWidget(context, PrecipitationWidgetProvider.class)) return false;
-        SharedPreferences prefs = snapshot(context);
-        return PrecipitationWidgetProvider.freshMinutes(context, prefs, now) == null
-                || !ForecastClock.withinAge(prefs.getLong(PrecipitationWidgetProvider.KEY_MINUTE_FETCHED_AT_MS, 0L),
-                        now, WidgetRefreshPolicy.REFRESH_MILLIS);
-    }
-
-    private static SharedPreferences snapshot(Context context) {
-        return context.getSharedPreferences(WeatherWidgetProvider.PREFS_NAME, Context.MODE_PRIVATE);
+    private static long minuteDueAt(Context context, Target target, long now) {
+        if (!target.precipitation) return Long.MAX_VALUE;
+        SharedPreferences prefs = target.snapshot(context);
+        long due = now;
+        if (target.scope.equals(prefs.getString(PrecipitationWidgetProvider.KEY_LOCATION_SCOPE, ""))
+                && PrecipitationWidgetProvider.freshMinutes(context, prefs, now) != null) {
+            due = prefs.getLong(PrecipitationWidgetProvider.KEY_MINUTE_FETCHED_AT_MS, 0L)
+                    + WidgetRefreshPolicy.REFRESH_MILLIS;
+        }
+        long attempted = prefs.getLong(MINUTE_ATTEMPT_AT, 0L);
+        if (target.minuteScope().equals(prefs.getString(MINUTE_ATTEMPT_SCOPE, ""))
+                && ForecastClock.withinAge(attempted, now, MINUTE_RETRY_MILLIS)) {
+            due = Math.max(due, attempted + MINUTE_RETRY_MILLIS);
+        }
+        return due;
     }
 
     private static boolean needsBaseRefresh(Context context, Target target, long now) {
-        SharedPreferences prefs = snapshot(context);
+        SharedPreferences prefs = target.snapshot(context);
         WeatherWidgetTimeline timeline = new WeatherWidgetTimeline(prefs, now);
         boolean coverage = timeline.firstIndex >= 0
                 && new WidgetForecastFormatter(context).temperatureUnitSymbol().equals(
                         prefs.getString(WeatherWidgetProvider.KEY_UNIT, ""));
-        // Older snapshots contain chance only; refresh once to migrate the quantity chart.
-        if (hasWidget(context, PrecipitationWidgetProvider.class))
-            coverage &= new PrecipitationWidgetData(timeline.retained ? timeline.hours : null,
-                    PrecipitationWidgetProvider.freshMinutes(context, prefs, now), now).knownBins > 0;
         return WidgetRefreshPolicy.needsRefresh(prefs.getBoolean(WeatherWidgetProvider.KEY_HAS_SNAPSHOT, false),
                 target.scope.equals(prefs.getString(PrecipitationWidgetProvider.KEY_LOCATION_SCOPE, "")),
                 coverage, prefs.getLong(WeatherWidgetProvider.KEY_UPDATED_EPOCH_MS, 0L), now);
     }
 
     /** Purge payloads once, under the publishing lock; never clear unrelated shared state. */
-    private static void purgeExpired(Context context) {
+    private static void purgeExpired(SharedPreferences prefs) {
         synchronized (WeatherWidgetSnapshotPublisher.class) {
-            SharedPreferences prefs = snapshot(context);
             long now = System.currentTimeMillis();
             SharedPreferences.Editor editor = prefs.edit();
             if (prefs.getBoolean(WeatherWidgetProvider.KEY_HAS_SNAPSHOT, false)
@@ -148,9 +156,6 @@ final class WidgetRefreshManager {
 
     /** Returns false for a recoverable failure; JobScheduler retries with backoff. */
     static boolean refresh(Context context) {
-        if (!hasWidgets(context)) return true;
-        Target target = Target.resolve(context);
-        if (target == null) return true; // Set up a location in the app first.
         // A deadline may run a job despite its network constraint. Don't spend request
         // budget while offline; cached responses can still be republished below.
         ConnectivityManager networks = context.getSystemService(ConnectivityManager.class);
@@ -158,8 +163,18 @@ final class WidgetRefreshManager {
         boolean online = network != null && network.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
                 && network.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED);
         boolean success = true;
+        for (Target target : Target.forWidgets(context).values()) {
+            if (Thread.currentThread().isInterrupted()) return false;
+            success &= refreshTarget(context, target, online);
+        }
+        return success;
+    }
+
+    private static boolean refreshTarget(Context context, Target target, boolean online) {
+        boolean success = true;
         if (needsBaseRefresh(context, target, System.currentTimeMillis())) {
             try {
+                target.requireCurrent(context);
                 long startedAt = System.currentTimeMillis();
                 ForecastDiskCache cache = new ForecastDiskCache(context);
                 ForecastDiskCache.Snapshot saved = cache.readFresh(target.lat, target.lon,
@@ -175,22 +190,24 @@ final class WidgetRefreshManager {
                     fetchedAt = saved.fetchedAtMillis;
                 } else {
                     if (!online) return false;
-                    if (OpenMeteoConfig.isOpenMeteo(context)) {
+                    if (!OpenMeteoConfig.GOOGLE.equals(target.provider)) {
                         OpenMeteoForecastClient.Forecast forecast = OpenMeteoForecastClient.loadForecast(
                                 context, target.lat, target.lon, OpenMeteoConfig.model(context),
                                 OpenMeteoConfig.readCustomerKey(context));
                         current = forecast.current; hourly = forecast.hourly; daily = forecast.daily;
                     } else {
                         String query = googleQuery(context, target);
-                        current = requestGoogle(context, API_ROOT + "currentConditions:lookup" + query);
+                        current = BackgroundWeatherRequest.request(context, API_ROOT + "currentConditions:lookup" + query, DiagnosticLog.Area.WIDGET);
                         target.requireCurrent(context);
                         try {
-                            hourly = requestGoogle(context, API_ROOT + "forecast/hours:lookup" + query + "&hours=24&pageSize=24");
+                            hourly = BackgroundWeatherRequest.request(context, API_ROOT + "forecast/hours:lookup"
+                                    + query + "&hours=24&pageSize=24", DiagnosticLog.Area.WIDGET);
                         } catch (InterruptedException stopped) { throw stopped; }
                         catch (Exception unavailable) { hourly = new JSONObject(); }
                         target.requireCurrent(context);
                         try {
-                            daily = requestGoogle(context, API_ROOT + "forecast/days:lookup" + query + "&days=10&pageSize=10");
+                            daily = BackgroundWeatherRequest.request(context, API_ROOT + "forecast/days:lookup"
+                                    + query + "&days=10&pageSize=10", DiagnosticLog.Area.WIDGET);
                         } catch (InterruptedException stopped) { throw stopped; }
                         catch (Exception unavailable) { daily = new JSONObject(); }
                     }
@@ -209,7 +226,8 @@ final class WidgetRefreshManager {
                 synchronized (WeatherWidgetSnapshotPublisher.class) {
                     target.requireCurrent(context);
                     boolean published = new WeatherWidgetSnapshotPublisher(context, new WidgetForecastFormatter(context))
-                            .publish(current, today, hourly, daily, zone, target.name, target.lat, target.lon);
+                            .publish(current, today, hourly, daily, zone, target.name, target.lat, target.lon,
+                                    target.snapshot(context));
                     if (!published) throw new IllegalStateException("Missing current temperature");
                 }
                 if (needsBaseRefresh(context, target, System.currentTimeMillis())) success = false;
@@ -218,25 +236,38 @@ final class WidgetRefreshManager {
                 success = false;
             }
         }
-        if (hasWidget(context, PrecipitationWidgetProvider.class) && target.isCurrent(context)) {
-            if (needsMinuteRefresh(context, System.currentTimeMillis())) {
-                try {
-                    if (!online) return false;
-                    long startedAt = System.currentTimeMillis();
-                    JSONObject minutes = OpenMeteoConfig.isPrecipitationOpenMeteo(context)
-                            ? OpenMeteoForecastClient.loadMinute(context, target.lat, target.lon,
-                                    OpenMeteoConfig.model(context), OpenMeteoConfig.readCustomerKey(context))
-                            : requestGoogle(context, API_ROOT + "forecast/minutes:lookup"
-                                    + googleQuery(context, target) + "&pageSize=180");
-                    synchronized (WeatherWidgetSnapshotPublisher.class) {
-                        target.requireCurrent(context);
-                        PrecipitationWidgetProvider.publishMinute(context, minutes,
-                                startedAt, target.lat, target.lon);
-                    }
-                } catch (Exception failure) {
-                    DiagnosticLog.error(DiagnosticLog.Area.PRECIPITATION, failure);
-                    // Hourly quantities remain usable when minute data is unsupported.
+        long now = System.currentTimeMillis();
+        if (minuteDueAt(context, target, now) <= now && target.isCurrent(context)) {
+            try {
+                if (!online) return false;
+                long startedAt = System.currentTimeMillis();
+                synchronized (WeatherWidgetSnapshotPublisher.class) {
+                    target.requireCurrent(context);
+                    target.snapshot(context).edit()
+                            .putString(MINUTE_ATTEMPT_SCOPE, target.minuteScope())
+                            .putLong(MINUTE_ATTEMPT_AT, startedAt).apply();
                 }
+                JSONObject minutes;
+                if (OpenMeteoConfig.GOOGLE.equals(target.precipitationProvider)) {
+                    String key = RainAlertManager.readApiKey(context);
+                    if (key.isEmpty()) return success;
+                    minutes = PrecipitationForecast.loadGoogle(key, target.lat, target.lon,
+                            Instant.now(), Duration.ofHours(6), address -> {
+                                target.requireCurrent(context);
+                                return BackgroundWeatherRequest.request(context, address, DiagnosticLog.Area.PRECIPITATION);
+                            });
+                } else {
+                    minutes = OpenMeteoForecastClient.loadMinute(context, target.lat, target.lon,
+                            OpenMeteoConfig.model(context), OpenMeteoConfig.readCustomerKey(context));
+                }
+                synchronized (WeatherWidgetSnapshotPublisher.class) {
+                    target.requireCurrent(context);
+                    PrecipitationWidgetProvider.publishMinute(context, minutes, startedAt,
+                            target.lat, target.lon, target.snapshot(context));
+                }
+            } catch (Exception failure) {
+                DiagnosticLog.error(DiagnosticLog.Area.PRECIPITATION, failure);
+                // Hourly quantities remain usable when minute data is unsupported.
             }
         }
         return success;
@@ -250,40 +281,17 @@ final class WidgetRefreshManager {
                 + "&unitsSystem=METRIC&languageCode=" + URLEncoder.encode(target.language, StandardCharsets.UTF_8.name());
     }
 
-    private static JSONObject requestGoogle(Context context, String address) throws Exception {
-        if (Thread.currentThread().isInterrupted()) throw new InterruptedException();
-        if (!ApiRequestBudgetManager.tryAcquire(context, ApiRequestBudgetManager.Category.WEATHER).allowed) {
-            DiagnosticLog.event(DiagnosticLog.Area.WIDGET, DiagnosticLog.Event.REQUEST_LIMIT);
-            throw new IllegalStateException("Request limit reached");
-        }
-        long diagnosticStart = android.os.SystemClock.elapsedRealtime();
-        HttpURLConnection connection = (HttpURLConnection) new URL(address).openConnection();
-        connection.setConnectTimeout(12_000);
-        connection.setReadTimeout(18_000);
-        connection.setRequestProperty("Accept", "application/json");
-        RainAlertManager.applyAndroidApiKeyRestrictionHeaders(context, connection);
-        try {
-            int status = connection.getResponseCode();
-            DiagnosticLog.http(DiagnosticLog.Area.WIDGET, status, android.os.SystemClock.elapsedRealtime() - diagnosticStart);
-            if (status != 200) throw new IllegalStateException("Weather service unavailable");
-            try (InputStream input = connection.getInputStream(); ByteArrayOutputStream output = new ByteArrayOutputStream()) {
-                byte[] buffer = new byte[8192];
-                int count;
-                while ((count = input.read(buffer)) != -1) {
-                    if (Thread.currentThread().isInterrupted()) throw new InterruptedException();
-                    if (output.size() + count > 2 * 1024 * 1024) throw new IllegalStateException("Response too large");
-                    output.write(buffer, 0, count);
-                }
-                return new JSONObject(output.toString(StandardCharsets.UTF_8.name()));
-            }
-        } finally { connection.disconnect(); }
-    }
-
     private static final class Target {
-        final String id, name, provider, precipitationProvider, language, scope, units;
+        final String snapshotCity, id, name, provider, precipitationProvider, language, scope, units;
         final double lat, lon;
-        Target(Context context, String id, String name, double lat, double lon) {
-            this.id = id; this.name = name; this.lat = lat; this.lon = lon;
+        boolean precipitation;
+
+        Target(Context context, String snapshotCity, String id, String name, double lat, double lon) {
+            this.snapshotCity = snapshotCity;
+            this.id = id;
+            this.name = name;
+            this.lat = lat;
+            this.lon = lon;
             provider = OpenMeteoConfig.cacheScope(context);
             precipitationProvider = OpenMeteoConfig.precipitationCacheScope(context);
             Context localized = AppLocaleManager.wrap(context);
@@ -294,20 +302,49 @@ final class WidgetRefreshManager {
             units = prefs.temperatureUnit() + "|" + prefs.windUnit(fahrenheit)
                     + "|" + prefs.pressureUnit() + "|" + prefs.visibilityUnit(fahrenheit);
         }
-        static Target resolve(Context context) {
+        static Map<String, Target> forWidgets(Context context) {
+            Map<String, Target> targets = new LinkedHashMap<>();
+            Target selected = selected(context);
+            for (int id : WeatherWidgetProvider.widgetIds(context)) add(context, targets, selected, id, false);
+            for (int id : PrecipitationWidgetProvider.widgetIds(context)) add(context, targets, selected, id, true);
+            return targets;
+        }
+
+        private static void add(Context context, Map<String, Target> targets,
+                Target selected, int widgetId, boolean precipitation) {
+            CityManagerActivity.LocationSnapshot city = WidgetConfiguration.read(context, widgetId).city(context);
+            Target target = city == null ? selected : targets.computeIfAbsent(city.id,
+                    key -> new Target(context, key, city.id, city.name, city.lat, city.lon));
+            if (target == null) return;
+            target.precipitation |= precipitation;
+            targets.put(target.snapshotCity, target);
+        }
+
+        private static Target selected(Context context) {
             CityManagerActivity.LocationSnapshot selected = CityManagerActivity.getSelectedLocation(context);
-            if (selected != null && valid(selected.lat, selected.lon))
-                return new Target(context, selected.id, selected.name, selected.lat, selected.lon);
+            if (selected != null && valid(selected.lat, selected.lon)) {
+                return new Target(context, "", selected.id, selected.name, selected.lat, selected.lon);
+            }
             SharedPreferences legacy = context.getSharedPreferences("MainActivity", Context.MODE_PRIVATE);
             try {
                 double lat = legacy.getFloat("lat", Float.NaN), lon = legacy.getFloat("lon", Float.NaN);
-                return valid(lat, lon) ? new Target(context, "", legacy.getString("name", ""), lat, lon) : null;
+                return valid(lat, lon) ? new Target(context, "", "", legacy.getString("name", ""), lat, lon) : null;
             } catch (ClassCastException ignored) { return null; }
         }
+
+        SharedPreferences snapshot(Context context) {
+            return WidgetConfiguration.snapshot(context, snapshotCity);
+        }
+
+        String minuteScope() {
+            return scope + "|" + precipitationProvider;
+        }
+
         boolean isCurrent(Context context) {
-            if (Thread.currentThread().isInterrupted() || !hasWidgets(context)) return false;
-            Target current = resolve(context);
+            if (Thread.currentThread().isInterrupted()) return false;
+            Target current = forWidgets(context).get(snapshotCity);
             return current != null && id.equals(current.id) && scope.equals(current.scope)
+                    && precipitation == current.precipitation
                     && precipitationProvider.equals(current.precipitationProvider)
                     && language.equals(current.language) && units.equals(current.units);
         }

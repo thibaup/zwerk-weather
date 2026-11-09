@@ -1150,7 +1150,12 @@ abstract class WeatherApiActivity extends MinuteForecastViewsActivity {
     }
 
     JSONObject request(String address) throws Exception {
-        if (OpenMeteoConfig.isOpenMeteo(this)) {
+        return request(address, false);
+    }
+
+    JSONObject request(String address, boolean precipitation) throws Exception {
+        if (precipitation ? OpenMeteoConfig.isPrecipitationOpenMeteo(this)
+                : OpenMeteoConfig.isOpenMeteo(this)) {
             throw new SupersededWeatherRequestException();
         }
         ApiRequestBudgetManager.Decision budget = ApiRequestBudgetManager.tryAcquire(

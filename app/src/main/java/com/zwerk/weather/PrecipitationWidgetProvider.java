@@ -56,11 +56,14 @@ public final class PrecipitationWidgetProvider extends AppWidgetProvider {
                 || Intent.ACTION_DATE_CHANGED.equals(action)) updateAll(context);
     }
 
-    @Override public void onDeleted(Context context, int[] ids) { scheduleNextUpdate(context); }
-
     @Override public void onDisabled(Context context) {
         cancelClockUpdate(context);
         WidgetRefreshManager.reconcile(context);
+    }
+
+    @Override public void onDeleted(Context context, int[] ids) {
+        WidgetConfiguration.delete(context, ids);
+        scheduleNextUpdate(context);
     }
 
     static void requestRefresh(Context context) {
@@ -71,10 +74,14 @@ public final class PrecipitationWidgetProvider extends AppWidgetProvider {
     /** Publish only the needed minute segments, when they belong to the current base forecast. */
     static void publishMinute(Context context, JSONObject response, long fetchedAt,
             double latitude, double longitude) {
+        publishMinute(context, response, fetchedAt, latitude, longitude,
+                WidgetConfiguration.snapshot(context, ""));
+    }
+
+    static void publishMinute(Context context, JSONObject response, long fetchedAt,
+            double latitude, double longitude, SharedPreferences prefs) {
         if (response == null || fetchedAt <= 0L) return;
         synchronized (WeatherWidgetSnapshotPublisher.class) {
-            SharedPreferences prefs = context.getSharedPreferences(
-                    WeatherWidgetProvider.PREFS_NAME, Context.MODE_PRIVATE);
             String scope = PrecipitationWidgetData.locationScope(latitude, longitude,
                     OpenMeteoConfig.cacheScope(context));
             if (!scope.equals(prefs.getString(KEY_LOCATION_SCOPE, ""))) return;
@@ -117,15 +124,17 @@ public final class PrecipitationWidgetProvider extends AppWidgetProvider {
         scheduleNextUpdate(context);
     }
 
-    private static int[] widgetIds(Context context) {
+    static int[] widgetIds(Context context) {
         return AppWidgetManager.getInstance(context).getAppWidgetIds(
                 new ComponentName(context, PrecipitationWidgetProvider.class));
     }
 
-    private static RemoteViews buildViews(Context context, int id, Bundle hint) {
+    static RemoteViews buildViews(Context context, int id, Bundle hint) {
+        WidgetConfiguration config = WidgetConfiguration.read(context, id);
+        CityManagerActivity.LocationSnapshot city = config.city(context);
         Bundle options = hint == null ? AppWidgetManager.getInstance(context).getAppWidgetOptions(id) : hint;
         if (Build.VERSION.SDK_INT >= 31) {
-            RemoteViews responsive = Api31Responsive.build(context, options);
+            RemoteViews responsive = Api31Responsive.build(context, options, id, config, city);
             if (responsive != null) return responsive;
         }
         boolean landscape = context.getResources().getConfiguration().orientation
@@ -134,45 +143,50 @@ public final class PrecipitationWidgetProvider extends AppWidgetProvider {
                 : AppWidgetManager.OPTION_APPWIDGET_MIN_WIDTH, 320);
         int height = options.getInt(landscape ? AppWidgetManager.OPTION_APPWIDGET_MIN_HEIGHT
                 : AppWidgetManager.OPTION_APPWIDGET_MAX_HEIGHT, 144);
-        return buildForSize(context, width > 0 ? width : 320, height > 0 ? height : 144);
+        return buildForSize(context, width > 0 ? width : 320, height > 0 ? height : 144,
+                id, config, city);
     }
 
-    @android.annotation.TargetApi(31)
+    @androidx.annotation.RequiresApi(31)
     private static final class Api31Responsive {
-        static RemoteViews build(Context context, Bundle options) {
+        static RemoteViews build(Context context, Bundle options, int id,
+                WidgetConfiguration config, CityManagerActivity.LocationSnapshot city) {
             java.util.ArrayList<android.util.SizeF> sizes = options.getParcelableArrayList(
                     AppWidgetManager.OPTION_APPWIDGET_SIZES);
             if (sizes == null || sizes.isEmpty()) return null;
             java.util.Map<android.util.SizeF, RemoteViews> variants = new java.util.HashMap<>();
             for (android.util.SizeF size : sizes) {
                 if (size == null || size.getWidth() <= 0 || size.getHeight() <= 0) continue;
-                variants.put(size, buildForSize(context, Math.round(size.getWidth()), Math.round(size.getHeight())));
+                variants.put(size, buildForSize(context, Math.round(size.getWidth()), Math.round(size.getHeight()),
+                        id, config, city));
                 if (variants.size() >= 8) break;
             }
             return variants.isEmpty() ? null : new RemoteViews(variants);
         }
     }
 
-    private static RemoteViews buildForSize(Context context, int widthDp, int heightDp) {
+    static RemoteViews buildForSize(Context context, int widthDp, int heightDp, int id,
+            WidgetConfiguration config, CityManagerActivity.LocationSnapshot pinned) {
         Context localized = AppLocaleManager.wrap(context);
         RemoteViews views = new RemoteViews(context.getPackageName(), R.layout.widget_precipitation);
-        views.setTextViewText(R.id.precip_widget_title,
-                UiTranslations.text(localized, "Next 6 hours"));
-        Intent launch = new Intent(context, MainActivity.class)
-                .setAction(MainActivity.ACTION_WIDGET_PRECIPITATION)
-                .addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP | Intent.FLAG_ACTIVITY_SINGLE_TOP);
-        views.setOnClickPendingIntent(R.id.precip_widget_root,
-                PendingIntent.getActivity(context, 4207, launch,
-                        PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE));
+        if (id != AppWidgetManager.INVALID_APPWIDGET_ID) {
+            Intent launch = new Intent(context, MainActivity.class)
+                    .setAction(MainActivity.ACTION_WIDGET_PRECIPITATION)
+                    .putExtra(AppWidgetManager.EXTRA_APPWIDGET_ID, id)
+                    .addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP | Intent.FLAG_ACTIVITY_SINGLE_TOP);
+            views.setOnClickPendingIntent(R.id.precip_widget_root,
+                    PendingIntent.getActivity(context, id, launch,
+                            PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE));
+        }
 
-        SharedPreferences prefs = context.getSharedPreferences(
-                WeatherWidgetProvider.PREFS_NAME, Context.MODE_PRIVATE);
+        SharedPreferences prefs = WidgetConfiguration.snapshot(context, pinned == null ? "" : pinned.id);
         long now = System.currentTimeMillis();
         WeatherWidgetTimeline timeline = new WeatherWidgetTimeline(prefs, now);
-        boolean retained = prefs.getBoolean(WeatherWidgetProvider.KEY_HAS_SNAPSHOT, false)
+        boolean matches = WidgetConfiguration.snapshotMatches(context, prefs, pinned);
+        boolean retained = matches && prefs.getBoolean(WeatherWidgetProvider.KEY_HAS_SNAPSHOT, false)
                 && timeline.retained;
-        String city = prefs.getString(WeatherWidgetProvider.KEY_CITY, "");
-        views.setTextViewText(R.id.precip_widget_city, city == null ? "" : city);
+        String city = pinned == null ? prefs.getString(WeatherWidgetProvider.KEY_CITY, "") : pinned.name;
+        config.setText(views, R.id.precip_widget_city, city == null ? "" : city);
         views.setInt(R.id.precip_widget_city, "setMaxWidth", Math.round(
                 Math.min(100f, (widthDp - 40) * 0.30f) * context.getResources().getDisplayMetrics().density));
         String condition = retained
@@ -185,7 +199,7 @@ public final class PrecipitationWidgetProvider extends AppWidgetProvider {
         }
         WidgetBackground.apply(localized, views, R.id.precip_widget_scene, condition, daytime);
 
-        JSONObject minutes = freshMinutes(context, prefs, now);
+        JSONObject minutes = matches ? freshMinutes(context, prefs, now) : null;
         PrecipitationWidgetData data = new PrecipitationWidgetData(
                 retained ? timeline.hours : null, minutes, now);
         String resolution = UiTranslations.text(localized,
@@ -195,14 +209,21 @@ public final class PrecipitationWidgetProvider extends AppWidgetProvider {
                 : PrecipitationWidgetData.amountLabel(data.totalMm) + " mm · "
                         + UiTranslations.text(localized, complete ? "Total" : "Partial forecast")
                         + " · " + UiTranslations.text(localized, "10 min bars");
-        String[] labels = {UiTranslations.text(localized, "Now"),
+        String title = UiTranslations.text(localized, "Next 6 hours");
+        if (config.showDetails && data.knownBins > 0) {
+            String amount = PrecipitationWidgetData.amountLabel(data.totalMm) + " mm";
+            title += " · " + (complete ? amount : UiTranslations.text(localized, "Partial") + " " + amount);
+        }
+        config.setText(views, R.id.precip_widget_title, title);
+        ZoneId zone = pinned != null ? timeline.zone : ZoneId.systemDefault();
+        String[] labels = config.showForecast ? new String[]{UiTranslations.text(localized, "Now"),
                 WeatherTimeFormat.time(localized, Instant.ofEpochMilli(now + 3L * 3_600_000L),
-                        ZoneId.systemDefault()),
+                        zone),
                 WeatherTimeFormat.time(localized, Instant.ofEpochMilli(now + 6L * 3_600_000L),
-                        ZoneId.systemDefault())};
+                        zone)} : null;
         try {
             Bitmap chart = PrecipitationWidgetChart.render(data, widthDp - 28, heightDp - 44,
-                    labels, UiTranslations.text(localized, "No forecast available"));
+                    labels, UiTranslations.text(localized, "No forecast available"), config.textScalePercent / 100f);
             views.setImageViewBitmap(R.id.precip_widget_chart, chart);
         } catch (OutOfMemoryError ignored) {
             // Never substitute sample rain for a missing real forecast.
@@ -242,25 +263,26 @@ public final class PrecipitationWidgetProvider extends AppWidgetProvider {
 
     private static void scheduleNextUpdate(Context context) {
         cancelClockUpdate(context);
-        if (widgetIds(context).length == 0) return;
-        SharedPreferences prefs = context.getSharedPreferences(
-                WeatherWidgetProvider.PREFS_NAME, Context.MODE_PRIVATE);
+        int[] ids = widgetIds(context);
+        if (ids.length == 0) return;
         long now = System.currentTimeMillis();
-        WeatherWidgetTimeline timeline = new WeatherWidgetTimeline(prefs, now);
-        if (!prefs.getBoolean(WeatherWidgetProvider.KEY_HAS_SNAPSHOT, false)
-                || !timeline.retained) {
-            AlarmManager alarms = (AlarmManager) context.getSystemService(Context.ALARM_SERVICE);
-            if (alarms != null) alarms.set(AlarmManager.RTC, now + 5L * 60_000L, clockUpdateIntent(context));
-            return;
+        long next = (now / PrecipitationWidgetData.BIN_MILLIS + 1L) * PrecipitationWidgetData.BIN_MILLIS;
+        for (int id : ids) {
+            CityManagerActivity.LocationSnapshot city = WidgetConfiguration.read(context, id).city(context);
+            SharedPreferences prefs = WidgetConfiguration.snapshot(context, city == null ? "" : city.id);
+            WeatherWidgetTimeline timeline = new WeatherWidgetTimeline(prefs, now);
+            if (!prefs.getBoolean(WeatherWidgetProvider.KEY_HAS_SNAPSHOT, false) || !timeline.retained
+                    || !WidgetConfiguration.snapshotMatches(context, prefs, city)) {
+                next = Math.min(next, now + 5L * 60_000L);
+                continue;
+            }
+            next = Math.min(next, timeline.expiresAt);
+            long refreshAt = timeline.fetchedAt + WidgetRefreshPolicy.REFRESH_MILLIS;
+            next = Math.min(next, refreshAt > now ? refreshAt : now + 5L * 60_000L);
+            if (freshMinutes(context, prefs, now) != null) {
+                next = Math.min(next, prefs.getLong(KEY_MINUTE_FETCHED_AT_MS, 0L) + MINUTE_MAX_AGE_MILLIS);
+            }
         }
-        long next = (now / PrecipitationWidgetData.BIN_MILLIS + 1L)
-                * PrecipitationWidgetData.BIN_MILLIS;
-        next = Math.min(next, timeline.expiresAt);
-        long refreshAt = timeline.fetchedAt + WidgetRefreshPolicy.REFRESH_MILLIS;
-        next = Math.min(next, refreshAt > now ? refreshAt : now + 5L * 60_000L);
-        long minuteFetchedAt = prefs.getLong(KEY_MINUTE_FETCHED_AT_MS, 0L);
-        if (freshMinutes(context, prefs, now) != null)
-            next = Math.min(next, minuteFetchedAt + MINUTE_MAX_AGE_MILLIS);
         AlarmManager alarms = (AlarmManager) context.getSystemService(Context.ALARM_SERVICE);
         // A lightweight, inexact redraw. The provider never starts a network request.
         if (alarms != null && next > now)

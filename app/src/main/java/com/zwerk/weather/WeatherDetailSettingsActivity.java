@@ -1,7 +1,6 @@
 package com.zwerk.weather;
 
 import android.annotation.SuppressLint;
-import android.annotation.TargetApi;
 import android.app.Activity;
 import android.content.Context;
 import android.content.Intent;
@@ -639,7 +638,7 @@ public class WeatherDetailSettingsActivity extends Activity {
         return Math.round(value * getResources().getDisplayMetrics().density);
     }
 
-    @TargetApi(33)
+    @androidx.annotation.RequiresApi(33)
     private static final class Api33BackNavigation {
         static void register(WeatherDetailSettingsActivity activity) {
             activity.getOnBackInvokedDispatcher().registerOnBackInvokedCallback(
@@ -694,6 +693,7 @@ public class WeatherDetailSettingsActivity extends Activity {
         private final RectF oval = new RectF();
         private final String sceneKey;
         private final boolean sceneDaytime;
+        private LinearGradient skyGradient;
 
         WeatherGradientView(Context context, String sceneKey, boolean sceneDaytime) {
             super(context);
@@ -703,12 +703,12 @@ public class WeatherDetailSettingsActivity extends Activity {
         }
 
         @Override
-        protected void onDraw(Canvas canvas) {
-            super.onDraw(canvas);
-            float w = getWidth();
-            float h = getHeight();
-            if (w <= 0 || h <= 0) return;
-
+        protected void onSizeChanged(int w, int h, int oldw, int oldh) {
+            super.onSizeChanged(w, h, oldw, oldh);
+            if (h <= 0) {
+                skyGradient = null;
+                return;
+            }
             int top;
             int middle;
             int bottom;
@@ -734,14 +734,24 @@ public class WeatherDetailSettingsActivity extends Activity {
                 bottom = Color.rgb(7, 29, 65);
             }
 
-            paint.setShader(new LinearGradient(
+            skyGradient = new LinearGradient(
                     0,
                     0,
                     0,
                     h,
                     new int[]{top, middle, bottom},
                     new float[]{0f, 0.52f, 1f},
-                    Shader.TileMode.CLAMP));
+                    Shader.TileMode.CLAMP);
+        }
+
+        @Override
+        protected void onDraw(Canvas canvas) {
+            super.onDraw(canvas);
+            float w = getWidth();
+            float h = getHeight();
+            if (w <= 0 || h <= 0) return;
+
+            paint.setShader(skyGradient);
             paint.setStyle(Paint.Style.FILL);
             canvas.drawRect(0, 0, w, h, paint);
             paint.setShader(null);

@@ -7,6 +7,7 @@ final class WeatherPreferences {
     static final String PREFS_NAME = "WEATHER_UI";
     static final String PREF_TILE_TRANSPARENCY = "tile_transparency";
     static final int DEFAULT_TILE_TRANSPARENCY = 70;
+    static final String PREF_SHOW_YESTERDAY = "show_yesterday";
     static final String PREF_RADAR_MAP_THEME = "radar_map_theme";
     static final String MAP_AUTOMATIC = "automatic";
     static final String MAP_LIGHT = "light";
@@ -57,6 +58,10 @@ final class WeatherPreferences {
 
     boolean pollenEnabled() {
         return preferences.getBoolean("google_pollen_enabled", true);
+    }
+
+    boolean showYesterday() {
+        return preferences.getBoolean(PREF_SHOW_YESTERDAY, false);
     }
 
     int tileTransparency() {
