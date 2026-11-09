@@ -17,7 +17,7 @@ import java.util.function.Function;
 /** Lazily loads the Google history shared by the Yesterday and Today details. */
 final class HourlyWeatherHistory {
     private static final long CACHE_AGE_MILLIS = 5 * 60_000L;
-    private static final String UNAVAILABLE = "Weather history is unavailable right now.";
+    static final String UNAVAILABLE = "Weather history is unavailable.";
     private final WeatherApiActivity activity;
     private Result result;
 
@@ -181,7 +181,7 @@ final class HourlyWeatherHistory {
             WeatherApiActivity.WeatherRequestException request =
                     (WeatherApiActivity.WeatherRequestException) failure;
             if (request.statusCode == -2 || request.statusCode == 429) {
-                return "Weather request limit reached. Try again later.";
+                return "Weather request limit reached";
             }
         }
         return "Couldn’t load weather history. Check your connection and try again.";

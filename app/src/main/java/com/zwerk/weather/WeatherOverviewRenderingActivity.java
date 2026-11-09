@@ -1565,7 +1565,7 @@ abstract class WeatherOverviewRenderingActivity extends MinuteForecastRenderingA
         button.setFocusable(true);
         button.setMinWidth(dp(72));
         button.setMinHeight(dp(48));
-        button.setContentDescription(accessibilityLabel);
+        button.setContentDescription(UiTranslations.text(this, accessibilityLabel));
         return button;
     }
 
@@ -1587,10 +1587,9 @@ abstract class WeatherOverviewRenderingActivity extends MinuteForecastRenderingA
         button.setAlpha(selected ? 1f : 0.76f);
         button.setTextColor(selected ? WHITE : Color.argb(210, 255, 255, 255));
         button.setBackground(segmentedButtonBackground(selected));
-        button.setContentDescription(label + (selected ? ", selected" : ", not selected"));
-        if (Build.VERSION.SDK_INT >= 30) {
-            button.setStateDescription(selected ? "Selected" : "Not selected");
-        }
+        String state = getString(selected ? R.string.settings_selected : R.string.settings_not_selected);
+        button.setContentDescription(UiTranslations.text(this, label) + ", " + state);
+        if (Build.VERSION.SDK_INT >= 30) button.setStateDescription(state);
     }
 
     StateListDrawable segmentedButtonBackground(boolean selected) {
@@ -1689,11 +1688,11 @@ abstract class WeatherOverviewRenderingActivity extends MinuteForecastRenderingA
             details.yesterdayHost = detailHost;
             details.yesterdayDisclosure = disclosure;
             details.yesterdayTile = new YesterdayTile(row, date, (FrameLayout) glyph, temperatures);
-            row.setContentDescription(dayText + ", " + UiTranslations.text(this, "Hourly"));
+            row.setContentDescription(dayText + ", " + UiTranslations.text(this, "Show hourly details"));
         } else {
-            row.setContentDescription(dailyRowDescription(dayText,
+            row.setContentDescription(dailyRowDescription(UiTranslations.text(this, dayText),
                     sceneForForecastDay(day, dayIndex).condition, high, low, probability)
-                    + ". Tap for hourly details and to preview this day; tap again to return to now.");
+                    + ". " + UiTranslations.text(this, "Show hourly details"));
             forecastPreview.registerTarget(row, dayPreviewKey(dayIndex));
             details.registerListDetailHost(dayIndex, detailHost, disclosure);
         }
@@ -1707,20 +1706,11 @@ abstract class WeatherOverviewRenderingActivity extends MinuteForecastRenderingA
         return (high == null ? "—" : high + "°") + "  " + (low == null ? "—" : low + "°");
     }
 
-    private String dailyRowDescription(String label, String condition, Integer high, Integer low,
-            int probability) {
-        StringBuilder out = new StringBuilder(label);
-        if (!"Unknown".equals(condition)) out.append(", ").append(condition);
-        if (high != null) out.append(", high ").append(high).append(" degrees ").append(temperatureUnitWord());
-        if (low != null) out.append(", low ").append(low).append(" degrees ").append(temperatureUnitWord());
-        if (probability >= 0) out.append(", ").append(probability).append(" percent precipitation");
-        return out.toString();
-    }
-
     private record YesterdayTile(View row, TextView caption, FrameLayout glyph, TextView temperatures) { }
 
     private String yesterdayLabel() {
-        return RelativeDateTimeFormatter.getInstance(ULocale.getDefault(), null,
+        Locale locale = getResources().getConfiguration().getLocales().get(0);
+        return RelativeDateTimeFormatter.getInstance(ULocale.forLocale(locale), null,
                 RelativeDateTimeFormatter.Style.LONG, DisplayContext.CAPITALIZATION_FOR_BEGINNING_OF_SENTENCE)
                 .format(RelativeDateTimeFormatter.Direction.LAST, RelativeDateTimeFormatter.AbsoluteUnit.DAY);
     }
@@ -1789,7 +1779,8 @@ abstract class WeatherOverviewRenderingActivity extends MinuteForecastRenderingA
             }
 
             JSONObject day = days.optJSONObject(index);
-            String label = index == 0 ? "Today" : dayLabel(day, zone);
+            String label = index == 0 ? UiTranslations.text(WeatherOverviewRenderingActivity.this, "Today")
+                    : dayLabel(day, zone);
             forecastPreview.select(
                     dayPreviewKey(index),
                     label,
@@ -1848,7 +1839,7 @@ abstract class WeatherOverviewRenderingActivity extends MinuteForecastRenderingA
             }
             tile.row().setContentDescription(dailyRowDescription(yesterdayLabel() + ", " + caption,
                     description(weather), summary.high(), summary.low(), -1)
-                    + ". Tap for hourly details.");
+                    + ". " + UiTranslations.text(WeatherOverviewRenderingActivity.this, "Show hourly details"));
         }
 
         private void onHistoryChanged() {
@@ -1928,10 +1919,11 @@ abstract class WeatherOverviewRenderingActivity extends MinuteForecastRenderingA
         JSONObject day = yesterday || days == null ? null : days.optJSONObject(dayIndex);
         LocalDate targetDate = yesterday ? coordinator.yesterdayDate : displayDate(day, zone);
         boolean isToday = today.equals(targetDate);
-        String dayName = yesterday ? yesterdayLabel() : isToday ? "Today" : dayLabel(day, zone);
+        String dayName = yesterday ? yesterdayLabel()
+                : isToday ? UiTranslations.text(this, "Today") : dayLabel(day, zone);
         String date = targetDate == null ? ""
                 : targetDate.format(DateTimeFormatter.ofPattern("d MMM", Locale.getDefault()));
-        TextView title = text(UiTranslations.text(this, dayName)
+        TextView title = text(dayName
                 + (date.isEmpty() ? "" : "  " + date) + "  •  "
                 + UiTranslations.text(this, "Hourly"), 14, true, WHITE);
         detail.addView(title);
@@ -1963,14 +1955,14 @@ abstract class WeatherOverviewRenderingActivity extends MinuteForecastRenderingA
 
             ProgressBar spinner = new ProgressBar(this);
             spinner.setIndeterminate(true);
-            spinner.setContentDescription("Loading hourly details for " + dayName);
+            spinner.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
             loading.addView(spinner, new LinearLayout.LayoutParams(dp(22), dp(22)));
 
             TextView label = text("Loading hourly details…", 12, false, HOURLY_LABEL_COLOR);
             LinearLayout.LayoutParams labelLp = new LinearLayout.LayoutParams(-2, -2);
             labelLp.leftMargin = dp(9);
             loading.addView(label, labelLp);
-            loading.setContentDescription("Loading hourly details for " + dayName);
+            loading.setContentDescription(dayName + ", " + label.getText());
             detail.addView(loading, new LinearLayout.LayoutParams(-1, dp(46)));
             return detail;
         }
@@ -2007,7 +1999,7 @@ abstract class WeatherOverviewRenderingActivity extends MinuteForecastRenderingA
 
             if (hourlyRetryPossible(state)) {
                 Button retry = button("Retry hourly details");
-                retry.setContentDescription("Retry hourly details for " + dayName);
+                retry.setContentDescription(retry.getText() + ", " + dayName);
                 retry.setOnClickListener(v -> ensureHourlyCoverage(targetDate, coordinator, true));
                 LinearLayout.LayoutParams retryLp = new LinearLayout.LayoutParams(-2, dp(40));
                 retryLp.topMargin = dp(8);
@@ -2044,7 +2036,7 @@ abstract class WeatherOverviewRenderingActivity extends MinuteForecastRenderingA
             temperatureLabels[i] = temperature == null ? "—" : temperature + "°";
             keys[i] = hourPreviewKey(hour);
             descriptions[i] = (i == currentHour ? times[i] + ", " : "")
-                    + hourPreviewLabel(hour, zone) + ", " + description(hour)
+                    + hourPreviewLabel(hour, zone) + ", " + UiTranslations.text(this, description(hour))
                     + ", " + (temperature == null ? "—" : temperature + temperatureUnitSymbol())
                     + ", " + UiTranslations.text(this, "Precipitation") + " " + formatQpf(qpf);
         }
@@ -2155,19 +2147,16 @@ abstract class WeatherOverviewRenderingActivity extends MinuteForecastRenderingA
 
         if (!yesterday && !covered && state != null && isHourlyStateCurrent(state)) {
             boolean failed = state.aggregate.optBoolean(HOURLY_LOAD_ERROR, false);
-            TextView partial = text(
-                    loadingTarget ? "Loading more hourly details…"
-                            : failed ? "Returned hours are partial because hourly continuation stopped."
-                            : "Only the returned hours for this day are available.",
-                    12,
-                    false,
-                    HOURLY_LABEL_COLOR);
+            String message = UiTranslations.text(this, loadingTarget ? "Loading hourly details…"
+                    : "Hourly data for this day is incomplete.");
+            if (failed) message += " " + UiTranslations.text(this, "Couldn’t load hourly details.");
+            TextView partial = text(message, 12, false, HOURLY_LABEL_COLOR);
             LinearLayout.LayoutParams partialLp = new LinearLayout.LayoutParams(-1, -2);
             partialLp.topMargin = dp(6);
             detail.addView(partial, partialLp);
             if (!loadingTarget && hourlyRetryPossible(state)) {
                 Button retry = button("Retry hourly details");
-                retry.setContentDescription("Retry remaining hourly details for " + dayName);
+                retry.setContentDescription(retry.getText() + ", " + dayName);
                 retry.setOnClickListener(v -> ensureHourlyCoverage(targetDate, coordinator));
                 LinearLayout.LayoutParams retryLp = new LinearLayout.LayoutParams(-2, dp(40));
                 retryLp.topMargin = dp(7);
@@ -2182,7 +2171,7 @@ abstract class WeatherOverviewRenderingActivity extends MinuteForecastRenderingA
             DayDetailCoordinator coordinator, boolean showEmpty) {
         if (history == null) return;
         String message = history.loading ? "Loading weather history…" : history.error;
-        if (message == null && showEmpty) message = "No historical hourly data is available for this location.";
+        if (message == null && showEmpty) message = HourlyWeatherHistory.UNAVAILABLE;
         if (message == null) return;
         TextView label = text(message, 12, false, HOURLY_LABEL_COLOR);
         label.setPadding(0, dp(10), 0, dp(2));

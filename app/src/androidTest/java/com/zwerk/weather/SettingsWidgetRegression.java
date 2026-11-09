@@ -170,7 +170,7 @@ public final class SettingsWidgetRegression extends Instrumentation {
                 index -> selected[0] = index);
         chart.updateYesterday(summary, "Partial");
         check(chart.getContentDescription().toString().contains("Yesterday, Partial")
-                && chart.getContentDescription().toString().contains("high 11"),
+                && chart.getContentDescription().toString().contains(UiTranslations.text(host, "High") + " 11"),
                 "The historical range is described on the Line chart");
         chart.measure(View.MeasureSpec.makeMeasureSpec(1100, View.MeasureSpec.EXACTLY),
                 View.MeasureSpec.makeMeasureSpec(520, View.MeasureSpec.EXACTLY));

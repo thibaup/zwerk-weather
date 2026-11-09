@@ -2185,7 +2185,7 @@ final class SettingsScreen extends android.content.ContextWrapper {
         toggle.setShowText(false);
         toggle.setChecked(getSharedPreferences(UI_PREFS, MODE_PRIVATE)
                 .getBoolean(preferenceKey, defaultValue));
-        toggle.setContentDescription(title);
+        toggle.setContentDescription(UiTranslations.text(this, title));
         toggle.setMinimumWidth(dp(48));
         toggle.setMinimumHeight(dp(48));
         applySwitchPalette(toggle);

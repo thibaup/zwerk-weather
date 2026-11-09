@@ -299,6 +299,18 @@ abstract class ForecastViewsActivity extends WeatherInteractionViewsActivity {
                 : SceneSpec.fromWeather(selected, fallbackDaytime);
     }
 
+    String dailyRowDescription(String label, String condition, Integer high, Integer low, int probability) {
+        StringBuilder out = new StringBuilder(label);
+        if (!"Unknown".equals(condition)) out.append(", ").append(UiTranslations.text(this, condition));
+        if (high != null) out.append(", ").append(UiTranslations.text(this, "High"))
+                .append(' ').append(high).append(temperatureUnitSymbol());
+        if (low != null) out.append(", ").append(UiTranslations.text(this, "Low"))
+                .append(' ').append(low).append(temperatureUnitSymbol());
+        if (probability >= 0) out.append(", ").append(UiTranslations.text(this, "Precipitation"))
+                .append(' ').append(probability).append('%');
+        return out.toString();
+    }
+
     final class ForecastChartView extends View {
         private final JSONArray days;
         static final int MAX_FORECAST_DAYS = 10;
@@ -459,7 +471,7 @@ abstract class ForecastViewsActivity extends WeatherInteractionViewsActivity {
             }
             previewDay = chartColumn(selected);
             if (Build.VERSION.SDK_INT >= 30) {
-                setStateDescription(previewDay >= 0 ? "Previewing" : null);
+                setStateDescription(previewDay >= 0 ? UiTranslations.text(getContext(), "Previewing") : null);
             }
             invalidate();
         }
@@ -500,9 +512,7 @@ abstract class ForecastViewsActivity extends WeatherInteractionViewsActivity {
             JSONObject day = forecastDay(index);
             String condition = index < 0
                     ? description(yesterday.representativeHour()) : sceneForForecastDay(day, index).condition;
-            announceForAccessibility(columnLabel(index, day)
-                    + ("Unknown".equals(condition) ? "" : ", " + condition)
-                    + ". Press select to show hourly details.");
+            announceForAccessibility(dailyRowDescription(columnLabel(index, day), condition, null, null, -1));
         }
 
         @Override
@@ -514,7 +524,8 @@ abstract class ForecastViewsActivity extends WeatherInteractionViewsActivity {
                 textPaint.setTextSize(dp(14));
                 textPaint.setTypeface(Typeface.create("sans-serif", Typeface.NORMAL));
                 textPaint.setTextAlign(Paint.Align.CENTER);
-                canvas.drawText("Daily forecast unavailable", getWidth() / 2f, getHeight() / 2f, textPaint);
+                canvas.drawText(UiTranslations.text(getContext(), "Daily forecast unavailable"),
+                        getWidth() / 2f, getHeight() / 2f, textPaint);
                 return;
             }
 
@@ -708,8 +719,10 @@ abstract class ForecastViewsActivity extends WeatherInteractionViewsActivity {
 
         private String chartAccessibilityDescription() {
             int count = columnCount();
-            if (count == 0) return "Daily forecast unavailable";
-            StringBuilder out = new StringBuilder("Daily temperatures and precipitation forecast. ");
+            Context context = getContext();
+            if (count == 0) return UiTranslations.text(context, "Daily forecast unavailable");
+            StringBuilder out = new StringBuilder(UiTranslations.text(context, "Multi-day forecast"));
+            out.append(". ");
             for (int i = 0; i < count; i++) {
                 int index = dayIndex(i);
                 JSONObject day = forecastDay(index);
@@ -717,24 +730,15 @@ abstract class ForecastViewsActivity extends WeatherInteractionViewsActivity {
                         : degreesOrNull(day == null ? null : day.optJSONObject("maxTemperature"));
                 Integer low = index < 0 ? yesterday.low()
                         : degreesOrNull(day == null ? null : day.optJSONObject("minTemperature"));
-                int p = dayProbability(day);
-                if (i > 0) out.append("; ");
-                out.append(columnLabel(index, day));
-                if (index < 0 && historyStatus != null) out.append(", ").append(historyStatus);
+                String label = columnLabel(index, day);
+                if (index < 0 && historyStatus != null) label += ", " + historyStatus;
                 String condition = index < 0
                         ? description(yesterday.representativeHour()) : sceneForForecastDay(day, index).condition;
-                if (!"Unknown".equals(condition)) out.append(", ").append(condition);
-                if (high != null) {
-                    out.append(", high ").append(high)
-                            .append(" degrees ").append(temperatureUnitWord());
-                }
-                if (low != null) {
-                    out.append(", low ").append(low)
-                            .append(" degrees ").append(temperatureUnitWord());
-                }
-                if (p >= 0) out.append(", precipitation ").append(p).append(" percent");
+                if (i > 0) out.append("; ");
+                out.append(dailyRowDescription(label, condition, high, low, dayProbability(day)));
             }
-            out.append(". Use left and right to move the day cursor, then press select for hourly details.");
+            out.append(". ").append(UiTranslations.text(context,
+                    "Use the left and right keys to choose a day. Press Select for hourly details."));
             return out.toString();
         }
     }

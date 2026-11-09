@@ -447,10 +447,10 @@ public final class WidgetConfigurationActivity extends Activity {
 
     private String widgetName() {
         switch (kind) {
-            case MINI: return label("Zwerk Weather · Mini");
-            case SMALL: return label("Zwerk Weather · Small");
-            case RAIN: return label("Zwerk Rain");
-            default: return label("Zwerk Weather");
+            case MINI: return getString(R.string.weather_mini_widget_name);
+            case SMALL: return getString(R.string.weather_small_widget_name);
+            case RAIN: return getString(R.string.precipitation_widget_name);
+            default: return getString(R.string.weather_widget_name);
         }
     }
 
