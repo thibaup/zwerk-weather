@@ -23,6 +23,7 @@ import java.net.URL;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Locale;
@@ -37,11 +38,13 @@ final class RadarDataClient {
             "https://api.rainviewer.com/public/weather-maps.json";
     private static final String OSM_TILE_ROOT = "https://tile.openstreetmap.org/";
     private static final String USER_AGENT =
-            "ZwerkWeather/1.5 (+https://github.com/thibaup/zwerk-weather)";
+            "ZwerkWeather/" + BuildConfig.VERSION_NAME + " (+https://github.com/thibaup/zwerk-weather)";
     private static final long TIMELINE_AGE_MS = 10L * 60L * 1000L;
     private static final long RADAR_TILE_AGE_MS = 3L * 60L * 60L * 1000L;
     // OSM requires at least seven days if HTTP cache headers are not interpreted.
     private static final long OSM_TILE_AGE_MS = 14L * 24L * 60L * 60L * 1000L;
+    private static final long MAX_DISK_CACHE_BYTES = 50L * 1024L * 1024L;
+    private static volatile boolean legacyCacheCleaned;
     private static final int MAX_RADAR_REQUESTS_PER_MINUTE = 80;
     private static final RadarRequestLimiter RADAR_LIMITER =
             new RadarRequestLimiter(MAX_RADAR_REQUESTS_PER_MINUTE, 60_000L);
@@ -138,8 +141,8 @@ final class RadarDataClient {
     RadarDataClient(Context context) {
         this.context = context.getApplicationContext();
         this.context.getSharedPreferences("WEATHER_UI", Context.MODE_PRIVATE).edit().remove("radar_source").apply();
-        tileDirectory = new File(this.context.getFilesDir(), "radar_tiles_v1");
-        timelineFile = new File(this.context.getFilesDir(), "radar_timeline_v1.json");
+        tileDirectory = new File(this.context.getCacheDir(), "radar_tiles_v1");
+        timelineFile = new File(this.context.getCacheDir(), "radar_timeline_v1.json");
         try {
             metadataIo.execute(this::cleanupTiles);
         } catch (RejectedExecutionException ignored) {
@@ -200,7 +203,8 @@ final class RadarDataClient {
         String message = RADAR_LIMITER.isServerLimited(now)
                 ? "Radar service rate limit · retrying in %d s"
                 : "Radar request limit · retrying in %d s";
-        return String.format(Locale.getDefault(), UiTranslations.text(context, message), (delay + 999L) / 1000L);
+        return String.format(AppLocaleManager.activeLocale(context),
+                UiTranslations.text(context, message), (delay + 999L) / 1000L);
     }
 
     void setTileDemand(Map<String, Integer> base, Map<String, Integer> radar) {
@@ -222,6 +226,13 @@ final class RadarDataClient {
         synchronized (lock) {
             failedImagesUntil.clear();
             lastRadarError = "";
+        }
+    }
+
+    void trimMemory() {
+        synchronized (lock) {
+            memory.evictAll();
+            baseMemory.evictAll();
         }
     }
 
@@ -616,18 +627,66 @@ final class RadarDataClient {
         }
     }
 
+    private static final class CachedTile {
+        final File file;
+        final long lastModified;
+        final long length;
+
+        CachedTile(File file, long lastModified, long length) {
+            this.file = file;
+            this.lastModified = lastModified;
+            this.length = length;
+        }
+    }
+
     private void cleanupTiles() {
+        if (!legacyCacheCleaned) {
+            legacyCacheCleaned = true;
+            File legacyDir = new File(context.getFilesDir(), "radar_tiles_v1");
+            if (legacyDir.exists()) deleteRecursively(legacyDir);
+            File legacyTimeline = new File(context.getFilesDir(), "radar_timeline_v1.json");
+            if (legacyTimeline.exists()) legacyTimeline.delete();
+        }
         File[] files = tileDirectory.listFiles();
         if (files == null) return;
         long now = System.currentTimeMillis();
+        ArrayList<CachedTile> retained = new ArrayList<>();
+        long totalBytes = 0L;
         for (File file : files) {
             if (!file.isFile()) continue;
             if (file.getName().startsWith("google_")) { file.delete(); continue; }
             long maxAge = file.getName().startsWith("osm_")
                     ? OSM_TILE_AGE_MS : RADAR_TILE_AGE_MS;
-            long age = now - file.lastModified();
-            if (age < 0L || age >= maxAge) file.delete();
+            long modified = file.lastModified();
+            long age = now - modified;
+            if (age < 0L || age >= maxAge) {
+                file.delete();
+                continue;
+            }
+            long length = Math.max(0L, file.length());
+            retained.add(new CachedTile(file, modified, length));
+            totalBytes += length;
         }
+        if (totalBytes > MAX_DISK_CACHE_BYTES) {
+            retained.sort(Comparator.comparingLong(item -> item.lastModified));
+            for (CachedTile item : retained) {
+                if (totalBytes <= MAX_DISK_CACHE_BYTES) break;
+                if (item.file.delete() || !item.file.exists()) {
+                    totalBytes -= item.length;
+                }
+            }
+        }
+    }
+
+    private static void deleteRecursively(File target) {
+        if (target == null || !target.exists()) return;
+        if (target.isDirectory()) {
+            File[] children = target.listFiles();
+            if (children != null) {
+                for (File child : children) deleteRecursively(child);
+            }
+        }
+        target.delete();
     }
 
     private byte[] fetch(String urlText, int maxBytes, boolean radar) throws Exception {

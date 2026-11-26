@@ -17,17 +17,19 @@ import java.util.List;
 /** Renders the launcher widget at its requested size inside a non-interactive preview. */
 @SuppressLint("ViewConstructor") // Created by the configuration screen with launcher dimensions.
 final class WidgetConfigurationPreview extends ViewGroup {
+    enum Mode { WEATHER, RAIN, FORECAST }
+
     private final int widthDp;
     private final int heightDp;
     private final int widgetWidth;
     private final int widgetHeight;
-    private final boolean rain;
+    private final Mode mode;
     final WeatherWidgetProvider.WidgetMode weatherMode;
 
-    WidgetConfigurationPreview(Context context, Bundle options, boolean rain,
+    WidgetConfigurationPreview(Context context, Bundle options, Mode mode,
             WeatherWidgetProvider.WidgetMode defaultMode, int defaultWidth, int defaultHeight) {
         super(context);
-        this.rain = rain;
+        this.mode = mode;
         boolean landscape = getResources().getConfiguration().orientation
                 == Configuration.ORIENTATION_LANDSCAPE;
         float width = options.getInt(landscape ? AppWidgetManager.OPTION_APPWIDGET_MAX_WIDTH
@@ -83,8 +85,11 @@ final class WidgetConfigurationPreview extends ViewGroup {
         CityManagerActivity.LocationSnapshot city = config.city(context);
         int previewId = AppWidgetManager.INVALID_APPWIDGET_ID;
         RemoteViews views;
-        if (rain) {
+        if (mode == Mode.RAIN) {
             views = PrecipitationWidgetProvider.buildForSize(
+                    context, widthDp, heightDp, previewId, config, city);
+        } else if (mode == Mode.FORECAST) {
+            views = CombinedForecastWidgetProvider.buildForSize(
                     context, widthDp, heightDp, previewId, config, city);
         } else {
             SharedPreferences snapshot = WidgetConfiguration.snapshot(context, city == null ? "" : city.id);

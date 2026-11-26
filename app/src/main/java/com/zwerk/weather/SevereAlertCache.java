@@ -8,16 +8,19 @@ import org.json.JSONObject;
 import java.io.File;
 import java.io.FileOutputStream;
 import java.nio.charset.StandardCharsets;
-import java.util.Locale;
 
 /** A short-lived, per-location cache for official alerts, including an empty alert list. */
 final class SevereAlertCache {
     static final long MAX_AGE_MILLIS = 15L * 60L * 1000L;
     private static final String PREFIX = "weather_alert_cache_v1_";
+    private static final long CLEANUP_INTERVAL_MS = 60L * 60L * 1000L;
+    private static volatile boolean legacyCleaned;
+    private static volatile long lastCleanupAtMs;
     private final Context context;
 
     SevereAlertCache(Context context) {
-        this.context = context.getApplicationContext();
+        Context app = context.getApplicationContext();
+        this.context = app == null ? context : app;
     }
 
     static String key(double lat, double lon, String language) {
@@ -40,7 +43,36 @@ final class SevereAlertCache {
         }
     }
 
+    synchronized void cleanup() {
+        if (!legacyCleaned) {
+            legacyCleaned = true;
+            File filesDir = context.getFilesDir();
+            File cacheDir = context.getCacheDir();
+            if (filesDir != null && !filesDir.equals(cacheDir)) {
+                CacheKeys.deleteLegacyFiles(filesDir, PREFIX);
+            }
+        }
+        long now = System.currentTimeMillis();
+        if (lastCleanupAtMs > 0L && now >= lastCleanupAtMs
+                && now - lastCleanupAtMs < CLEANUP_INTERVAL_MS) {
+            return;
+        }
+        lastCleanupAtMs = now;
+        File[] files = context.getCacheDir().listFiles();
+        if (files == null) return;
+        for (File file : files) {
+            if (file == null || !file.isFile()) continue;
+            String name = file.getName();
+            if (!name.startsWith(PREFIX)) continue;
+            long modified = file.lastModified();
+            if (modified <= 0L || modified > now || now - modified >= MAX_AGE_MILLIS) {
+                file.delete();
+            }
+        }
+    }
+
     Entry read(double lat, double lon, String language) {
+        cleanup();
         File file = fileFor(lat, lon, language);
         if (!file.isFile()) return null;
         try {
@@ -58,6 +90,7 @@ final class SevereAlertCache {
 
     void write(double lat, double lon, String language, JSONObject response) {
         if (response == null) return;
+        cleanup();
         File file = fileFor(lat, lon, language);
         AtomicFile atomic = new AtomicFile(file);
         FileOutputStream out = null;
@@ -77,7 +110,6 @@ final class SevereAlertCache {
 
     private File fileFor(double lat, double lon, String language) {
         String identity = key(lat, lon, language);
-        return new File(context.getFilesDir(), PREFIX
-                + String.format(Locale.US, "%08x", identity.hashCode()) + ".json");
+        return new File(context.getCacheDir(), PREFIX + CacheKeys.sha256Hex16(identity) + ".json");
     }
 }

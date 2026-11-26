@@ -19,12 +19,22 @@ final class WidgetBackground {
 
     static void apply(Context context, RemoteViews views, int sceneId,
             String conditionType, boolean daytime) {
+        apply(context, views, sceneId, conditionType, daytime, null);
+    }
+
+    static void apply(Context context, RemoteViews views, int sceneId,
+            String conditionType, boolean daytime, WidgetConfiguration config) {
         SharedPreferences prefs = context.getSharedPreferences(
                 WeatherPreferences.PREFS_NAME, Context.MODE_PRIVATE);
-        int transparency = Math.max(0, Math.min(100,
-                prefs.getInt(WeatherWidgetProvider.PREF_TRANSPARENCY, 15)));
-        boolean gradient = prefs.getBoolean(WeatherWidgetProvider.PREF_GRADIENT, true);
-        String colour = prefs.getString(WeatherWidgetProvider.PREF_COLOUR, "weather");
+        int transparency = config != null && config.transparencyPercent >= 0
+                ? config.transparencyPercent
+                : Math.max(0, Math.min(100, prefs.getInt(WeatherWidgetProvider.PREF_TRANSPARENCY, 15)));
+        boolean gradient = config != null && config.backgroundGradient >= 0
+                ? config.backgroundGradient > 0
+                : prefs.getBoolean(WeatherWidgetProvider.PREF_GRADIENT, true);
+        String colour = config != null && !config.backgroundMode.isEmpty()
+                ? config.backgroundMode
+                : prefs.getString(WeatherWidgetProvider.PREF_COLOUR, "weather");
         String key = WeatherWidgetProvider.conditionKey(conditionType);
         int background = R.drawable.widget_background_blue;
         int top = DEFAULT_COLOUR;
@@ -46,7 +56,9 @@ final class WidgetBackground {
         if ("custom".equals(colour)) {
             background = gradient ? R.drawable.widget_background_custom
                     : R.drawable.widget_background_blue;
-            top = prefs.getInt(WeatherWidgetProvider.PREF_CUSTOM_COLOUR, DEFAULT_COLOUR)
+            top = (config != null && WidgetConfiguration.BG_CUSTOM.equals(config.backgroundMode)
+                    ? config.customColor
+                    : prefs.getInt(WeatherWidgetProvider.PREF_CUSTOM_COLOUR, DEFAULT_COLOUR))
                     | 0xff000000;
         }
         views.setImageViewResource(sceneId, background);

@@ -1,7 +1,6 @@
 package com.zwerk.weather;
 
 import android.app.Activity;
-import android.app.AlertDialog;
 import android.content.Context;
 import android.content.Intent;
 import android.content.SharedPreferences;
@@ -195,6 +194,20 @@ final class UpdateChecker {
         return normalized.trim();
     }
 
+    private static boolean isAllowedUpdateUrl(String rawUrl) {
+        if (rawUrl == null || rawUrl.trim().isEmpty()) return false;
+        try {
+            Uri uri = Uri.parse(rawUrl.trim());
+            if (!"https".equalsIgnoreCase(uri.getScheme())) return false;
+            String host = uri.getHost();
+            if (host == null || host.trim().isEmpty()) return false;
+            String lower = host.toLowerCase(Locale.ROOT);
+            return "github.com".equals(lower) || lower.endsWith(".githubusercontent.com");
+        } catch (Exception ignored) {
+            return false;
+        }
+    }
+
     private static void showUpdateDialog(
             Activity activity,
             String currentVersion,
@@ -203,20 +216,27 @@ final class UpdateChecker {
                 + UiTranslations.text(activity, "Installed version") + ": "
                 + currentVersion + "\n"
                 + UiTranslations.text(activity, "Latest version") + ": " + update.version;
-        new AlertDialog.Builder(activity)
-                .setTitle(UiTranslations.text(activity, "Update available"))
-                .setMessage(message)
-                .setNegativeButton(UiTranslations.text(activity, "Later"), null)
-                .setPositiveButton(UiTranslations.text(activity,
-                        update.directApk ? "Download APK" : "View release"), (dialog, which) -> {
+        GlassDialog.showConfirm(
+                activity,
+                UiTranslations.text(activity, "Update available"),
+                message,
+                UiTranslations.text(activity, "Later"),
+                UiTranslations.text(activity,
+                        update.directApk ? "Download APK" : "View release"),
+                false,
+                () -> {
+                    if (!isAllowedUpdateUrl(update.url)) {
+                        Toast.makeText(activity, UiTranslations.text(activity,
+                                "Couldn’t open the download link."), Toast.LENGTH_LONG).show();
+                        return;
+                    }
                     try {
                         activity.startActivity(new Intent(Intent.ACTION_VIEW, Uri.parse(update.url)));
                     } catch (Exception ignored) {
                         Toast.makeText(activity, UiTranslations.text(activity,
                                 "Couldn’t open the download link."), Toast.LENGTH_LONG).show();
                     }
-                })
-                .show();
+                });
     }
 
     private static final class UpdateInfo {

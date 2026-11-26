@@ -1,11 +1,11 @@
 package com.zwerk.weather;
 
 import android.app.Activity;
-import android.app.AlertDialog;
 import android.app.Dialog;
 import android.content.Context;
 import android.content.Intent;
 import android.graphics.Color;
+import android.graphics.Rect;
 import android.graphics.Typeface;
 import android.graphics.drawable.ColorDrawable;
 import android.graphics.drawable.GradientDrawable;
@@ -16,7 +16,6 @@ import android.text.InputType;
 import android.view.Gravity;
 import android.view.View;
 import android.view.Window;
-import android.view.WindowInsets;
 import android.view.WindowInsetsController;
 import android.view.WindowManager;
 import android.widget.Button;
@@ -24,6 +23,7 @@ import android.widget.EditText;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
 import android.widget.TextView;
+import android.widget.Toast;
 
 import java.util.Locale;
 
@@ -126,8 +126,7 @@ public final class ApiUsageLimitsActivity extends Activity {
         openMeteoNote.setPadding(dp(5), dp(4), dp(5), dp(7));
         page.addView(openMeteoNote);
         Button openMeteoLimits = button("Open-Meteo limits ↗");
-        openMeteoLimits.setOnClickListener(v -> startActivity(
-                new Intent(Intent.ACTION_VIEW, Uri.parse(OPEN_METEO_LIMITS_URL))));
+        openMeteoLimits.setOnClickListener(v -> openExternalUrl(OPEN_METEO_LIMITS_URL));
         page.addView(openMeteoLimits, new LinearLayout.LayoutParams(-1, dp(50)));
 
         addHeading(page, "RADAR & MAP TILES");
@@ -146,8 +145,7 @@ public final class ApiUsageLimitsActivity extends Activity {
         page.addView(note);
 
         Button pricing = button("View Google pricing ↗");
-        pricing.setOnClickListener(v -> startActivity(
-                new Intent(Intent.ACTION_VIEW, Uri.parse(PRICING_URL))));
+        pricing.setOnClickListener(v -> openExternalUrl(PRICING_URL));
         LinearLayout.LayoutParams actionParams = new LinearLayout.LayoutParams(-1, dp(50));
         actionParams.topMargin = dp(8);
         page.addView(pricing, actionParams);
@@ -160,17 +158,8 @@ public final class ApiUsageLimitsActivity extends Activity {
 
         setContentView(scroll);
         scroll.setOnApplyWindowInsetsListener((v, insets) -> {
-            int top = 0;
-            int bottom = 0;
-            if (Build.VERSION.SDK_INT >= 30) {
-                android.graphics.Insets bars = insets.getInsets(WindowInsets.Type.systemBars());
-                top = bars.top;
-                bottom = bars.bottom;
-            } else {
-                top = insets.getSystemWindowInsetTop();
-                bottom = insets.getSystemWindowInsetBottom();
-            }
-            page.setPadding(dp(18), top + dp(8), dp(18), bottom + dp(30));
+            Rect safe = WeatherSystemBars.safeInsets(insets);
+            page.setPadding(dp(18) + safe.left, safe.top + dp(8), dp(18) + safe.right, safe.bottom + dp(30));
             return insets;
         });
         scroll.requestApplyInsets();
@@ -222,7 +211,7 @@ public final class ApiUsageLimitsActivity extends Activity {
         String today = String.format(Locale.getDefault(), UiTranslations.text(this, "Today  %,d / %s"),
                 usage.today, dailyLimitLabel(usage.limits.daily));
         String month = String.format(Locale.getDefault(), UiTranslations.text(this, "This month  %,d / %s"),
-                usage.month, ApiRequestBudgetManager.formatLimit(usage.limits.monthly));
+                usage.month, formatLimitLabel(usage.limits.monthly));
         TextView counters = text(today + "\n" + month, 14f, PRIMARY);
         counters.setLineSpacing(dp(5), 1f);
         counters.setPadding(0, dp(11), 0, 0);
@@ -257,7 +246,7 @@ public final class ApiUsageLimitsActivity extends Activity {
                 usage.today, dailyLimitLabel(usage.dailyLimit));
         String month = String.format(Locale.getDefault(),
                 UiTranslations.text(this, "This month  %,d / %s"),
-                usage.month, ApiRequestBudgetManager.formatLimit(usage.monthlyLimit));
+                usage.month, formatLimitLabel(usage.monthlyLimit));
         TextView counters = text(today + "\n" + month, 14f, PRIMARY);
         counters.setLineSpacing(dp(5), 1f);
         counters.setPadding(0, dp(11), 0, 0);
@@ -268,7 +257,7 @@ public final class ApiUsageLimitsActivity extends Activity {
         StringBuilder breakdown = new StringBuilder();
         for (int i = 0; i < categories.length; i++) {
             if (i > 0) breakdown.append(i == 2 ? "\n" : " · ");
-            breakdown.append(categories[i].label).append(' ')
+            breakdown.append(UiTranslations.text(this, categories[i].label)).append(' ')
                     .append(String.format(Locale.getDefault(), "%,d", usage.todayByCategory[i]));
         }
         TextView details = text(breakdown.toString(), 12.5f, SECONDARY);
@@ -362,14 +351,31 @@ public final class ApiUsageLimitsActivity extends Activity {
         usage.setLineSpacing(dp(5), 1f);
         usage.setPadding(0, dp(11), 0, 0);
         card.addView(usage);
-        card.setOnClickListener(v -> startActivity(new Intent(Intent.ACTION_VIEW,
-                Uri.parse(rainViewer ? "https://www.rainviewer.com/api.html"
-                        : "https://operations.osmfoundation.org/policies/tiles/"))));
+        card.setOnClickListener(v -> openExternalUrl(rainViewer
+                ? "https://www.rainviewer.com/api.html"
+                : "https://operations.osmfoundation.org/policies/tiles/"));
         page.addView(card, cardParams());
     }
 
-    private static String dailyLimitLabel(int value) {
-        return value < 0 ? "No daily cap" : ApiRequestBudgetManager.formatLimit(value);
+    private void openExternalUrl(String url) {
+        try {
+            startActivity(new Intent(Intent.ACTION_VIEW, Uri.parse(url)));
+        } catch (Exception ignored) {
+            Toast.makeText(this,
+                    UiTranslations.text(this, "Couldn’t open link."),
+                    Toast.LENGTH_SHORT).show();
+        }
+    }
+
+    private String dailyLimitLabel(int value) {
+        return value < 0
+                ? UiTranslations.text(this, "No daily cap")
+                : formatLimitLabel(value);
+    }
+
+    private String formatLimitLabel(int value) {
+        String raw = ApiRequestBudgetManager.formatLimit(value);
+        return "Unlimited".equals(raw) ? UiTranslations.text(this, "Unlimited") : raw;
     }
 
     private void editLimits(
@@ -526,18 +532,20 @@ public final class ApiUsageLimitsActivity extends Activity {
     }
 
     private void confirmReset() {
-        new AlertDialog.Builder(this)
-                .setTitle(UiTranslations.text(this, "Reset usage counters?"))
-                .setMessage(UiTranslations.text(this,
-                        "This clears local counters only. Provider usage and billing are unaffected."))
-                .setNegativeButton(UiTranslations.text(this, "Cancel"), null)
-                .setPositiveButton(UiTranslations.text(this, "Reset"), (dialog, which) -> {
-                     ApiRequestBudgetManager.resetUsage(this);
-                     OpenMeteoRequestBudgetManager.resetUsage(this);
-                     RadarUsageCounter.reset(this);
+        GlassDialog.showConfirm(
+                this,
+                UiTranslations.text(this, "Reset usage counters?"),
+                UiTranslations.text(this,
+                        "This clears local counters only. Provider usage and billing are unaffected."),
+                UiTranslations.text(this, "Cancel"),
+                UiTranslations.text(this, "Reset"),
+                true,
+                () -> {
+                    ApiRequestBudgetManager.resetUsage(this);
+                    OpenMeteoRequestBudgetManager.resetUsage(this);
+                    RadarUsageCounter.reset(this);
                     buildUi();
-                })
-                .show();
+                });
     }
 
     private void addHeading(LinearLayout page, String value) {

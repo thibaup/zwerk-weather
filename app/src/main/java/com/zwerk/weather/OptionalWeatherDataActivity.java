@@ -1,13 +1,5 @@
 package com.zwerk.weather;
 
-import android.Manifest;
-import android.app.Notification;
-import android.app.NotificationChannel;
-import android.app.NotificationManager;
-import android.app.PendingIntent;
-import android.content.Intent;
-import android.content.pm.PackageManager;
-import android.os.Build;
 import android.util.Log;
 
 import android.system.Os;
@@ -35,8 +27,9 @@ import java.util.Locale;
 
 
 abstract class OptionalWeatherDataActivity extends WeatherApiActivity {
-    private static final String ALERT_CHANNEL_ID = "official_weather_alerts";
-    private static final String PREF_NOTIFIED_ALERT_IDS = "notified_weather_alert_ids";
+    private static final long OPTIONAL_CLEANUP_INTERVAL_MS = 60L * 60L * 1000L;
+    private static volatile boolean legacyOptionalCleaned;
+    private static volatile long lastOptionalCleanupAtMs;
     private final HashMap<String, SevereAlertCache.Entry> alertMemoryCache = new HashMap<>();
     private final HashSet<String> alertLoadsInFlight = new HashSet<>();
     private final Object[] optionalRequestLocks = new Object[16];
@@ -59,9 +52,7 @@ abstract class OptionalWeatherDataActivity extends WeatherApiActivity {
     }
 
     boolean severeAlertsEnabled() {
-        return !OpenMeteoConfig.isOpenMeteo(this)
-                && getSharedPreferences(UI_PREFS, MODE_PRIVATE)
-                .getBoolean(PREF_SEVERE_ALERTS, false);
+        return SevereAlertManager.isEnabled(this);
     }
 
     void requestEnabledOptionalDataForCurrentScope() {
@@ -173,9 +164,7 @@ abstract class OptionalWeatherDataActivity extends WeatherApiActivity {
     private JSONObject loadSevereAlerts(double lat, double lon, String language, String key)
             throws Exception {
         StringBuilder address = new StringBuilder(WEATHER_ALERTS_ENDPOINT)
-                .append("?key=")
-                .append(URLEncoder.encode(key, StandardCharsets.UTF_8.name()))
-                .append("&location.latitude=").append(lat)
+                .append("?location.latitude=").append(lat)
                 .append("&location.longitude=").append(lon);
         if (!language.isEmpty()) {
             address.append("&languageCode=")
@@ -390,9 +379,23 @@ abstract class OptionalWeatherDataActivity extends WeatherApiActivity {
 
 
     void cleanupOptionalCaches() {
-        File[] files = getFilesDir().listFiles();
-        if (files == null) return;
+        if (!legacyOptionalCleaned) {
+            legacyOptionalCleaned = true;
+            File filesDir = getFilesDir();
+            File cacheDir = getCacheDir();
+            if (filesDir != null && !filesDir.equals(cacheDir)) {
+                CacheKeys.deleteLegacyFiles(
+                        filesDir, AIR_QUALITY_CACHE_ROOT_PREFIX, POLLEN_CACHE_ROOT_PREFIX);
+            }
+        }
         long now = System.currentTimeMillis();
+        if (lastOptionalCleanupAtMs > 0L && now >= lastOptionalCleanupAtMs
+                && now - lastOptionalCleanupAtMs < OPTIONAL_CLEANUP_INTERVAL_MS) {
+            return;
+        }
+        lastOptionalCleanupAtMs = now;
+        File[] files = getCacheDir().listFiles();
+        if (files == null) return;
         for (File file : files) {
             if (file == null || !file.isFile()) continue;
             String name = file.getName();
@@ -422,8 +425,8 @@ abstract class OptionalWeatherDataActivity extends WeatherApiActivity {
         String prefix = airQuality
                 ? AIR_QUALITY_CACHE_FILE_PREFIX : POLLEN_CACHE_FILE_PREFIX;
         return new File(
-                getFilesDir(),
-                prefix + Integer.toHexString(identity.hashCode()) + OPTIONAL_CACHE_FILE_SUFFIX);
+                getCacheDir(),
+                prefix + CacheKeys.sha256Hex16(identity) + OPTIONAL_CACHE_FILE_SUFFIX);
     }
 
     OptionalDataState readFreshOptionalDataCache(
@@ -555,9 +558,8 @@ abstract class OptionalWeatherDataActivity extends WeatherApiActivity {
         body.put("extraComputations", computations);
         if (language != null && !language.isEmpty()) body.put("languageCode", language);
 
-        String address = AIR_QUALITY_CURRENT_ENDPOINT + "?key="
-                + URLEncoder.encode(key, StandardCharsets.UTF_8.name());
-        JSONObject response = requestOptionalJson("air-quality-current", address, "POST", body);
+        JSONObject response = requestOptionalJson(
+                "air-quality-current", AIR_QUALITY_CURRENT_ENDPOINT, "POST", body);
         JSONArray indexes = response.optJSONArray("indexes");
         JSONObject universal = null;
         if (indexes != null) {
@@ -605,8 +607,7 @@ abstract class OptionalWeatherDataActivity extends WeatherApiActivity {
             requireOptionalScopeCurrent(generation, lat, lon, language);
             forecast = requestOptionalJson(
                     "air-quality-forecast",
-                    AIR_QUALITY_FORECAST_ENDPOINT + "?key="
-                            + URLEncoder.encode(key, StandardCharsets.UTF_8.name()),
+                    AIR_QUALITY_FORECAST_ENDPOINT,
                     "POST",
                     forecastBody);
             forecastComplete = true;
@@ -632,9 +633,7 @@ abstract class OptionalWeatherDataActivity extends WeatherApiActivity {
             String key) throws Exception {
         requireOptionalScopeCurrent(generation, lat, lon, language);
         StringBuilder address = new StringBuilder(POLLEN_ENDPOINT)
-                .append("?key=")
-                .append(URLEncoder.encode(key, StandardCharsets.UTF_8.name()))
-                .append("&location.latitude=").append(lat)
+                .append("?location.latitude=").append(lat)
                 .append("&location.longitude=").append(lon)
                 .append("&days=5&pageSize=5&plantsDescription=false");
         if (language != null && !language.isEmpty()) {
@@ -721,6 +720,10 @@ abstract class OptionalWeatherDataActivity extends WeatherApiActivity {
         connection.setConnectTimeout(12000);
         connection.setReadTimeout(18000);
         connection.setRequestProperty("Accept", "application/json");
+        String apiKey = readApiKey();
+        if (!apiKey.isEmpty()) {
+            connection.setRequestProperty("X-Goog-Api-Key", apiKey);
+        }
         applyAndroidApiKeyRestrictionHeaders(connection);
         connection.setRequestMethod(method);
         if (requestBody != null) {
@@ -762,69 +765,7 @@ abstract class OptionalWeatherDataActivity extends WeatherApiActivity {
     }
 
     void notifyNewSevereAlert(JSONObject response) {
-        JSONArray alerts = response == null ? null : response.optJSONArray("weatherAlerts");
-        if (alerts == null || alerts.length() == 0) return;
-        if (Build.VERSION.SDK_INT >= 33
-                && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS)
-                != PackageManager.PERMISSION_GRANTED) return;
-
-        String stored = getSharedPreferences(UI_PREFS, MODE_PRIVATE)
-                .getString(PREF_NOTIFIED_ALERT_IDS, "");
-        HashSet<String> known = new HashSet<>();
-        if (stored != null && !stored.isEmpty()) {
-            for (String value : stored.split("\\n")) if (!value.isEmpty()) known.add(value);
-        }
-        JSONObject selected = null;
-        int selectedRank = -1;
-        HashSet<String> current = new HashSet<>();
-        for (int i = 0; i < alerts.length(); i++) {
-            JSONObject alert = alerts.optJSONObject(i);
-            if (alert == null) continue;
-            String id = alert.optString("alertId", "");
-            if (!id.isEmpty()) current.add(id);
-            if (id.isEmpty() || known.contains(id)) continue;
-            int rank = alertSeverityRank(alert.optString("severity", ""));
-            if (selected == null || rank > selectedRank) {
-                selected = alert;
-                selectedRank = rank;
-            }
-        }
-        if (selected == null) return;
-
-        NotificationManager manager = (NotificationManager) getSystemService(NOTIFICATION_SERVICE);
-        if (manager == null) return;
-        NotificationChannel channel = new NotificationChannel(
-                ALERT_CHANNEL_ID, UiTranslations.text(this, "Official weather alerts"),
-                NotificationManager.IMPORTANCE_HIGH);
-        channel.setDescription(UiTranslations.text(this,
-                "Public warnings from official weather authorities"));
-        manager.createNotificationChannel(channel);
-        Intent open = new Intent(this, MainActivity.class)
-                .addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP | Intent.FLAG_ACTIVITY_SINGLE_TOP);
-        PendingIntent pending = PendingIntent.getActivity(
-                this, 501, open, PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
-        String title = alertTitle(selected);
-        String area = selected.optString("areaName", "");
-        String severity = prettyEnum(selected.optString("severity", ""));
-        String bodyText = firstNonEmpty(area, severity);
-        if (!area.isEmpty() && !severity.isEmpty()) bodyText = severity + " · " + area;
-        Notification notification = new Notification.Builder(this, ALERT_CHANNEL_ID)
-                .setSmallIcon(android.R.drawable.ic_dialog_alert)
-                .setContentTitle(title.isEmpty() ? UiTranslations.text(this, "Weather alert") : title)
-                .setContentText(bodyText)
-                .setStyle(new Notification.BigTextStyle().bigText(bodyText))
-                .setCategory(Notification.CATEGORY_ALARM)
-                .setAutoCancel(true)
-                .setContentIntent(pending)
-                .build();
-        manager.notify(501, notification);
-        HashSet<String> notified = new HashSet<>();
-        for (String id : current) if (known.contains(id)) notified.add(id);
-        String selectedId = selected.optString("alertId", "");
-        if (!selectedId.isEmpty()) notified.add(selectedId);
-        getSharedPreferences(UI_PREFS, MODE_PRIVATE).edit()
-                .putString(PREF_NOTIFIED_ALERT_IDS, android.text.TextUtils.join("\n", notified))
-                .apply();
+        SevereAlertManager.notifyIfNew(this, response);
     }
 
     static int alertSeverityRank(String severity) {

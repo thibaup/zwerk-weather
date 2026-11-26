@@ -4,104 +4,33 @@ import android.os.SystemClock;
 import android.util.Log;
 import android.view.View;
 
-import android.system.Os;
-
 import org.json.JSONArray;
 import org.json.JSONObject;
 
-import java.io.BufferedReader;
-import java.io.File;
-import java.io.FileReader;
-import java.io.FileOutputStream;
-import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.time.Instant;
-import java.util.Locale;
 import java.util.concurrent.ThreadLocalRandom;
 
 abstract class MinuteForecastActivity extends OptionalWeatherDataActivity {
     /** Renders the prepared precipitation page for the current minute-forecast state. */
     protected abstract void rerenderPrecipitationPage();
+    /** Notifies subclasses when minute-forecast state changes on the UI thread. */
+    protected void onMinuteForecastUpdated() { }
     private Runnable minuteExpirationRunnable;
 
     void cleanupMinuteForecastCaches() {
-        File[] files = getFilesDir().listFiles();
-        if (files == null) return;
-        long now = System.currentTimeMillis();
-        for (File file : files) {
-            if (file == null || !file.isFile()) continue;
-            String name = file.getName();
-            if (API_KEY_FILE.equals(name) || API_KEY_TEMP_FILE.equals(name)) continue;
-            if (!name.startsWith(MINUTE_CACHE_LEGACY_PREFIX)) continue;
-            if (!name.startsWith(MINUTE_CACHE_FILE_PREFIX)) {
-                file.delete();
-                continue;
-            }
-            if (name.endsWith(MINUTE_CACHE_FILE_SUFFIX + ".tmp")) {
-                file.delete();
-                continue;
-            }
-            if (!name.endsWith(MINUTE_CACHE_FILE_SUFFIX)) {
-                file.delete();
-                continue;
-            }
-            long modified = file.lastModified();
-            if (modified <= 0L || now - modified >= MINUTE_CACHE_MAX_AGE_MILLIS) {
-                file.delete();
-            }
-        }
-    }
-
-    File minuteForecastCacheFile(double lat, double lon, String language, String source) {
-        String identity = Double.toHexString(lat)
-                + "|" + Double.toHexString(lon)
-                + "|" + (language == null ? "" : language)
-                + "|rain-v2|" + source;
-        String name = MINUTE_CACHE_FILE_PREFIX
-                + Integer.toHexString(identity.hashCode())
-                + MINUTE_CACHE_FILE_SUFFIX;
-        return new File(getFilesDir(), name);
+        // MinuteCacheStore performs throttled cleanup and one-time legacy cleanup.
     }
 
     MinuteCacheSnapshot readFreshMinuteForecastCache(
             double lat,
             double lon,
             String language, String source) {
-        cleanupMinuteForecastCaches();
-        File cacheFile = minuteForecastCacheFile(lat, lon, language, source);
-        if (!cacheFile.isFile()) return null;
-        try (BufferedReader reader = new BufferedReader(new FileReader(cacheFile))) {
-            StringBuilder body = new StringBuilder();
-            String line;
-            while ((line = reader.readLine()) != null) body.append(line);
-            if (body.length() == 0) return null;
-            JSONObject root = new JSONObject(body.toString());
-            if (root.optInt("schema", -1) != 1) {
-                cacheFile.delete();
-                return null;
-            }
-            double cachedLat = root.optDouble("latitude", Double.NaN);
-            double cachedLon = root.optDouble("longitude", Double.NaN);
-            if (Double.isNaN(cachedLat)
-                    || Double.isNaN(cachedLon)
-                    || Double.doubleToLongBits(cachedLat) != Double.doubleToLongBits(lat)
-                    || Double.doubleToLongBits(cachedLon) != Double.doubleToLongBits(lon)
-                    || !(language == null ? "" : language).equals(root.optString("language", ""))) {
-                return null;
-            }
-            long fetchedAtMillis = root.optLong("fetchedAtMillis", 0L);
-            long age = System.currentTimeMillis() - fetchedAtMillis;
-            if (fetchedAtMillis <= 0L || age < 0L || age >= MINUTE_CACHE_MAX_AGE_MILLIS) {
-                cacheFile.delete();
-                return null;
-            }
-            JSONObject raw = root.optJSONObject("response");
-            if (raw == null) return null;
-            JSONObject filtered = filterElapsedMinuteResponse(raw, Instant.now());
-            return new MinuteCacheSnapshot(fetchedAtMillis, filtered);
-        } catch (Exception ignored) {
-            return null;
-        }
+        MinuteCacheStore.Snapshot cached = MinuteCacheStore.readFresh(
+                this, lat, lon, language, source, MINUTE_CACHE_MAX_AGE_MILLIS);
+        if (cached == null || cached.response == null) return null;
+        JSONObject filtered = filterElapsedMinuteResponse(cached.response, Instant.now());
+        return new MinuteCacheSnapshot(cached.fetchedAtMillis, filtered);
     }
 
     void persistMinuteForecastCacheQuietly(
@@ -110,31 +39,7 @@ abstract class MinuteForecastActivity extends OptionalWeatherDataActivity {
             String language,
             long fetchedAtMillis,
             JSONObject rawResponse, String source) {
-        if (rawResponse == null || fetchedAtMillis <= 0L) return;
-        cleanupMinuteForecastCaches();
-        File cacheFile = minuteForecastCacheFile(lat, lon, language, source);
-        File tempFile = new File(cacheFile.getParentFile(), cacheFile.getName() + ".tmp");
-        try {
-            JSONObject root = new JSONObject();
-            root.put("schema", 1);
-            root.put("latitude", lat);
-            root.put("longitude", lon);
-            root.put("language", language == null ? "" : language);
-            root.put("fetchedAtMillis", fetchedAtMillis);
-            root.put("response", rawResponse);
-            byte[] encoded = root.toString().getBytes(StandardCharsets.UTF_8);
-            if (tempFile.exists() && !tempFile.delete()) return;
-            try (FileOutputStream out = new FileOutputStream(tempFile)) {
-                out.write(encoded);
-                out.flush();
-                out.getFD().sync();
-            }
-            Os.rename(tempFile.getAbsolutePath(), cacheFile.getAbsolutePath());
-        } catch (Exception ignored) {
-            // Minute caching is best-effort and never changes the base forecast result.
-        } finally {
-            if (tempFile.exists()) tempFile.delete();
-        }
+        MinuteCacheStore.write(this, lat, lon, language, source, fetchedAtMillis, rawResponse);
     }
 
     static JSONObject filterElapsedMinuteResponse(JSONObject raw, Instant now) {
@@ -203,7 +108,7 @@ abstract class MinuteForecastActivity extends OptionalWeatherDataActivity {
         final String source = OpenMeteoConfig.precipitationCacheScope(this);
         final double lat = latitude;
         final double lon = longitude;
-        final String language = Locale.getDefault().toLanguageTag();
+        final String language = AppLocaleManager.activeLocale(this).toLanguageTag();
         MinuteForecastState pendingRequestState = null;
         synchronized (minuteForecastLock) {
             MinuteForecastState current = minuteForecastState;
@@ -223,6 +128,7 @@ abstract class MinuteForecastActivity extends OptionalWeatherDataActivity {
 
         // Synchronize the offscreen page even when the current state needs no new request.
         rerenderPrecipitationPreservingScroll();
+        onMinuteForecastUpdated();
         notifyActiveForecastStatusChanged();
         if (pendingRequestState == null) return;
         final MinuteForecastState requestState = pendingRequestState;
@@ -258,7 +164,7 @@ abstract class MinuteForecastActivity extends OptionalWeatherDataActivity {
                 } else {
                     String key = readApiKey();
                     if (key.isEmpty()) throw new IllegalStateException("API key is not configured");
-                    raw = PrecipitationForecast.loadGoogle(key, lat, lon, Instant.now(),
+                    raw = PrecipitationForecast.loadGoogle("", lat, lon, Instant.now(),
                             Duration.ofHours(6), address -> requestMinuteLogical(address, requestState, source));
                 }
                 if (!minuteRequestScopeCurrent(requestState, source)) {
@@ -306,7 +212,7 @@ abstract class MinuteForecastActivity extends OptionalWeatherDataActivity {
                     weatherRequestGeneration,
                     latitude,
                     longitude,
-                    Locale.getDefault().toLanguageTag())) {
+                    AppLocaleManager.activeLocale(this).toLanguageTag())) {
                 return;
             }
             minuteForecastState = resultState;
@@ -321,6 +227,7 @@ abstract class MinuteForecastActivity extends OptionalWeatherDataActivity {
         }
         scheduleMinuteExpiration(resultState);
         rerenderPrecipitationPreservingScroll();
+        onMinuteForecastUpdated();
         notifyActiveForecastStatusChanged();
     }
 
@@ -345,6 +252,7 @@ abstract class MinuteForecastActivity extends OptionalWeatherDataActivity {
             if (expired) {
                 cleanupMinuteForecastCaches();
                 rerenderPrecipitationPreservingScroll();
+                onMinuteForecastUpdated();
                 notifyActiveForecastStatusChanged();
             }
             minuteExpirationRunnable = null;
@@ -368,7 +276,7 @@ abstract class MinuteForecastActivity extends OptionalWeatherDataActivity {
                             weatherRequestGeneration,
                             latitude,
                             longitude,
-                            Locale.getDefault().toLanguageTag());
+                            AppLocaleManager.activeLocale(this).toLanguageTag());
         }
     }
 
@@ -444,7 +352,7 @@ abstract class MinuteForecastActivity extends OptionalWeatherDataActivity {
                     weatherRequestGeneration,
                     latitude,
                     longitude,
-                    Locale.getDefault().toLanguageTag())) {
+                    AppLocaleManager.activeLocale(this).toLanguageTag())) {
                 return null;
             }
             if (state.response != null && !state.isFresh(System.currentTimeMillis())) {

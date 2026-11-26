@@ -532,7 +532,8 @@ final class OpenMeteoForecastClient {
         JSONArray times = hourly.optJSONArray("time");
         if (times == null) return aggregate;
 
-        for (int i = 0; i < times.length(); i++) {
+        int count = times.length();
+        for (int i = 0; i < count; i++) {
             LocalDateTime local = parseLocalDateTime(stringAt(times, i));
             if (local == null || !date.equals(local.toLocalDate())) continue;
             Double isDay = numberAt(hourly, "is_day", i);
@@ -544,20 +545,23 @@ final class OpenMeteoForecastClient {
                 aggregate.weatherSeverity = weatherSeverity(code);
                 aggregate.weatherCode = code;
             }
-            Double probability = numberAt(hourly, "precipitation_probability", i);
-            if (probability != null) {
-                int p = boundedPercent(probability);
-                aggregate.maxProbability = aggregate.maxProbability == null
-                        ? p : Math.max(aggregate.maxProbability, p);
+            int precipIndex = i + 1;
+            if (precipIndex < count) {
+                Double probability = numberAt(hourly, "precipitation_probability", precipIndex);
+                if (probability != null) {
+                    int p = boundedPercent(probability);
+                    aggregate.maxProbability = aggregate.maxProbability == null
+                            ? p : Math.max(aggregate.maxProbability, p);
+                }
+                Double qpf = numberAt(hourly, "precipitation", precipIndex);
+                if (qpf != null) aggregate.qpfMm = sum(aggregate.qpfMm, Math.max(0d, qpf));
+                Double rain = numberAt(hourly, "rain", precipIndex);
+                if (rain != null) aggregate.rainMm = sum(aggregate.rainMm, Math.max(0d, rain));
+                Double showers = numberAt(hourly, "showers", precipIndex);
+                if (showers != null) aggregate.showersMm = sum(aggregate.showersMm, Math.max(0d, showers));
+                Double snow = numberAt(hourly, "snowfall", precipIndex);
+                if (snow != null) aggregate.snowfallCm = sum(aggregate.snowfallCm, Math.max(0d, snow));
             }
-            Double qpf = numberAt(hourly, "precipitation", i);
-            if (qpf != null) aggregate.qpfMm = sum(aggregate.qpfMm, Math.max(0d, qpf));
-            Double rain = numberAt(hourly, "rain", i);
-            if (rain != null) aggregate.rainMm = sum(aggregate.rainMm, Math.max(0d, rain));
-            Double showers = numberAt(hourly, "showers", i);
-            if (showers != null) aggregate.showersMm = sum(aggregate.showersMm, Math.max(0d, showers));
-            Double snow = numberAt(hourly, "snowfall", i);
-            if (snow != null) aggregate.snowfallCm = sum(aggregate.snowfallCm, Math.max(0d, snow));
         }
         return aggregate;
     }

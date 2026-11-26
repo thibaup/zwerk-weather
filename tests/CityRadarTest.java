@@ -58,6 +58,20 @@ public final class CityRadarTest {
         near(across.translationX(new RadarMapTransform(0, 179, 6, 512), 1200),
                 -old.worldSize * 2 / 360d, "dateline takes short path");
         check(Double.isFinite(new RadarMapTransform(90, 0, 7, 512).centerY), "Mercator poles clamped");
+
+        // RadarPlaybackClock speed scaling and >= 1.3s final-frame pause before looping.
+        check(RadarPlaybackClock.normalizeSpeed(0.5f) == 0.5f, "0.5x radar speed normalized");
+        check(RadarPlaybackClock.normalizeSpeed(2.0f) == 2.0f, "2x radar speed normalized");
+        check(RadarPlaybackClock.normalizeSpeed(1.3f) == 1.0f, "unknown radar speed defaults to 1x");
+        check(RadarPlaybackClock.nextSpeed(0.5f) == 1.0f
+                && RadarPlaybackClock.nextSpeed(1.0f) == 2.0f
+                && RadarPlaybackClock.nextSpeed(2.0f) == 0.5f, "radar speed cycles 0.5x -> 1x -> 2x -> 0.5x");
+        check(RadarPlaybackClock.frameDelayMillis(650L, 1.0f, 1, 6) == 650L, "1x frame delay matches base");
+        check(RadarPlaybackClock.frameDelayMillis(650L, 0.5f, 1, 6) == 1300L, "0.5x speed doubles frame delay");
+        check(RadarPlaybackClock.frameDelayMillis(650L, 2.0f, 1, 6) == 325L, "2x speed halves frame delay");
+        check(RadarPlaybackClock.frameDelayMillis(650L, 2.0f, 5, 6) >= 1300L, "2x final frame pauses >= 1.3s");
+        check(RadarPlaybackClock.frameDelayMillis(650L, 1.0f, 5, 6) >= 1300L, "1x final frame pauses >= 1.3s");
+        check(RadarPlaybackClock.frameDelayMillis(650L, 0.5f, 5, 6) >= 1950L, "0.5x final frame adds loop pause");
         System.out.println("City search and radar projection: " + checks + " checks passed.");
     }
     private static void check(boolean value, String label) {

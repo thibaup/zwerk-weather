@@ -18,9 +18,38 @@ public final class PrecipitationCoverageTest {
         preservePartialResultsWhenLaterPageFails();
         shortHorizonStopsPagination();
         providerSwitchCancelsPagination();
+        headerAuthOmitsQueryKey();
         distinguishDryFromMissingAndUnknown();
         rainEpisodeTiming();
         System.out.println("Passed " + checks + " precipitation coverage checks.");
+    }
+
+    private static void headerAuthOmitsQueryKey() throws Exception {
+        ArrayList<String> emptyKeyUrls = new ArrayList<>();
+        PrecipitationForecast.loadGoogle("", 50.85, 4.35, BASE, Duration.ofMinutes(10), address -> {
+            emptyKeyUrls.add(address);
+            return page(null, segment(0, 10, "NONE", 0d, 0, null));
+        });
+        check(emptyKeyUrls.size() == 1 && !emptyKeyUrls.get(0).contains("key=")
+                && emptyKeyUrls.get(0).startsWith(
+                        "https://weather.googleapis.com/v1/forecast/minutes:lookup?location.latitude=50.85"),
+                "empty key omits ?key= query parameter for header-based auth");
+
+        ArrayList<String> nullKeyUrls = new ArrayList<>();
+        PrecipitationForecast.loadGoogle(null, 50.85, 4.35, BASE, Duration.ofMinutes(10), address -> {
+            nullKeyUrls.add(address);
+            return page(null, segment(0, 10, "NONE", 0d, 0, null));
+        });
+        check(nullKeyUrls.size() == 1 && !nullKeyUrls.get(0).contains("key="),
+                "null key omits ?key= query parameter");
+
+        ArrayList<String> explicitKeyUrls = new ArrayList<>();
+        PrecipitationForecast.loadGoogle("my-api-key", 50.85, 4.35, BASE, Duration.ofMinutes(10), address -> {
+            explicitKeyUrls.add(address);
+            return page(null, segment(0, 10, "NONE", 0d, 0, null));
+        });
+        check(explicitKeyUrls.size() == 1 && explicitKeyUrls.get(0).contains("?key=my-api-key&"),
+                "non-empty key preserves ?key= query parameter");
     }
 
     private static void twoPagesMergeAndDeduplicate() throws Exception {

@@ -12,10 +12,7 @@ import android.view.View;
 import org.json.JSONArray;
 import org.json.JSONObject;
 
-import java.io.BufferedReader;
 import java.io.ByteArrayOutputStream;
-import java.io.File;
-import java.io.FileReader;
 import java.io.InputStream;
 import java.lang.ref.WeakReference;
 import java.io.IOException;
@@ -34,6 +31,7 @@ import java.util.Locale;
 import java.util.UUID;
 import java.util.concurrent.ThreadLocalRandom;
 import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.atomic.AtomicReference;
 
 abstract class WeatherApiActivity extends MinuteForecastViewsActivity {
     ForecastDiskCache forecastDiskCache;
@@ -42,6 +40,7 @@ abstract class WeatherApiActivity extends MinuteForecastViewsActivity {
     private static final int MAX_IN_MEMORY_FORECASTS = 8;
     private final Object inMemoryForecastLock = new Object();
     private final HashMap<String, InMemoryForecast> inMemoryForecasts = new HashMap<>();
+    private final AtomicReference<HttpURLConnection> activeBaseConnection = new AtomicReference<>();
 
     void cleanupForecastCaches() { forecastDiskCache.cleanup(); }
 
@@ -245,6 +244,7 @@ abstract class WeatherApiActivity extends MinuteForecastViewsActivity {
             }
             // Supersede the previous location immediately; generation checks reject its late result.
             weatherRequestGeneration++;
+            disconnectSupersededBaseConnection();
             weatherLoadActive = false;
             weatherReloadPending = false;
             weatherReloadForcePending = false;
@@ -262,6 +262,7 @@ abstract class WeatherApiActivity extends MinuteForecastViewsActivity {
                 ? "Loading Open-Meteo forecast…" : "Loading Google Weather data…");
         notifyActiveForecastStatusChanged();
         final int generation = ++weatherRequestGeneration;
+        disconnectSupersededBaseConnection();
         hourlyCoverageQueue.reset();
         hourlyCoverageCoordinators.clear();
         rebindFreshMinuteStateToGeneration(generation, lat, lon, language);
@@ -451,10 +452,21 @@ abstract class WeatherApiActivity extends MinuteForecastViewsActivity {
         }
     }
 
+    private void disconnectSupersededBaseConnection() {
+        HttpURLConnection prior = activeBaseConnection.getAndSet(null);
+        if (prior == null) return;
+        cacheExecutor.execute(() -> {
+            try { prior.disconnect(); } catch (Exception ignored) { }
+        });
+    }
+
     String weatherCommonQuery(
-            String key, double lat, double lon, String language) throws Exception {
-        return "?key=" + URLEncoder.encode(key, StandardCharsets.UTF_8.name())
-                + "&location.latitude=" + lat
+            String ignoredKey, double lat, double lon, String language) throws Exception {
+        return weatherCommonQuery(lat, lon, language);
+    }
+
+    String weatherCommonQuery(double lat, double lon, String language) throws Exception {
+        return "?location.latitude=" + lat
                 + "&location.longitude=" + lon
                 + "&unitsSystem=METRIC"
                 + "&languageCode=" + URLEncoder.encode(language, StandardCharsets.UTF_8.name());
@@ -1140,13 +1152,8 @@ abstract class WeatherApiActivity extends MinuteForecastViewsActivity {
         return safe;
     }
 
-    String readApiKey() throws Exception {
-        File keyFile = new File(getFilesDir(), API_KEY_FILE);
-        if (!keyFile.isFile()) return "";
-        try (BufferedReader reader = new BufferedReader(new FileReader(keyFile))) {
-            String line = reader.readLine();
-            return line == null ? "" : line.trim();
-        }
+    String readApiKey() {
+        return ApiKeyStore.read(this, API_KEY_FILE);
     }
 
     JSONObject request(String address) throws Exception {
@@ -1172,9 +1179,14 @@ abstract class WeatherApiActivity extends MinuteForecastViewsActivity {
         }
         long diagnosticStart = android.os.SystemClock.elapsedRealtime();
         HttpURLConnection connection = (HttpURLConnection) new URL(address).openConnection();
+        if (!precipitation) activeBaseConnection.set(connection);
         connection.setConnectTimeout(12000);
         connection.setReadTimeout(18000);
         connection.setRequestProperty("Accept", "application/json");
+        String apiKey = readApiKey();
+        if (!apiKey.isEmpty()) {
+            connection.setRequestProperty("X-Goog-Api-Key", apiKey);
+        }
         applyAndroidApiKeyRestrictionHeaders(connection);
 
         try {
@@ -1236,6 +1248,7 @@ abstract class WeatherApiActivity extends MinuteForecastViewsActivity {
                     "Weather service connection failed",
                     "Network connection failure");
         } finally {
+            if (!precipitation) activeBaseConnection.compareAndSet(connection, null);
             connection.disconnect();
         }
     }

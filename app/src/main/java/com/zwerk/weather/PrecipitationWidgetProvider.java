@@ -197,22 +197,25 @@ public final class PrecipitationWidgetProvider extends AppWidgetProvider {
             condition = currentHour.optString("conditionType", condition);
             daytime = currentHour.optBoolean("daytime", daytime);
         }
-        WidgetBackground.apply(localized, views, R.id.precip_widget_scene, condition, daytime);
+        WidgetBackground.apply(localized, views, R.id.precip_widget_scene, condition, daytime, config);
 
         JSONObject minutes = matches ? freshMinutes(context, prefs, now) : null;
         PrecipitationWidgetData data = new PrecipitationWidgetData(
                 retained ? timeline.hours : null, minutes, now);
+        boolean precipInches = new WeatherPreferences(context).isPrecipitationInches();
+        double totalDisplay = precipInches ? data.totalMm / 25.4d : data.totalMm;
+        String amountText = PrecipitationWidgetData.amountLabel(totalDisplay)
+                + (precipInches ? " in" : " mm");
         String resolution = UiTranslations.text(localized,
                 data.hasMinuteDetail ? (data.hasHourlyDetail ? "Minute + hourly" : "Minute") : "Hourly");
         boolean complete = data.knownBins == PrecipitationWidgetData.BIN_COUNT;
         String summary = data.knownBins == 0 ? UiTranslations.text(localized, "No forecast available")
-                : PrecipitationWidgetData.amountLabel(data.totalMm) + " mm · "
+                : amountText + " · "
                         + UiTranslations.text(localized, complete ? "Total" : "Partial forecast")
                         + " · " + UiTranslations.text(localized, "10 min bars");
         String title = UiTranslations.text(localized, "Next 6 hours");
         if (config.showDetails && data.knownBins > 0) {
-            String amount = PrecipitationWidgetData.amountLabel(data.totalMm) + " mm";
-            title += " · " + (complete ? amount : UiTranslations.text(localized, "Partial") + " " + amount);
+            title += " · " + (complete ? amountText : UiTranslations.text(localized, "Partial") + " " + amountText);
         }
         config.setText(views, R.id.precip_widget_title, title);
         ZoneId zone = pinned != null ? timeline.zone : ZoneId.systemDefault();
@@ -221,9 +224,11 @@ public final class PrecipitationWidgetProvider extends AppWidgetProvider {
                         zone),
                 WeatherTimeFormat.time(localized, Instant.ofEpochMilli(now + 6L * 3_600_000L),
                         zone)} : null;
+        float density = context.getResources().getDisplayMetrics().density;
         try {
             Bitmap chart = PrecipitationWidgetChart.render(data, widthDp - 28, heightDp - 44,
-                    labels, UiTranslations.text(localized, "No forecast available"), config.textScalePercent / 100f);
+                    labels, UiTranslations.text(localized, "No forecast available"),
+                    config.textScalePercent / 100f, precipInches, density);
             views.setImageViewBitmap(R.id.precip_widget_chart, chart);
         } catch (OutOfMemoryError ignored) {
             // Never substitute sample rain for a missing real forecast.

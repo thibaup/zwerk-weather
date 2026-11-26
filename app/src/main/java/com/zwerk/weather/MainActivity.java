@@ -62,6 +62,8 @@ public class MainActivity extends WeatherSettingsFlowActivity implements DeviceL
     static final String ACTION_WIDGET_REFRESH = "com.zwerk.weather.action.WIDGET_REFRESH_FORECAST";
     static final String ACTION_WIDGET_PRECIPITATION =
             "com.zwerk.weather.action.WIDGET_OPEN_PRECIPITATION";
+    static final String ACTION_WIDGET_FORECAST =
+            "com.zwerk.weather.action.WIDGET_OPEN_FORECAST";
     private static final int PAGE_OVERVIEW = 0;
     private static final int PAGE_DAILY = 1;
     private static final int PAGE_PRECIPITATION = 2;
@@ -94,6 +96,9 @@ public class MainActivity extends WeatherSettingsFlowActivity implements DeviceL
     private Intent pendingSettingsAction;
     private boolean precipitationPageEnabled;
     private boolean radarPageEnabled;
+    private boolean combinedForecastEnabled;
+    private boolean radarFullscreen;
+    private LinearLayout cityIndicatorRow;
     private int selectedForecastPage = PAGE_OVERVIEW;
     private int transitionTargetPage = PAGE_OVERVIEW;
     private final android.graphics.Rect systemBarInsets = new android.graphics.Rect();
@@ -131,15 +136,18 @@ public class MainActivity extends WeatherSettingsFlowActivity implements DeviceL
         getWindow().getDecorView().post(() -> WidgetPreviews.publish(this));
         recordSupportPromptLaunch();
         RainAlertManager.reconcile(this);
+        SevereAlertManager.reconcile(this);
         weatherPreferences = new WeatherPreferences(this);
         forecastDiskCache = new ForecastDiskCache(this);
         boolean widgetRefreshRequested = consumeWidgetRefreshIntent(getIntent());
         boolean widgetPrecipitationRequested = consumeWidgetPrecipitationIntent(getIntent());
+        boolean widgetForecastRequested = consumeWidgetForecastIntent(getIntent());
         forceNextWeatherLoad |= widgetRefreshRequested;
         precipitationPageEnabled = getSharedPreferences(UI_PREFS, MODE_PRIVATE)
                 .getBoolean(SettingsActivity.PREF_PRECIPITATION_PAGE, true);
         radarPageEnabled = getSharedPreferences(UI_PREFS, MODE_PRIVATE)
                 .getBoolean(SettingsActivity.PREF_RADAR_PAGE, true);
+        combinedForecastEnabled = weatherPreferences.combinedForecastMode();
         configureWindow();
         locationRefreshCoordinator = new DeviceLocationRefreshCoordinator(this, LOCATION_REQUEST, this);
 
@@ -170,11 +178,15 @@ public class MainActivity extends WeatherSettingsFlowActivity implements DeviceL
         buildShell();
         if (state != null && !widgetRefreshRequested && widgetCity == null) {
             int restoredPage = state.getInt("selected_page", PAGE_OVERVIEW);
-            selectedForecastPage = forecastPageEnabled(restoredPage) ? restoredPage : PAGE_OVERVIEW;
+            selectedForecastPage = forecastPageEnabled(restoredPage)
+                    ? restoredPage
+                    : (restoredPage == PAGE_PRECIPITATION && combinedForecastEnabled
+                            ? PAGE_DAILY : PAGE_OVERVIEW);
             activePageContent = activeForecastPageContent();
             forecastSwipeLayout.resetPagePositions();
             updateForecastModeButtons();
         }
+        updateSkyScenePaused();
         if (Build.VERSION.SDK_INT >= 33) MainBackNavigation.register(this, this::handleMainBack);
         content.postDelayed(() -> UpdateChecker.checkForUpdates(this, false), 1800L);
         if (!OpenMeteoConfig.isOpenMeteo(this) && !hasConfiguredApiKey()) {
@@ -184,8 +196,18 @@ public class MainActivity extends WeatherSettingsFlowActivity implements DeviceL
             return;
         }
         continueStartupAfterApiKey();
-        if (widgetPrecipitationRequested && precipitationPageEnabled) {
-            switchForecastMode(PAGE_PRECIPITATION);
+        if (widgetPrecipitationRequested) {
+            if (combinedForecastEnabled) {
+                switchForecastMode(PAGE_DAILY);
+                forecastSwipeLayout.resetPagePositions();
+                openCombinedTodaySixHours();
+            } else if (precipitationPageEnabled) {
+                switchForecastMode(PAGE_PRECIPITATION);
+                forecastSwipeLayout.resetPagePositions();
+            }
+        } else if (widgetForecastRequested) {
+            switchForecastMode(PAGE_DAILY);
+            forecastSwipeLayout.resetPagePositions();
         }
     }
 
@@ -203,7 +225,23 @@ public class MainActivity extends WeatherSettingsFlowActivity implements DeviceL
                     .putExtra(CityManagerActivity.EXTRA_LONGITUDE, widgetCity.lon));
         }
         if (consumeWidgetPrecipitationIntent(intent)) {
-            if (precipitationPageEnabled) switchForecastMode(PAGE_PRECIPITATION);
+            if (combinedForecastEnabled) {
+                cancelForecastSwipe();
+                switchForecastMode(PAGE_DAILY);
+                forecastSwipeLayout.resetPagePositions();
+                openCombinedTodaySixHours();
+            } else if (precipitationPageEnabled) {
+                cancelForecastSwipe();
+                switchForecastMode(PAGE_PRECIPITATION);
+                forecastSwipeLayout.resetPagePositions();
+            }
+            return;
+        }
+        if (consumeWidgetForecastIntent(intent)) {
+            cancelForecastSwipe();
+            rerenderDailyPage();
+            switchForecastMode(PAGE_DAILY);
+            forecastSwipeLayout.resetPagePositions();
             return;
         }
         if (!consumeWidgetRefreshIntent(intent)) {
@@ -239,6 +277,14 @@ public class MainActivity extends WeatherSettingsFlowActivity implements DeviceL
     private boolean consumeWidgetPrecipitationIntent(Intent intent) {
         if (intent == null || !ACTION_WIDGET_PRECIPITATION.equals(intent.getAction())) return false;
         minuteRangeHours = MINUTE_RANGE_SIX_HOURS;
+        intent.setAction(Intent.ACTION_MAIN);
+        return true;
+    }
+
+    private boolean consumeWidgetForecastIntent(Intent intent) {
+        if (intent == null || !ACTION_WIDGET_FORECAST.equals(intent.getAction())) return false;
+        getSharedPreferences(UI_PREFS, MODE_PRIVATE).edit()
+                .putString(PREF_DAILY_MODE, "line").apply();
         intent.setAction(Intent.ACTION_MAIN);
         return true;
     }
@@ -332,6 +378,14 @@ public class MainActivity extends WeatherSettingsFlowActivity implements DeviceL
         locationTitle.setEllipsize(android.text.TextUtils.TruncateAt.END);
         locationArea.addView(locationTitle, new LinearLayout.LayoutParams(-1, dp(29)));
 
+        cityIndicatorRow = new LinearLayout(this);
+        cityIndicatorRow.setOrientation(LinearLayout.HORIZONTAL);
+        cityIndicatorRow.setGravity(Gravity.CENTER_VERTICAL | Gravity.START);
+        cityIndicatorRow.setVisibility(View.GONE);
+        LinearLayout.LayoutParams dotsLp = new LinearLayout.LayoutParams(-1, dp(10));
+        dotsLp.topMargin = dp(2);
+        locationArea.addView(cityIndicatorRow, dotsLp);
+
         previewSubtitle = text("", 10, true, Color.argb(220, 255, 255, 255));
         previewSubtitle.setSingleLine(true);
         previewSubtitle.setEllipsize(android.text.TextUtils.TruncateAt.END);
@@ -413,6 +467,7 @@ public class MainActivity extends WeatherSettingsFlowActivity implements DeviceL
         settingsScreen.initialize(restoredSettingsState);
         radarPageView = new RadarPageView(this);
         radarPageView.setStatusChangedListener(this::notifyActiveForecastStatusChanged);
+        radarPageView.setFullscreenToggleListener(this::applyRadarFullscreen);
         radarPageView.setLocation(latitude, longitude);
         radarPageContent.addView(radarPageView,
                 new LinearLayout.LayoutParams(-1, -1));
@@ -430,6 +485,7 @@ public class MainActivity extends WeatherSettingsFlowActivity implements DeviceL
         notifyActiveForecastStatusChanged();
         content.addView(forecastPageHost, new LinearLayout.LayoutParams(-1, -2));
         updatePreviewSubtitle();
+        updateCityPageIndicatorDots();
     }
 
     /** The header clicks to open locations and swipes to cycle through saved locations. */
@@ -579,8 +635,103 @@ public class MainActivity extends WeatherSettingsFlowActivity implements DeviceL
         if (settingsPageContent != null) {
             settingsPageContent.setPadding(dp(18), top, dp(18), bottom);
         }
-        if (radarPageView != null) radarPageView.setViewportInsets(
-                bars.left, headerBottom, bars.right, bars.bottom + dp(72) + dp(10));
+        applyRadarViewportInsets();
+    }
+
+    private void applyRadarViewportInsets() {
+        if (radarPageView == null) return;
+        if (radarFullscreen) {
+            radarPageView.setViewportInsets(
+                    systemBarInsets.left, systemBarInsets.top,
+                    systemBarInsets.right, systemBarInsets.bottom);
+        } else {
+            radarPageView.setViewportInsets(
+                    systemBarInsets.left, systemBarInsets.top + dp(68),
+                    systemBarInsets.right, systemBarInsets.bottom + dp(72) + dp(10));
+        }
+    }
+
+    private void applyRadarFullscreen(boolean fullscreen) {
+        boolean next = fullscreen && selectedForecastPage == PAGE_RADAR;
+        radarFullscreen = next;
+        long duration = animationsAllowed() ? 180L : 0L;
+        toggleChromeForFullscreen(toolbar, !next, duration);
+        toggleChromeForFullscreen(modeSwitchHolder, !next, duration);
+        if (headerGlass != null) {
+            headerGlass.animate().cancel();
+            headerGlass.setAlpha(1f);
+            headerGlass.setVisibility(selectedForecastPage == PAGE_RADAR || next
+                    ? View.GONE : View.VISIBLE);
+        }
+        applyRadarViewportInsets();
+    }
+
+    private void toggleChromeForFullscreen(View view, boolean visible, long duration) {
+        if (view == null) return;
+        view.animate().cancel();
+        if (visible) {
+            view.setVisibility(View.VISIBLE);
+            if (duration <= 0L) {
+                view.setAlpha(1f);
+            } else {
+                view.animate().alpha(1f).setDuration(duration).withEndAction(null).start();
+            }
+        } else if (duration <= 0L) {
+            view.setAlpha(0f);
+            view.setVisibility(View.GONE);
+        } else {
+            view.animate().alpha(0f).setDuration(duration)
+                    .withEndAction(() -> view.setVisibility(View.GONE))
+                    .start();
+        }
+    }
+
+    private void updateSkyScenePaused() {
+        if (skyLayout != null) {
+            skyLayout.setScenePaused(selectedForecastPage == PAGE_RADAR
+                    || selectedForecastPage == PAGE_SETTINGS);
+        }
+    }
+
+    @Override
+    void updatePreviewSubtitle() {
+        super.updatePreviewSubtitle();
+        updateCityPageIndicatorDots();
+    }
+
+    private void updateCityPageIndicatorDots() {
+        if (cityIndicatorRow == null) return;
+        List<CityManagerActivity.LocationSnapshot> saved =
+                CityManagerActivity.getStoredLocations(this);
+        if (forecastPreview.isPreviewing() || saved.size() < 2) {
+            cityIndicatorRow.removeAllViews();
+            cityIndicatorRow.setVisibility(View.GONE);
+            return;
+        }
+        int activeIndex = -1;
+        for (int i = 0; i < saved.size(); i++) {
+            if (saved.get(i).id.equals(selectedLocationId)) {
+                activeIndex = i;
+                break;
+            }
+        }
+        if (activeIndex < 0) activeIndex = 0;
+        cityIndicatorRow.removeAllViews();
+        int dotCount = Math.min(saved.size(), 12);
+        int clampedActive = Math.min(activeIndex, dotCount - 1);
+        for (int i = 0; i < dotCount; i++) {
+            boolean active = i == clampedActive;
+            int size = dp(active ? 5 : 4);
+            View dot = new View(this);
+            dot.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
+            dot.setBackground(roundedBg(
+                    active ? Color.argb(235, 255, 255, 255) : Color.argb(105, 255, 255, 255),
+                    size));
+            LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(size, size);
+            if (i < dotCount - 1) lp.setMarginEnd(dp(4));
+            cityIndicatorRow.addView(dot, lp);
+        }
+        cityIndicatorRow.setVisibility(View.VISIBLE);
     }
 
     private void createWeatherPage(int page, LinearLayout pageContent) {
@@ -637,7 +788,7 @@ public class MainActivity extends WeatherSettingsFlowActivity implements DeviceL
 
     private boolean forecastPageEnabled(int page) {
         return page == PAGE_OVERVIEW || page == PAGE_DAILY || page == PAGE_SETTINGS
-                || page == PAGE_PRECIPITATION && precipitationPageEnabled
+                || page == PAGE_PRECIPITATION && precipitationPageEnabled && !combinedForecastEnabled
                 || page == PAGE_RADAR && radarPageEnabled;
     }
 
@@ -658,7 +809,8 @@ public class MainActivity extends WeatherSettingsFlowActivity implements DeviceL
     }
 
     private int enabledForecastPageCount() {
-        return 3 + (precipitationPageEnabled ? 1 : 0) + (radarPageEnabled ? 1 : 0);
+        return 3 + (forecastPageEnabled(PAGE_PRECIPITATION) ? 1 : 0)
+                + (forecastPageEnabled(PAGE_RADAR) ? 1 : 0);
     }
 
     /** Measures both prepared pages but gives the scroll view only the selected page's height. */
@@ -748,6 +900,7 @@ public class MainActivity extends WeatherSettingsFlowActivity implements DeviceL
 
         @Override
         public boolean onInterceptTouchEvent(MotionEvent event) {
+            if (radarFullscreen) return false;
             switch (event.getActionMasked()) {
                 case MotionEvent.ACTION_DOWN:
                     if (settling) return true;
@@ -1028,11 +1181,11 @@ public class MainActivity extends WeatherSettingsFlowActivity implements DeviceL
                 "Multi-day forecast", NavigationIconView.FORECAST,
                 () -> forecastSwipeLayout.animateModeChange(PAGE_DAILY));
         precipitationModeButton = null;
-        if (precipitationPageEnabled) precipitationModeButton = addNavigationItem(
+        if (forecastPageEnabled(PAGE_PRECIPITATION)) precipitationModeButton = addNavigationItem(
                 UiTranslations.text(this, "Rain"), "Minute precipitation view", NavigationIconView.RAIN,
                 () -> forecastSwipeLayout.animateModeChange(PAGE_PRECIPITATION));
         radarModeButton = null;
-        if (radarPageEnabled) radarModeButton = addNavigationItem(
+        if (forecastPageEnabled(PAGE_RADAR)) radarModeButton = addNavigationItem(
                 UiTranslations.text(this, "Radar"), "Animated precipitation radar view", NavigationIconView.RADAR,
                 () -> forecastSwipeLayout.animateModeChange(PAGE_RADAR));
         settingsModeTab = addNavigationItem(getString(R.string.settings_title), "Weather options",
@@ -1181,6 +1334,11 @@ public class MainActivity extends WeatherSettingsFlowActivity implements DeviceL
 
     void switchForecastMode(int targetPage) {
         if (selectedForecastPage == targetPage) return;
+        if (targetPage != PAGE_RADAR && (radarFullscreen
+                || (radarPageView != null && radarPageView.isFullscreen()))) {
+            if (radarPageView != null) radarPageView.setFullscreen(false);
+            applyRadarFullscreen(false);
+        }
         if (targetPage != PAGE_RADAR && radarRefreshIndicatorActive) {
             radarRefreshIndicatorActive = false;
             finishRefreshIndicator();
@@ -1195,6 +1353,7 @@ public class MainActivity extends WeatherSettingsFlowActivity implements DeviceL
         activePageContent = activeForecastPageContent();
         moveForecastErrorToPage();
         if (radarPageView != null) radarPageView.setActive(targetPage == PAGE_RADAR);
+        updateSkyScenePaused();
         if (targetPage == PAGE_SETTINGS) settingsScreen.onShown();
         if (targetPage == PAGE_DAILY) updateDailyHistory();
         notifyActiveForecastStatusChanged();
@@ -1220,13 +1379,26 @@ public class MainActivity extends WeatherSettingsFlowActivity implements DeviceL
     }
 
     void applyForecastPagePreferences() {
-        precipitationPageEnabled = getSharedPreferences(UI_PREFS, MODE_PRIVATE)
+        boolean nextPrecipitation = getSharedPreferences(UI_PREFS, MODE_PRIVATE)
                 .getBoolean(SettingsActivity.PREF_PRECIPITATION_PAGE, true);
-        radarPageEnabled = getSharedPreferences(UI_PREFS, MODE_PRIVATE)
+        boolean nextRadar = getSharedPreferences(UI_PREFS, MODE_PRIVATE)
                 .getBoolean(SettingsActivity.PREF_RADAR_PAGE, true);
+        boolean nextCombined = weatherPreferences.combinedForecastMode();
+        boolean pagesChanged = nextPrecipitation != precipitationPageEnabled
+                || nextRadar != radarPageEnabled
+                || nextCombined != combinedForecastEnabled;
+        boolean combinedChanged = nextCombined != combinedForecastEnabled;
+        precipitationPageEnabled = nextPrecipitation;
+        radarPageEnabled = nextRadar;
+        combinedForecastEnabled = nextCombined;
+        if (combinedChanged) {
+            rerenderDailyPage();
+        }
+        if (!pagesChanged) return;
         cancelForecastSwipe();
         if (!forecastPageEnabled(selectedForecastPage)) {
-            switchForecastMode(PAGE_OVERVIEW);
+            switchForecastMode(selectedForecastPage == PAGE_PRECIPITATION && combinedForecastEnabled
+                    ? PAGE_DAILY : PAGE_OVERVIEW);
             forecastSwipeLayout.resetPagePositions();
         }
         if (modeSwitchHolder != null) {
@@ -1779,6 +1951,11 @@ public class MainActivity extends WeatherSettingsFlowActivity implements DeviceL
     @Override public void onBackPressed() { handleMainBack(); }
 
     private void handleMainBack() {
+        if (selectedForecastPage == PAGE_RADAR && radarPageView != null && radarPageView.isFullscreen()) {
+            radarPageView.setFullscreen(false);
+            applyRadarFullscreen(false);
+            return;
+        }
         if (selectedForecastPage != PAGE_OVERVIEW) forecastSwipeLayout.animateModeChange(PAGE_OVERVIEW);
         else finish();
     }
@@ -1789,176 +1966,6 @@ public class MainActivity extends WeatherSettingsFlowActivity implements DeviceL
             activity.getOnBackInvokedDispatcher().registerOnBackInvokedCallback(
                     android.window.OnBackInvokedDispatcher.PRIORITY_DEFAULT, action::run);
         }
-    }
-
-    void showCoordinateDialog() {
-        final Dialog dialog = new Dialog(this);
-        dialog.requestWindowFeature(Window.FEATURE_NO_TITLE);
-        dialog.setCancelable(true);
-        dialog.setCanceledOnTouchOutside(true);
-
-        ScrollView scroller = new ScrollView(this);
-        scroller.setFillViewport(false);
-        scroller.setVerticalScrollBarEnabled(false);
-        scroller.setClipToPadding(false);
-
-        LinearLayout panel = new LinearLayout(this);
-        panel.setOrientation(LinearLayout.VERTICAL);
-        panel.setPadding(dp(20), dp(20), dp(20), dp(18));
-        GradientDrawable panelBackground = new GradientDrawable();
-        panelBackground.setColor(Color.argb(244, 14, 23, 34));
-        panelBackground.setCornerRadius(dp(24));
-        panelBackground.setStroke(dp(1), Color.argb(42, 255, 255, 255));
-        panel.setBackground(panelBackground);
-        scroller.addView(panel, new ScrollView.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT));
-
-        TextView title = text("Forecast location", 23, false, WHITE);
-        title.setTypeface(Typeface.create("sans-serif-medium", Typeface.NORMAL));
-        title.setContentDescription(UiTranslations.text(this, "Forecast location"));
-        panel.addView(title);
-
-        TextView explanation = text(
-                "Enter a precise forecast point. Signed decimal coordinates are supported.",
-                13,
-                false,
-                SOFT_WHITE);
-        explanation.setLineSpacing(dp(2), 1f);
-        LinearLayout.LayoutParams explanationLp = new LinearLayout.LayoutParams(-1, -2);
-        explanationLp.topMargin = dp(5);
-        panel.addView(explanation, explanationLp);
-
-        TextView latLabel = text("Latitude", 13, true, WHITE);
-        LinearLayout.LayoutParams firstLabelLp = new LinearLayout.LayoutParams(-1, -2);
-        firstLabelLp.topMargin = dp(18);
-        panel.addView(latLabel, firstLabelLp);
-
-        TextView latExample = text("Example 50.8503  •  Range −90 to 90", 11, false, FAINT_WHITE);
-        LinearLayout.LayoutParams helperLp = new LinearLayout.LayoutParams(-1, -2);
-        helperLp.topMargin = dp(2);
-        panel.addView(latExample, helperLp);
-
-        EditText lat = coordinateEditText(
-                String.format(Locale.US, "%.4f", latitude),
-                "50.8503",
-                "Latitude. Range minus 90 to 90 degrees.");
-        lat.setImeOptions(android.view.inputmethod.EditorInfo.IME_ACTION_NEXT);
-        LinearLayout.LayoutParams fieldLp = new LinearLayout.LayoutParams(-1, dp(52));
-        fieldLp.topMargin = dp(7);
-        panel.addView(lat, fieldLp);
-
-        TextView lonLabel = text("Longitude", 13, true, WHITE);
-        LinearLayout.LayoutParams secondLabelLp = new LinearLayout.LayoutParams(-1, -2);
-        secondLabelLp.topMargin = dp(14);
-        panel.addView(lonLabel, secondLabelLp);
-
-        TextView lonExample = text("Example 4.3517  •  Range −180 to 180", 11, false, FAINT_WHITE);
-        LinearLayout.LayoutParams lonHelperLp = new LinearLayout.LayoutParams(-1, -2);
-        lonHelperLp.topMargin = dp(2);
-        panel.addView(lonExample, lonHelperLp);
-
-        EditText lon = coordinateEditText(
-                String.format(Locale.US, "%.4f", longitude),
-                "4.3517",
-                "Longitude. Range minus 180 to 180 degrees.");
-        lon.setImeOptions(android.view.inputmethod.EditorInfo.IME_ACTION_DONE);
-        LinearLayout.LayoutParams lonFieldLp = new LinearLayout.LayoutParams(-1, dp(52));
-        lonFieldLp.topMargin = dp(7);
-        panel.addView(lon, lonFieldLp);
-
-        Button useLocation = coordinateDialogButton("Use my location", false);
-        useLocation.setContentDescription(UiTranslations.text(this,
-                "Use my location for the forecast"));
-        LinearLayout.LayoutParams locationLp = new LinearLayout.LayoutParams(-1, dp(48));
-        locationLp.topMargin = dp(18);
-        panel.addView(useLocation, locationLp);
-
-        LinearLayout actions = new LinearLayout(this);
-        actions.setOrientation(LinearLayout.HORIZONTAL);
-        actions.setGravity(Gravity.CENTER_VERTICAL);
-        LinearLayout.LayoutParams actionsLp = new LinearLayout.LayoutParams(-1, dp(48));
-        actionsLp.topMargin = dp(10);
-        panel.addView(actions, actionsLp);
-
-        Button cancel = coordinateDialogButton("Cancel", false);
-        cancel.setContentDescription(UiTranslations.text(this, "Cancel coordinate entry"));
-        LinearLayout.LayoutParams cancelLp = new LinearLayout.LayoutParams(0, dp(48), 1f);
-        actions.addView(cancel, cancelLp);
-
-        Button load = coordinateDialogButton("Load", true);
-        load.setContentDescription(UiTranslations.text(this,
-                "Load forecast for these coordinates"));
-        LinearLayout.LayoutParams loadLp = new LinearLayout.LayoutParams(0, dp(48), 1f);
-        loadLp.leftMargin = dp(10);
-        actions.addView(load, loadLp);
-
-        cancel.setOnClickListener(v -> dialog.dismiss());
-        useLocation.setOnClickListener(v -> {
-            dialog.dismiss();
-            selectDeviceLocationAndRefresh();
-        });
-        load.setOnClickListener(v -> {
-            try {
-                double newLat = Double.parseDouble(lat.getText().toString().trim());
-                double newLon = Double.parseDouble(lon.getText().toString().trim());
-                if (newLat < -90 || newLat > 90 || newLon < -180 || newLon > 180) {
-                    throw new NumberFormatException();
-                }
-                dialog.dismiss();
-                acceptLocation(newLat, newLon, null, false);
-            } catch (NumberFormatException e) {
-                dialog.dismiss();
-                Toast.makeText(this, UiTranslations.text(this, "Invalid coordinates"),
-                        Toast.LENGTH_SHORT).show();
-            }
-        });
-        lon.setOnEditorActionListener((view, actionId, event) -> {
-            if (actionId == android.view.inputmethod.EditorInfo.IME_ACTION_DONE) {
-                load.performClick();
-                return true;
-            }
-            return false;
-        });
-
-        dialog.setContentView(scroller);
-        dialog.show();
-
-        Window dialogWindow = dialog.getWindow();
-        if (dialogWindow != null) {
-            dialogWindow.setBackgroundDrawable(new ColorDrawable(Color.TRANSPARENT));
-            dialogWindow.addFlags(WindowManager.LayoutParams.FLAG_DIM_BEHIND);
-            WindowManager.LayoutParams attributes = dialogWindow.getAttributes();
-            attributes.dimAmount = 0.72f;
-            dialogWindow.setAttributes(attributes);
-            dialogWindow.setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE);
-            dialogWindow.setGravity(Gravity.CENTER);
-            dialogWindow.getDecorView().setPadding(0, 0, 0, 0);
-
-            int screenWidth = getResources().getDisplayMetrics().widthPixels;
-            int dialogWidth = Math.min(screenWidth - dp(32), dp(420));
-            dialogWindow.setLayout(
-                    Math.max(1, dialogWidth),
-                    ViewGroup.LayoutParams.WRAP_CONTENT);
-        }
-    }
-
-    EditText coordinateEditText(String value, String hint, String accessibilityLabel) {
-        EditText field = new EditText(this);
-        field.setText(value);
-        field.setHint(hint);
-        field.setTextColor(WHITE);
-        field.setHintTextColor(Color.argb(110, 255, 255, 255));
-        field.setTextSize(16);
-        field.setSingleLine(true);
-        field.setSelectAllOnFocus(true);
-        field.setPadding(dp(14), 0, dp(14), 0);
-        field.setInputType(InputType.TYPE_CLASS_NUMBER
-                | InputType.TYPE_NUMBER_FLAG_DECIMAL
-                | InputType.TYPE_NUMBER_FLAG_SIGNED);
-        field.setBackground(coordinateFieldBackground());
-        field.setContentDescription(accessibilityLabel + " Current value " + value + ".");
-        return field;
     }
 
     StateListDrawable coordinateFieldBackground() {
@@ -2027,6 +2034,7 @@ public class MainActivity extends WeatherSettingsFlowActivity implements DeviceL
         if (explicitSelection) {
             locationSelectionGeneration++;
         }
+        expandedDayIndex = -1;
         invalidateMinuteForecastState();
         latitude = lat;
         longitude = lon;
@@ -2055,11 +2063,14 @@ public class MainActivity extends WeatherSettingsFlowActivity implements DeviceL
                         this, locationName, lat, lon, "", "", true)
                 : CityManagerActivity.upsertLocation(
                         this, null, locationName, lat, lon, false, "", "", true);
+        updateCityPageIndicatorDots();
         if (radarPageView != null) radarPageView.setLocation(lat, lon);
     }
 
     @Override
     void onForecastLocationChanged(double lat, double lon, String name) {
+        expandedDayIndex = -1;
+        updateCityPageIndicatorDots();
         if (radarPageView != null) radarPageView.setLocation(lat, lon);
     }
 
@@ -2147,6 +2158,7 @@ public class MainActivity extends WeatherSettingsFlowActivity implements DeviceL
     @Override
     void render(JSONObject current, JSONObject hourly, JSONObject daily, String responseUnit) {
         super.render(current, hourly, daily, responseUnit);
+        if (radarPageView != null) radarPageView.refreshTimeFormat();
         scheduleSupportPrompt();
     }
 
@@ -2268,6 +2280,39 @@ public class MainActivity extends WeatherSettingsFlowActivity implements DeviceL
                 () -> widgetBackgroundPromptDialog = null);
     }
 
+    private boolean reconcileSelectedLocationOnResume() {
+        CityManagerActivity.LocationSnapshot stored = CityManagerActivity.getSelectedLocation(this);
+        if (stored == null) return false;
+        String currentId = selectedLocationId == null ? "" : selectedLocationId;
+        boolean sameId = stored.id.equals(currentId);
+        boolean sameCoords = Math.abs(stored.lat - latitude) <= WEATHER_CACHE_COORDINATE_TOLERANCE
+                && Math.abs(stored.lon - longitude) <= WEATHER_CACHE_COORDINATE_TOLERANCE;
+        if (sameId && sameCoords) return false;
+
+        if (locationRefreshCoordinator != null) locationRefreshCoordinator.onSelectionChanged();
+        expandedDayIndex = -1;
+        invalidateMinuteForecastState();
+        selectedLocationId = stored.id;
+        latitude = stored.lat;
+        longitude = stored.lon;
+        locationName = stored.name == null || stored.name.trim().isEmpty()
+                ? String.format(Locale.US, "%.3f°, %.3f°", stored.lat, stored.lon) : stored.name;
+        usingDeviceLocation = stored.isDevice;
+        locationTitle.setText(locationHeaderLabel(locationName));
+        updatePreviewSubtitle();
+        getPreferences(MODE_PRIVATE).edit()
+                .putFloat("lat", (float) latitude)
+                .putFloat("lon", (float) longitude)
+                .putString("name", locationName)
+                .apply();
+        getSharedPreferences(UI_PREFS, MODE_PRIVATE).edit()
+                .putBoolean(PREF_EXPLICIT_NON_DEVICE_LOCATION, !usingDeviceLocation)
+                .apply();
+        locationSelectionGeneration++;
+        onForecastLocationChanged(latitude, longitude, locationName);
+        return true;
+    }
+
     protected void onResume() {
         super.onResume();
         if (settingsScreen != null && selectedForecastPage == PAGE_SETTINGS) settingsScreen.onResume();
@@ -2275,6 +2320,8 @@ public class MainActivity extends WeatherSettingsFlowActivity implements DeviceL
             recreate();
             return;
         }
+        boolean locationReconciled = reconcileSelectedLocationOnResume();
+        updateCityPageIndicatorDots();
         if (radarPageView != null && selectedForecastPage == PAGE_RADAR) {
             radarPageView.setActive(true);
         }
@@ -2283,6 +2330,7 @@ public class MainActivity extends WeatherSettingsFlowActivity implements DeviceL
         if (skyLayout != null) {
             skyLayout.setAnimationRunning(enabled);
         }
+        updateSkyScenePaused();
         for (SunTrackView track : sunTrackViews) {
             if (track != null) track.setAnimationRunning(enabled);
         }
@@ -2290,7 +2338,10 @@ public class MainActivity extends WeatherSettingsFlowActivity implements DeviceL
         supportPromptHandler.removeCallbacks(widgetBackgroundPromptTask);
         supportPromptHandler.postDelayed(widgetBackgroundPromptTask, 1800L);
 
-        if (!hasResumedOnce) {
+        if (locationReconciled) {
+            suppressNextResumeWeatherLoad = false;
+            refreshWeather();
+        } else if (!hasResumedOnce) {
             hasResumedOnce = true;
         } else if (suppressNextResumeWeatherLoad) {
             suppressNextResumeWeatherLoad = false;
@@ -2311,11 +2362,23 @@ public class MainActivity extends WeatherSettingsFlowActivity implements DeviceL
         if (widgetBackgroundPromptDialog != null) widgetBackgroundPromptDialog.dismiss();
         forecastPreview.restore(false);
         if (radarPageView != null) radarPageView.setActive(false);
-        if (skyLayout != null) skyLayout.setAnimationRunning(false);
+        if (skyLayout != null) {
+            skyLayout.setScenePaused(true);
+            skyLayout.setAnimationRunning(false);
+        }
         for (SunTrackView track : sunTrackViews) {
             if (track != null) track.setAnimationRunning(false);
         }
         super.onPause();
+    }
+
+    @Override
+    public void onTrimMemory(int level) {
+        super.onTrimMemory(level);
+        if (level >= TRIM_MEMORY_UI_HIDDEN) {
+            if (radarPageView != null) radarPageView.trimMemory();
+            SkyAssetCache.trimMemory();
+        }
     }
 
     @Override

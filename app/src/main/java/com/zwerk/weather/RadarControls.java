@@ -4,9 +4,12 @@ import android.animation.ValueAnimator;
 import android.content.Context;
 import android.graphics.Canvas;
 import android.graphics.Color;
+import android.graphics.ColorFilter;
 import android.graphics.Paint;
 import android.graphics.Path;
+import android.graphics.PixelFormat;
 import android.graphics.RectF;
+import android.graphics.drawable.Drawable;
 import android.os.SystemClock;
 import android.view.View;
 import android.view.animation.LinearInterpolator;
@@ -174,4 +177,109 @@ final class RadarPlaybackButton extends RadarIconButton {
         }
     }
 
+}
+
+final class RadarFullscreenButton extends RadarIconButton {
+    private final Path glyph = new Path();
+    private boolean fullscreen;
+
+    RadarFullscreenButton(Context context) {
+        super(context);
+        setFullscreen(false);
+    }
+
+    boolean isFullscreen() {
+        return fullscreen;
+    }
+
+    void setFullscreen(boolean value) {
+        fullscreen = value;
+        setContentDescription(UiTranslations.text(getContext(),
+                value ? "Exit fullscreen radar" : "Enter fullscreen radar"));
+        invalidate();
+    }
+
+    @Override protected void onDraw(Canvas canvas) {
+        super.onDraw(canvas);
+        float cx = getWidth() / 2f;
+        float cy = getHeight() / 2f;
+        icon.setColor(Color.WHITE);
+        icon.setStyle(Paint.Style.STROKE);
+        icon.setStrokeWidth(dp(2.2f));
+        icon.setStrokeCap(Paint.Cap.ROUND);
+        icon.setStrokeJoin(Paint.Join.ROUND);
+        glyph.reset();
+        if (!fullscreen) {
+            float r = dp(7.5f);
+            float arm = dp(4.5f);
+            // Top-left outward corner
+            glyph.moveTo(cx - r, cy - r + arm);
+            glyph.lineTo(cx - r, cy - r);
+            glyph.lineTo(cx - r + arm, cy - r);
+            // Top-right outward corner
+            glyph.moveTo(cx + r - arm, cy - r);
+            glyph.lineTo(cx + r, cy - r);
+            glyph.lineTo(cx + r, cy - r + arm);
+            // Bottom-left outward corner
+            glyph.moveTo(cx - r, cy + r - arm);
+            glyph.lineTo(cx - r, cy + r);
+            glyph.lineTo(cx - r + arm, cy + r);
+            // Bottom-right outward corner
+            glyph.moveTo(cx + r - arm, cy + r);
+            glyph.lineTo(cx + r, cy + r);
+            glyph.lineTo(cx + r, cy + r - arm);
+        } else {
+            float in = dp(2.5f);
+            float arm = dp(4.5f);
+            // Top-left inward corner
+            glyph.moveTo(cx - in - arm, cy - in);
+            glyph.lineTo(cx - in, cy - in);
+            glyph.lineTo(cx - in, cy - in - arm);
+            // Top-right inward corner
+            glyph.moveTo(cx + in + arm, cy - in);
+            glyph.lineTo(cx + in, cy - in);
+            glyph.lineTo(cx + in, cy - in - arm);
+            // Bottom-left inward corner
+            glyph.moveTo(cx - in - arm, cy + in);
+            glyph.lineTo(cx - in, cy + in);
+            glyph.lineTo(cx - in, cy + in + arm);
+            // Bottom-right inward corner
+            glyph.moveTo(cx + in + arm, cy + in);
+            glyph.lineTo(cx + in, cy + in);
+            glyph.lineTo(cx + in, cy + in + arm);
+        }
+        canvas.drawPath(glyph, icon);
+    }
+}
+
+final class RadarOpacityIconDrawable extends Drawable {
+    private final Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG);
+    private final RectF oval = new RectF();
+    private final int sizePx;
+    private final float strokePx;
+
+    RadarOpacityIconDrawable(Context context) {
+        float density = context.getResources().getDisplayMetrics().density;
+        sizePx = Math.round(12f * density);
+        strokePx = Math.max(1f, 1.4f * density);
+    }
+
+    @Override public int getIntrinsicWidth() { return sizePx; }
+    @Override public int getIntrinsicHeight() { return sizePx; }
+
+    @Override public void draw(Canvas canvas) {
+        float inset = strokePx / 2f;
+        oval.set(getBounds().left + inset, getBounds().top + inset,
+                getBounds().right - inset, getBounds().bottom - inset);
+        paint.setColor(Color.WHITE);
+        paint.setStyle(Paint.Style.STROKE);
+        paint.setStrokeWidth(strokePx);
+        canvas.drawOval(oval, paint);
+        paint.setStyle(Paint.Style.FILL);
+        canvas.drawArc(oval, -90f, 180f, true, paint);
+    }
+
+    @Override public void setAlpha(int alpha) { paint.setAlpha(alpha); invalidateSelf(); }
+    @Override public void setColorFilter(ColorFilter filter) { paint.setColorFilter(filter); invalidateSelf(); }
+    @Override public int getOpacity() { return PixelFormat.TRANSLUCENT; }
 }

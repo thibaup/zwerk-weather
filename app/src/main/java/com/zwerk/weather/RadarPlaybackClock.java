@@ -13,6 +13,29 @@ final class RadarPlaybackClock {
     private long nextWaitStarted = -1L;
     private int offset = 1;
 
+    static float normalizeSpeed(float speed) {
+        if (Math.abs(speed - 0.5f) < 0.05f) return 0.5f;
+        if (Math.abs(speed - 2.0f) < 0.05f) return 2.0f;
+        return 1.0f;
+    }
+
+    static float nextSpeed(float current) {
+        float normalized = normalizeSpeed(current);
+        if (normalized < 0.75f) return 1.0f;
+        if (normalized < 1.5f) return 2.0f;
+        return 0.5f;
+    }
+
+    static long frameDelayMillis(long baseDelayMillis, float playbackSpeed,
+            int nextIndex, int frameCount) {
+        float speed = normalizeSpeed(playbackSpeed);
+        long delay = Math.round(baseDelayMillis / speed);
+        if (frameCount > 1 && nextIndex == frameCount - 1) {
+            return Math.max(1300L, delay + 650L);
+        }
+        return delay;
+    }
+
     int candidateOffset() { return offset; }
 
     void reset() {

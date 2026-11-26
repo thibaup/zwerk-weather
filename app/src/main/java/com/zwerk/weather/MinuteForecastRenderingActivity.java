@@ -17,7 +17,6 @@ import java.time.Duration;
 import java.time.Instant;
 import java.time.ZoneId;
 import java.util.ArrayList;
-import java.util.Locale;
 
 
 abstract class MinuteForecastRenderingActivity extends MinuteForecastActivity {
@@ -347,7 +346,6 @@ abstract class MinuteForecastRenderingActivity extends MinuteForecastActivity {
                 true,
                 WHITE);
         graphBody.addView(graphTitle);
-        addRainSummary(graphBody, state.response, windowStart, windowEnd, zone);
 
         LinearLayout metricRow = new LinearLayout(this);
         metricRow.setOrientation(LinearLayout.HORIZONTAL);
@@ -372,6 +370,7 @@ abstract class MinuteForecastRenderingActivity extends MinuteForecastActivity {
 
         MinutePrecipitationGraphView graph = new MinutePrecipitationGraphView(
                 this, visible, zone, windowStart, windowEnd);
+        graph.setUseInches(isPrecipitationInches());
         graph.setPreferredSelection(minuteSelectedTimeMillis);
         graph.setSelectionListener((segment, selectedMillis) -> {
             minuteSelectedTimeMillis = selectedMillis;
@@ -388,49 +387,6 @@ abstract class MinuteForecastRenderingActivity extends MinuteForecastActivity {
         graphLp.topMargin = dp(3);
         graphBody.addView(graph, graphLp);
         addMinutePageCard(page, graphBody, 10);
-    }
-
-    private void addRainSummary(LinearLayout body, JSONObject response, Instant from,
-            Instant until, ZoneId zone) {
-        Instant coveredUntil = PrecipitationForecast.continuousCoverageEnd(response, from, until);
-        PrecipitationForecast.RainEpisode rain = PrecipitationForecast.nextRain(
-                response, from, until.minusMillis(1));
-        String summary = "";
-        if (rain != null) {
-            boolean underway = !rain.start.isAfter(from);
-            // An episode ending at the edge of available data gives no evidence of when rain stops.
-            boolean endsInDryWeather = rain.end.isBefore(coveredUntil)
-                    && PrecipitationForecast.isDry(response, rain.end,
-                            rain.end.plusSeconds(60).isAfter(coveredUntil)
-                                    ? coveredUntil : rain.end.plusSeconds(60));
-            if (endsInDryWeather) {
-                summary = underway
-                        ? rainSummaryText("Rain through about %1$s", formatTime(rain.end, zone))
-                        : rainSummaryText("Rain around %1$s–%2$s",
-                                formatTime(rain.start, zone), formatTime(rain.end, zone));
-            } else {
-                summary = underway ? UiTranslations.text(this, "Rain expected now")
-                        : rainSummaryText("Rain expected around %1$s", formatTime(rain.start, zone));
-            }
-        } else if (coveredUntil.isAfter(from.plusSeconds(60))
-                && PrecipitationForecast.isDry(response, from, coveredUntil)) {
-            summary = rainSummaryText("Dry through %1$s", formatTime(coveredUntil, zone));
-        }
-        if (!summary.isEmpty()) body.addView(text(summary, 15, true, WHITE));
-
-        String source = OpenMeteoConfig.isPrecipitationOpenMeteo(this)
-                ? "Open-Meteo · " + UiTranslations.text(this, "15-minute model forecast")
-                : "Google Weather · " + UiTranslations.text(this, "Minute forecast");
-        String coverage = coveredUntil.isBefore(until)
-                ? coveredUntil.isAfter(from)
-                        ? rainSummaryText("Continuous coverage through %1$s", formatTime(coveredUntil, zone))
-                        : UiTranslations.text(this, "No continuous coverage from now")
-                : rainSummaryText("Coverage through %1$s", formatTime(until, zone));
-        body.addView(text(source + " · " + coverage, 12, false, SOFT_WHITE));
-    }
-
-    private String rainSummaryText(String pattern, Object... values) {
-        return String.format(Locale.getDefault(), UiTranslations.text(this, pattern), values);
     }
 
     LinearLayout minuteMetricCell(String label, TextView value) {
@@ -618,72 +574,5 @@ abstract class MinuteForecastRenderingActivity extends MinuteForecastActivity {
             return null;
         }
     }
-
-    static Double minuteRateMmPerHour(MinuteSegment segment) {
-        if (segment == null || segment.qpfQuantity == null) return null;
-        long durationMillis;
-        try {
-            durationMillis = Duration.between(segment.start, segment.end).toMillis();
-        } catch (Exception ignored) {
-            return null;
-        }
-        if (durationMillis <= 0L) return null;
-
-        String unit = segment.qpfUnit == null
-                ? "" : segment.qpfUnit.trim().toUpperCase(Locale.ROOT);
-        double millimeters;
-        if ("MILLIMETERS".equals(unit) || "MILLIMETER".equals(unit) || "MM".equals(unit)) {
-            millimeters = segment.qpfQuantity;
-        } else if ("INCHES".equals(unit) || "INCH".equals(unit) || "IN".equals(unit)) {
-            millimeters = segment.qpfQuantity * 25.4d;
-        } else {
-            return null;
-        }
-        if (!Double.isFinite(millimeters)) return null;
-        double rate = Math.max(0d, millimeters) * 3_600_000d / durationMillis;
-        return Double.isFinite(rate) ? rate : null;
-    }
-
-    static String minuteRateDisplay(MinuteSegment segment) {
-        Double rate = minuteRateMmPerHour(segment);
-        return rate == null ? "— mm/h" : formatMinuteRate(rate) + " mm/h";
-    }
-
-    static String formatMinuteRate(double rate) {
-        double safe = Math.max(0d, rate);
-        String text = String.format(Locale.US, safe < 10d ? "%.2f" : "%.1f", safe);
-        while (text.contains(".") && text.endsWith("0")) text = text.substring(0, text.length() - 1);
-        if (text.endsWith(".")) text = text.substring(0, text.length() - 1);
-        return text;
-    }
-
-    static String minuteTypeIntensityLabel(MinuteSegment segment) {
-        if (segment == null) return "—";
-        String type = segment.type == null || segment.type.trim().isEmpty()
-                ? "" : prettyEnum(segment.type);
-        String intensity = segment.intensity == null || segment.intensity.trim().isEmpty()
-                ? "" : prettyEnum(segment.intensity);
-        if (type.isEmpty() && intensity.isEmpty()) return "—";
-        if (type.isEmpty()) return intensity;
-        if (intensity.isEmpty()) return type;
-        return type + " · " + intensity;
-    }
-
-    static String formatMinuteQuantity(double value) {
-        String text = String.format(Locale.US, "%.3f", value);
-        while (text.contains(".") && (text.endsWith("0") || text.endsWith("."))) {
-            text = text.substring(0, text.length() - 1);
-        }
-        return text;
-    }
-
-    static String minuteUnitLabel(String raw) {
-        if (raw == null || raw.trim().isEmpty()) return "";
-        String unit = raw.trim().toUpperCase(Locale.ROOT);
-        if ("MILLIMETERS".equals(unit)) return " mm";
-        if ("INCHES".equals(unit)) return " in";
-        return " " + prettyEnum(raw);
-    }
-
 
 }

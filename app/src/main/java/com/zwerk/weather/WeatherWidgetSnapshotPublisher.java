@@ -40,6 +40,32 @@ final class WeatherWidgetSnapshotPublisher {
     }
 
     boolean publish(JSONObject current, JSONObject today, JSONObject hourly, JSONObject daily,
+            ZoneId zone, String locationName, double latitude, double longitude,
+            String cityId, SharedPreferences defaultPrefs) {
+        SharedPreferences primary = defaultPrefs != null
+                ? defaultPrefs : WidgetConfiguration.snapshot(context, "");
+        boolean published = publish(current, today, hourly, daily, zone, locationName,
+                latitude, longitude, primary);
+        if (published && cityId != null && !cityId.isEmpty() && hasWidgetsForCity(cityId)) {
+            SharedPreferences pinned = WidgetConfiguration.snapshot(context, cityId);
+            if (pinned != primary) {
+                publish(current, today, hourly, daily, zone, locationName,
+                        latitude, longitude, pinned);
+            }
+        }
+        return published;
+    }
+
+    private boolean hasWidgetsForCity(String cityId) {
+        for (int widgetId : WidgetConfiguration.widgetIds(context)) {
+            if (cityId.equals(WidgetConfiguration.read(context, widgetId).cityId)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    boolean publish(JSONObject current, JSONObject today, JSONObject hourly, JSONObject daily,
             ZoneId zone, String locationName, double latitude, double longitude, SharedPreferences prefs) {
         Integer temperature = formatter.degreesOrNull(current == null ? null : current.optJSONObject("temperature"));
         if (temperature == null) return false;
@@ -102,10 +128,20 @@ final class WeatherWidgetSnapshotPublisher {
                     JSONObject compact = new JSONObject();
                     compact.put("start", SavedForecast.epoch(day, "startTime"));
                     compact.put("end", SavedForecast.epoch(day, "endTime"));
+                    String isoDate = CombinedForecastData.dayIsoDate(day, zone);
+                    if (!isoDate.isEmpty()) compact.put("date", isoDate);
                     Integer dayHigh = formatter.degreesOrNull(day.optJSONObject("maxTemperature"));
                     Integer dayLow = formatter.degreesOrNull(day.optJSONObject("minTemperature"));
                     if (dayHigh != null) compact.put("high", dayHigh);
                     if (dayLow != null) compact.put("low", dayLow);
+                    String dayConditionType = CombinedForecastData.dayConditionType(day);
+                    String dayCondition = CombinedForecastData.dayConditionDescription(day);
+                    if (!dayConditionType.isEmpty()) compact.put("conditionType", dayConditionType);
+                    if (!dayCondition.isEmpty()) compact.put("condition", dayCondition);
+                    int dayPrecipitation = CombinedForecastData.dayProbability(day);
+                    if (dayPrecipitation >= 0) compact.put("precipitation", dayPrecipitation);
+                    double dayPrecipitationMm = CombinedForecastData.dayPrecipitationMm(day);
+                    if (Double.isFinite(dayPrecipitationMm)) compact.put("precipitationMm", dayPrecipitationMm);
                     JSONObject sun = day.optJSONObject("sunEvents");
                     if (sun != null) {
                         Instant sunrise = formatter.parseInstant(sun.optString("sunriseTime", null));

@@ -6,11 +6,8 @@ import android.app.Dialog;
 import android.content.Context;
 import android.graphics.Canvas;
 import android.graphics.Color;
-import android.graphics.LinearGradient;
 import android.graphics.Paint;
 import android.graphics.Path;
-import android.graphics.RectF;
-import android.graphics.Shader;
 import android.graphics.drawable.GradientDrawable;
 import android.view.View;
 import android.widget.Button;
@@ -136,7 +133,7 @@ abstract class WeatherActivityFoundation extends Activity {
     static final int ACCENT_YELLOW = Color.rgb(255, 194, 24);
     static final int ACCENT_BLUE = Color.rgb(176, 226, 255);
 
-    final ExecutorService executor = Executors.newSingleThreadExecutor();
+    final ExecutorService executor = Executors.newFixedThreadPool(2);
     final ExecutorService cacheExecutor = Executors.newSingleThreadExecutor();
     WeatherPreferences weatherPreferences;
     DeviceLocationRefreshCoordinator locationRefreshCoordinator;
@@ -223,6 +220,20 @@ abstract class WeatherActivityFoundation extends Activity {
 
     /** Draw the pin with the app palette instead of the system's multicolor emoji. */
     private static final class LiveLocationSpan extends android.text.style.ReplacementSpan {
+        private final Paint pinPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
+        private final Path pinPath = new Path();
+
+        LiveLocationSpan() {
+            pinPaint.setColor(ACCENT_BLUE);
+            pinPath.moveTo(12, 22);
+            pinPath.cubicTo(10, 19, 4, 13, 4, 9);
+            pinPath.cubicTo(4, -1, 20, -1, 20, 9);
+            pinPath.cubicTo(20, 13, 14, 19, 12, 22);
+            pinPath.close();
+            pinPath.addCircle(12, 9, 3, Path.Direction.CW);
+            pinPath.setFillType(Path.FillType.EVEN_ODD);
+        }
+
         @Override public int getSize(Paint paint, CharSequence text, int start, int end,
                 Paint.FontMetricsInt metrics) {
             return Math.round(paint.getTextSize());
@@ -231,21 +242,11 @@ abstract class WeatherActivityFoundation extends Activity {
         @Override public void draw(Canvas canvas, CharSequence text, int start, int end,
                 float x, int top, int y, int bottom, Paint textPaint) {
             float size = textPaint.getTextSize();
-            Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG);
-            paint.setColor(ACCENT_BLUE);
-            Path pin = new Path();
-            pin.moveTo(12, 22);
-            pin.cubicTo(10, 19, 4, 13, 4, 9);
-            pin.cubicTo(4, -1, 20, -1, 20, 9);
-            pin.cubicTo(20, 13, 14, 19, 12, 22);
-            pin.close();
-            pin.addCircle(12, 9, 3, Path.Direction.CW);
-            pin.setFillType(Path.FillType.EVEN_ODD);
             Paint.FontMetrics font = textPaint.getFontMetrics();
             canvas.save();
             canvas.translate(x, y + (font.ascent + font.descent - size) / 2f);
             canvas.scale(size / 24f, size / 24f);
-            canvas.drawPath(pin, paint);
+            canvas.drawPath(pinPath, pinPaint);
             canvas.restore();
         }
     }
@@ -311,7 +312,6 @@ abstract class WeatherActivityFoundation extends Activity {
     abstract void openExternalUrl(String address);
     abstract Button coordinateDialogButton(String label, boolean primary);
     abstract void selectDeviceLocationAndRefresh();
-    abstract void showCoordinateDialog();
 
     boolean animationsAllowed() {
         return weatherPreferences.animationsAllowed() && ValueAnimator.areAnimatorsEnabled();
@@ -327,6 +327,10 @@ abstract class WeatherActivityFoundation extends Activity {
 
     boolean isFahrenheitUnit() {
         return TEMP_FAHRENHEIT.equals(activeTemperatureUnit);
+    }
+
+    boolean isPrecipitationInches() {
+        return weatherPreferences != null && weatherPreferences.isPrecipitationInches();
     }
 
     String temperatureUnitSymbol() {
@@ -365,12 +369,11 @@ abstract class WeatherActivityFoundation extends Activity {
     }
 
     static int dayProbability(JSONObject day) {
-        if (day == null) return -1;
-        int daytime = probability(day.optJSONObject("daytimeForecast"));
-        int nighttime = probability(day.optJSONObject("nighttimeForecast"));
-        if (daytime < 0) return nighttime;
-        if (nighttime < 0) return daytime;
-        return Math.max(daytime, nighttime);
+        return CombinedForecastData.dayProbability(day);
+    }
+
+    static double dayPrecipitationMm(JSONObject day) {
+        return CombinedForecastData.dayPrecipitationMm(day);
     }
 
     static LocalDate hourLocalDate(JSONObject hour, ZoneId zone) {
@@ -609,141 +612,6 @@ abstract class WeatherActivityFoundation extends Activity {
         b.append(part);
     }
 
-    void drawWeatherGlyph(Canvas canvas, String condition, boolean daytime, float cx, float cy, float size) {
-        String key = conditionKey(condition);
-        Paint p = new Paint(Paint.ANTI_ALIAS_FLAG);
-        p.setStrokeCap(Paint.Cap.ROUND);
-        p.setStrokeJoin(Paint.Join.ROUND);
-
-        if ("clear".equals(key)) {
-            if (daytime) {
-                drawSun(canvas, p, cx, cy, size * 0.28f);
-            } else {
-                drawMoonCrescent(canvas, p, cx, cy, size * 0.34f);
-            }
-            return;
-        }
-
-        if ("partly".equals(key)) {
-            if (daytime) {
-                drawSun(canvas, p, cx + size * 0.18f, cy - size * 0.16f, size * 0.20f);
-            } else {
-                drawMoonCrescent(canvas, p, cx + size * 0.20f, cy - size * 0.17f, size * 0.22f);
-            }
-            drawCloud(canvas, p, cx - size * 0.06f, cy + size * 0.08f, size * 0.62f);
-            return;
-        }
-
-        if ("fog".equals(key)) {
-            p.setStyle(Paint.Style.STROKE);
-            p.setColor(WHITE);
-            p.setStrokeWidth(Math.max(2f, size * 0.07f));
-            for (int i = -1; i <= 1; i++) {
-                float y = cy + i * size * 0.17f;
-                canvas.drawLine(cx - size * 0.38f, y, cx + size * 0.38f, y, p);
-            }
-            return;
-        }
-
-        drawCloud(canvas, p, cx, cy - size * 0.04f, size * 0.68f);
-
-        if ("rain".equals(key)) {
-            p.setColor(ACCENT_BLUE);
-            p.setStyle(Paint.Style.STROKE);
-            p.setStrokeWidth(Math.max(2f, size * 0.065f));
-            for (int i = -1; i <= 1; i++) {
-                float x = cx + i * size * 0.20f;
-                canvas.drawLine(x, cy + size * 0.28f, x - size * 0.05f, cy + size * 0.43f, p);
-            }
-        } else if ("snow".equals(key)) {
-            p.setColor(WHITE);
-            p.setStyle(Paint.Style.STROKE);
-            p.setStrokeWidth(Math.max(1.6f, size * 0.04f));
-            for (int i = -1; i <= 1; i++) {
-                float x = cx + i * size * 0.21f;
-                float y = cy + size * 0.37f;
-                canvas.drawLine(x - size * 0.06f, y, x + size * 0.06f, y, p);
-                canvas.drawLine(x, y - size * 0.06f, x, y + size * 0.06f, p);
-                canvas.drawLine(x - size * 0.045f, y - size * 0.045f, x + size * 0.045f, y + size * 0.045f, p);
-                canvas.drawLine(x + size * 0.045f, y - size * 0.045f, x - size * 0.045f, y + size * 0.045f, p);
-            }
-        } else if ("thunder".equals(key)) {
-            p.setStyle(Paint.Style.FILL);
-            p.setColor(ACCENT_YELLOW);
-            Path bolt = new Path();
-            bolt.moveTo(cx + size * 0.05f, cy + size * 0.20f);
-            bolt.lineTo(cx - size * 0.10f, cy + size * 0.42f);
-            bolt.lineTo(cx + size * 0.01f, cy + size * 0.40f);
-            bolt.lineTo(cx - size * 0.04f, cy + size * 0.58f);
-            bolt.lineTo(cx + size * 0.18f, cy + size * 0.31f);
-            bolt.lineTo(cx + size * 0.06f, cy + size * 0.33f);
-            bolt.close();
-            canvas.drawPath(bolt, p);
-        }
-    }
-
-    static void drawSun(Canvas canvas, Paint p, float cx, float cy, float r) {
-        p.setShader(null);
-        p.setColor(ACCENT_YELLOW);
-        p.setStyle(Paint.Style.FILL);
-        canvas.drawCircle(cx, cy, r, p);
-        p.setStyle(Paint.Style.STROKE);
-        p.setStrokeWidth(Math.max(2f, r * 0.18f));
-        p.setStrokeCap(Paint.Cap.ROUND);
-        for (int i = 0; i < 8; i++) {
-            double a = Math.toRadians(i * 45);
-            float x1 = cx + (float) Math.cos(a) * r * 1.35f;
-            float y1 = cy + (float) Math.sin(a) * r * 1.35f;
-            float x2 = cx + (float) Math.cos(a) * r * 1.80f;
-            float y2 = cy + (float) Math.sin(a) * r * 1.80f;
-            canvas.drawLine(x1, y1, x2, y2, p);
-        }
-    }
-
-    static void drawMoonCrescent(Canvas canvas, Paint p, float cx, float cy, float r) {
-        Path moon = new Path();
-        moon.addCircle(cx, cy, r, Path.Direction.CW);
-        Path shadow = new Path();
-        shadow.addCircle(cx + r * 0.42f, cy - r * 0.16f, r * 0.90f, Path.Direction.CW);
-        moon.op(shadow, Path.Op.DIFFERENCE);
-
-        p.setStyle(Paint.Style.FILL);
-        p.setShader(new LinearGradient(
-                cx - r,
-                cy - r,
-                cx + r,
-                cy + r,
-                Color.rgb(255, 252, 225),
-                Color.rgb(181, 218, 255),
-                Shader.TileMode.CLAMP));
-        canvas.drawPath(moon, p);
-
-        int save = canvas.save();
-        canvas.clipPath(moon);
-        p.setShader(null);
-        p.setColor(Color.argb(42, 88, 126, 170));
-        canvas.drawCircle(cx - r * 0.28f, cy - r * 0.22f, r * 0.13f, p);
-        canvas.drawCircle(cx - r * 0.17f, cy + r * 0.30f, r * 0.09f, p);
-        canvas.restoreToCount(save);
-
-        p.setShader(null);
-        p.setColor(Color.argb(210, 232, 245, 255));
-        p.setStyle(Paint.Style.STROKE);
-        p.setStrokeWidth(Math.max(1.4f, r * 0.07f));
-        canvas.drawPath(moon, p);
-    }
-
-    static void drawCloud(Canvas canvas, Paint p, float cx, float cy, float size) {
-        p.setShader(null);
-        p.setColor(WHITE);
-        p.setStyle(Paint.Style.FILL);
-        float h = size * 0.34f;
-        canvas.drawRoundRect(new RectF(cx - size * 0.46f, cy - h * 0.05f, cx + size * 0.46f, cy + h * 0.62f), h, h, p);
-        canvas.drawCircle(cx - size * 0.20f, cy - h * 0.06f, h * 0.68f, p);
-        canvas.drawCircle(cx + size * 0.07f, cy - h * 0.28f, h * 0.88f, p);
-        canvas.drawCircle(cx + size * 0.28f, cy - h * 0.03f, h * 0.58f, p);
-    }
-
     int dp(float value) {
         return Math.round(value * getResources().getDisplayMetrics().density);
     }
@@ -751,6 +619,7 @@ abstract class WeatherActivityFoundation extends Activity {
     static String localizedMinuteSelectionDetail(Context context,
             MinuteSegment segment, Instant selectedTime, ZoneId zone) {
         if (segment == null) return UiTranslations.text(context, "No selected segment");
+        boolean useInches = context != null && new WeatherPreferences(context).isPrecipitationInches();
         StringBuilder detail = new StringBuilder();
         detail.append(WeatherTimeFormat.time(context,
                 selectedTime == null ? segment.start : selectedTime, zone));
@@ -759,10 +628,16 @@ abstract class WeatherActivityFoundation extends Activity {
                 WeatherTimeFormat.time(context, segment.start, zone),
                 WeatherTimeFormat.time(context, segment.end, zone)));
         Double rate = minuteRateMmPerHour(segment);
-        appendPart(detail, rate == null ? UiTranslations.text(context, "Rate unavailable")
-                : String.format(Locale.getDefault(),
-                UiTranslations.text(context, "Rate %s millimeters per hour"),
-                formatMinuteRate(rate)));
+        if (rate == null) {
+            appendPart(detail, UiTranslations.text(context, "Rate unavailable"));
+        } else if (useInches) {
+            appendPart(detail, formatMinuteRate(rate, true) + " "
+                    + UiTranslations.text(context, "in/h"));
+        } else {
+            appendPart(detail, String.format(Locale.getDefault(),
+                    UiTranslations.text(context, "Rate %s millimeters per hour"),
+                    formatMinuteRate(rate)));
+        }
         if (segment.probability != null) {
             appendPart(detail, String.format(Locale.getDefault(),
                     UiTranslations.text(context, "Chance %s%%"), segment.probability));
@@ -804,14 +679,31 @@ abstract class WeatherActivityFoundation extends Activity {
         return Double.isFinite(rate) ? rate : null;
     }
 
-    static String minuteRateDisplay(MinuteSegment segment) {
+    String minuteRateDisplay(MinuteSegment segment) {
+        return minuteRateDisplay(this, segment, isPrecipitationInches());
+    }
+
+    static String minuteRateDisplay(Context context, MinuteSegment segment, boolean useInches) {
         Double rate = minuteRateMmPerHour(segment);
-        return rate == null ? "— mm/h" : formatMinuteRate(rate) + " mm/h";
+        String unit = context == null
+                ? (useInches ? "in/h" : "mm/h")
+                : UiTranslations.text(context, useInches ? "in/h" : "mm/h");
+        return rate == null ? "— " + unit : formatMinuteRate(rate, useInches) + " " + unit;
     }
 
     static String formatMinuteRate(double rate) {
         double safe = Math.max(0d, rate);
         String text = String.format(Locale.US, safe < 10d ? "%.2f" : "%.1f", safe);
+        while (text.contains(".") && text.endsWith("0")) text = text.substring(0, text.length() - 1);
+        if (text.endsWith(".")) text = text.substring(0, text.length() - 1);
+        return text;
+    }
+
+    static String formatMinuteRate(double rate, boolean useInches) {
+        if (!useInches) return formatMinuteRate(rate);
+        double inches = Math.max(0d, rate) / 25.4d;
+        String pattern = inches > 0d && inches < 0.1d ? "%.3f" : (inches < 10d ? "%.2f" : "%.1f");
+        String text = String.format(Locale.US, pattern, inches);
         while (text.contains(".") && text.endsWith("0")) text = text.substring(0, text.length() - 1);
         if (text.endsWith(".")) text = text.substring(0, text.length() - 1);
         return text;

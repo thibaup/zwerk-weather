@@ -2,7 +2,6 @@ package com.zwerk.weather;
 
 import android.content.Context;
 import android.graphics.Bitmap;
-import android.graphics.BitmapFactory;
 import android.graphics.Canvas;
 import android.graphics.Color;
 import android.graphics.LinearGradient;
@@ -47,8 +46,10 @@ abstract class WeatherVisualEffectsActivity extends WeatherActivityFoundation {
         private long tintStarted;
         private boolean tintAnimating;
         private boolean blurPermanentlyDisabled;
+        private static final long PORTABLE_ANIMATED_BLUR_MIN_INTERVAL_MS = 80L;
         private boolean oemBackdropBlurActive;
         private boolean blurDirty = true;
+        private long lastPortableBlurMs;
         private Object blurNode;
         private Object blurEffect;
         private Bitmap portableBlurBitmap;
@@ -101,6 +102,14 @@ abstract class WeatherVisualEffectsActivity extends WeatherActivityFoundation {
 
         void requestAnimatedBackdropRefresh() {
             if (oemBackdropBlurActive || getVisibility() != VISIBLE) return;
+            boolean softwarePath = Build.VERSION.SDK_INT < 31 || blurPermanentlyDisabled;
+            if (softwarePath) {
+                long now = SystemClock.uptimeMillis();
+                if (lastPortableBlurMs > 0L && now >= lastPortableBlurMs
+                        && now - lastPortableBlurMs < PORTABLE_ANIMATED_BLUR_MIN_INTERVAL_MS) {
+                    return;
+                }
+            }
             blurDirty = true;
             postInvalidateOnAnimation();
         }
@@ -322,6 +331,7 @@ abstract class WeatherVisualEffectsActivity extends WeatherActivityFoundation {
                             radius * portableBlurBitmap.getWidth() / portableBlurDestination.width(),
                             radius * portableBlurBitmap.getHeight() / portableBlurDestination.height());
                     blurDirty = false;
+                    lastPortableBlurMs = SystemClock.uptimeMillis();
                 }
             } catch (RuntimeException | OutOfMemoryError unavailable) {
                 releasePortableBlurBuffer();
@@ -576,13 +586,21 @@ abstract class WeatherVisualEffectsActivity extends WeatherActivityFoundation {
         }
     }
 
+    static final int SKY_TIER_IDLE = 0;
+    static final int SKY_TIER_NORMAL = 1;
+    static final int SKY_TIER_HIGH = 2;
+
     @androidx.annotation.RequiresApi(36)
     static final class Api36SkyFrameRate {
         private Api36SkyFrameRate() { }
 
-        static void setAnimating(View view, boolean animating) {
-            view.setRequestedFrameRate(animating ? View.REQUESTED_FRAME_RATE_CATEGORY_HIGH
-                    : View.REQUESTED_FRAME_RATE_CATEGORY_NO_PREFERENCE);
+        static void setTier(View view, int tier) {
+            float category = tier >= SKY_TIER_HIGH
+                    ? View.REQUESTED_FRAME_RATE_CATEGORY_HIGH
+                    : tier == SKY_TIER_NORMAL
+                    ? View.REQUESTED_FRAME_RATE_CATEGORY_NORMAL
+                    : View.REQUESTED_FRAME_RATE_CATEGORY_NO_PREFERENCE;
+            view.setRequestedFrameRate(category);
         }
     }
 
@@ -596,15 +614,11 @@ abstract class WeatherVisualEffectsActivity extends WeatherActivityFoundation {
         private final Rect sourceRect = new Rect();
         private final RectF destinationRect = new RectF();
         private final Path fogPath = new Path();
-        private final Bitmap daySky = BitmapFactory.decodeResource(getResources(), R.drawable.weather_sky_day);
-        private final Bitmap nightSky = BitmapFactory.decodeResource(getResources(), R.drawable.weather_sky_night);
-        private final Bitmap rainSky = BitmapFactory.decodeResource(getResources(), R.drawable.weather_sky_rain);
-        private final Bitmap snowSky = BitmapFactory.decodeResource(getResources(), R.drawable.weather_sky_snow);
         private final float[] particleX = new float[92];
         private final float[] particleY = new float[92];
         private final float[] particleSpeed = new float[92];
         private final float[] particleSize = new float[92];
-        private final Shader[] fogBankShaders = new Shader[4];
+        private Shader[] fogBankShaders = new Shader[4];
 
         private SceneSpec currentSpec = new SceneSpec("day", "none", true, "Clear");
         private SceneSpec outgoingSpec;
@@ -614,6 +628,8 @@ abstract class WeatherVisualEffectsActivity extends WeatherActivityFoundation {
         private long transitionStarted;
         private long thunderStarted;
         private boolean animationRunning = true;
+        private boolean scenePaused;
+        private int appliedFrameRateTier = -1;
         private long pausedAt = -1L;
         private long accumulatedPause;
         private Shader fallbackShader;
@@ -635,11 +651,30 @@ abstract class WeatherVisualEffectsActivity extends WeatherActivityFoundation {
             setFocusable(false);
             setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
             setChildrenDrawingOrderEnabled(false);
-            for (int i = 0; i < particleX.length; i++) {
-                particleX[i] = ((i * 37) % 97) / 97f;
-                particleY[i] = ((i * 53) % 101) / 101f;
-                particleSpeed[i] = 0.24f + (((i * 29) % 41) / 80f);
-                particleSize[i] = 0.65f + (((i * 17) % 23) / 18f);
+            SkyAssetCache.initParticles(particleX, particleY, particleSpeed, particleSize);
+            atmosphere.setOnTexturesReady(() -> {
+                if (isAttachedToWindow()) postInvalidate();
+            });
+        }
+
+        private boolean isActivelyAnimating() {
+            return animationRunning && !scenePaused && animationsAllowed();
+        }
+
+        private int desiredMotionTier(long now) {
+            if (!isActivelyAnimating()) return SKY_TIER_IDLE;
+            if (transitionActive(now)) return SKY_TIER_HIGH;
+            String effect = currentSpec == null ? "none" : currentSpec.effect;
+            if ("rain".equals(effect) || "thunder".equals(effect) || "snow".equals(effect)) {
+                return SKY_TIER_HIGH;
+            }
+            return SKY_TIER_NORMAL;
+        }
+
+        private void applyFrameRateTier(int tier) {
+            if (Build.VERSION.SDK_INT >= 36 && appliedFrameRateTier != tier) {
+                appliedFrameRateTier = tier;
+                Api36SkyFrameRate.setTier(this, tier);
             }
         }
 
@@ -658,13 +693,14 @@ abstract class WeatherVisualEffectsActivity extends WeatherActivityFoundation {
                 return target.paletteScene();
             }
             long now = visualNow();
-            boolean animate = animationRunning && animationsAllowed();
+            boolean animate = isActivelyAnimating();
             if (!animate) {
                 clearOutgoingSnapshot();
                 outgoingSpec = null;
                 currentSpec = target;
                 transitionStarted = 0L;
                 if ("thunder".equals(target.effect)) thunderStarted = now;
+                applyFrameRateTier(SKY_TIER_IDLE);
                 invalidate();
                 return target.paletteScene();
             }
@@ -683,38 +719,62 @@ abstract class WeatherVisualEffectsActivity extends WeatherActivityFoundation {
             currentSpec = target;
             transitionStarted = now;
             if (enteringThunder) thunderStarted = now;
+            applyFrameRateTier(desiredMotionTier(now));
+            if (isAttachedToWindow()) {
+                if (headerGlass != null) headerGlass.requestAnimatedBackdropRefresh();
+                if (bottomGlass != null) bottomGlass.requestAnimatedBackdropRefresh();
+            }
             postInvalidateOnAnimation();
             return target.paletteScene();
         }
 
+        void setScenePaused(boolean paused) {
+            if (scenePaused == paused) return;
+            scenePaused = paused;
+            reconcileAnimationClock(false);
+        }
+
         void setAnimationRunning(boolean running) {
             boolean allowed = running && animationsAllowed();
-            if (Build.VERSION.SDK_INT >= 36) Api36SkyFrameRate.setAnimating(this, allowed);
             if (animationRunning == allowed) {
-                if (allowed) postInvalidateOnAnimation();
+                if (isActivelyAnimating()) {
+                    applyFrameRateTier(desiredMotionTier(visualNow()));
+                    postInvalidateOnAnimation();
+                }
                 return;
             }
+            animationRunning = allowed;
+            reconcileAnimationClock(!allowed);
+        }
+
+        private void reconcileAnimationClock(boolean clearTransition) {
             long now = SystemClock.uptimeMillis();
-            if (allowed) {
+            if (isActivelyAnimating()) {
                 if (pausedAt >= 0L) {
                     accumulatedPause += Math.max(0L, now - pausedAt);
                     pausedAt = -1L;
                 }
-                animationRunning = true;
+                applyFrameRateTier(desiredMotionTier(visualNow()));
+                if (isAttachedToWindow()) {
+                    if (headerGlass != null) headerGlass.requestAnimatedBackdropRefresh();
+                    if (bottomGlass != null) bottomGlass.requestAnimatedBackdropRefresh();
+                }
                 postInvalidateOnAnimation();
             } else {
-                animationRunning = false;
-                pausedAt = now;
-                clearOutgoingSnapshot();
-                outgoingSpec = null;
-                transitionStarted = 0L;
-                invalidate();
+                if (pausedAt < 0L) pausedAt = now;
+                applyFrameRateTier(SKY_TIER_IDLE);
+                if (clearTransition) {
+                    clearOutgoingSnapshot();
+                    outgoingSpec = null;
+                    transitionStarted = 0L;
+                    invalidate();
+                }
             }
         }
 
         private long visualNow() {
             long now = SystemClock.uptimeMillis();
-            if (!animationRunning && pausedAt >= 0L) now = pausedAt;
+            if (!isActivelyAnimating() && pausedAt >= 0L) now = pausedAt;
             return now - accumulatedPause;
         }
 
@@ -756,7 +816,8 @@ abstract class WeatherVisualEffectsActivity extends WeatherActivityFoundation {
 
         void release() {
             animationRunning = false;
-            if (Build.VERSION.SDK_INT >= 36) Api36SkyFrameRate.setAnimating(this, false);
+            scenePaused = true;
+            applyFrameRateTier(SKY_TIER_IDLE);
             discardRenderNode(sceneNode);
             sceneNode = null;
             outgoingSpec = null;
@@ -767,6 +828,11 @@ abstract class WeatherVisualEffectsActivity extends WeatherActivityFoundation {
             backgroundBlurNode = null;
             backgroundBlurEffect = null;
             backgroundBlurEffectRadius = -1f;
+            fallbackShader = null;
+            washShader = null;
+            fogWashShader = null;
+            nightWeatherOverlay = null;
+            fogBankShaders = new Shader[4];
         }
 
         @Override
@@ -791,42 +857,13 @@ abstract class WeatherVisualEffectsActivity extends WeatherActivityFoundation {
                     new int[]{Color.argb(58, 0, 35, 104), Color.argb(12, 18, 70, 150), Color.argb(28, 12, 60, 130)},
                     new float[]{0f, 0.56f, 1f},
                     Shader.TileMode.CLAMP);
-            fogWashShader = new LinearGradient(
-                    0, 0, 0, h,
-                    new int[]{Color.argb(9, 232, 241, 248), Color.argb(24, 232, 241, 248), Color.argb(14, 224, 236, 246)},
-                    new float[]{0f, 0.57f, 1f},
-                    Shader.TileMode.CLAMP);
+            fogWashShader = SkyAssetCache.buildFogWashShader(h);
             nightWeatherOverlay = new LinearGradient(
                     0, 0, 0, h,
                     new int[]{Color.argb(105, 3, 13, 38), Color.argb(72, 6, 25, 58), Color.argb(96, 2, 12, 32)},
                     new float[]{0f, 0.55f, 1f},
                     Shader.TileMode.CLAMP);
-            buildFogShaders(h);
-        }
-
-        private void buildFogShaders(float h) {
-            for (int i = 0; i < fogBankShaders.length; i++) {
-                float topFraction;
-                float heightFraction;
-                int alpha;
-                switch (i) {
-                    case 0: topFraction = 0.08f; heightFraction = 0.22f; alpha = 36; break;
-                    case 1: topFraction = 0.28f; heightFraction = 0.25f; alpha = 48; break;
-                    case 2: topFraction = 0.50f; heightFraction = 0.20f; alpha = 34; break;
-                    default: topFraction = 0.68f; heightFraction = 0.24f; alpha = 42; break;
-                }
-                float top = h * topFraction;
-                float bottom = top + h * heightFraction;
-                fogBankShaders[i] = new LinearGradient(
-                        0, top, 0, bottom,
-                        new int[]{
-                                Color.argb(0, 242, 248, 252),
-                                Color.argb(alpha, 242, 248, 252),
-                                Color.argb(Math.max(1, alpha - 5), 232, 241, 248),
-                                Color.argb(0, 232, 241, 248)},
-                        new float[]{0f, 0.30f, 0.68f, 1f},
-                        Shader.TileMode.CLAMP);
-            }
+            fogBankShaders = SkyAssetCache.buildFogBankShaders(h);
         }
 
         @Override
@@ -878,10 +915,13 @@ abstract class WeatherVisualEffectsActivity extends WeatherActivityFoundation {
                     }
                 }
             }
-            if (animationRunning && isAttachedToWindow()) {
+            if (isActivelyAnimating() && isAttachedToWindow()) {
+                applyFrameRateTier(desiredMotionTier(now));
                 if (headerGlass != null) headerGlass.requestAnimatedBackdropRefresh();
                 if (bottomGlass != null) bottomGlass.requestAnimatedBackdropRefresh();
                 postInvalidateOnAnimation();
+            } else {
+                applyFrameRateTier(SKY_TIER_IDLE);
             }
         }
 
@@ -1027,110 +1067,31 @@ abstract class WeatherVisualEffectsActivity extends WeatherActivityFoundation {
 
             if ("thunder".equals(spec.effect)) {
                 atmosphere.drawRain(canvas, getWidth(), getHeight(), now, spec);
-                if (animationRunning && allowLightning) {
+                if (isActivelyAnimating() && allowLightning) {
                     atmosphere.drawLightning(canvas, getWidth(), getHeight(), now,
                             thunderStarted);
                 }
             } else if ("rain".equals(spec.effect)) {
                 atmosphere.drawRain(canvas, getWidth(), getHeight(), now, spec);
             } else if ("snow".equals(spec.effect)) {
-                drawSnow(canvas, getWidth(), getHeight(), now);
+                SkyAssetCache.drawSnow(canvas, getWidth(), getHeight(), now,
+                        getResources().getDisplayMetrics().density,
+                        particleX, particleY, particleSpeed, particleSize, paint);
             } else if ("fog".equals(spec.effect)) {
-                drawFog(canvas, getWidth(), getHeight(), now);
+                SkyAssetCache.drawFog(canvas, getWidth(), getHeight(), now,
+                        fogBankShaders, fogWashShader, fogPath, paint);
             }
             canvas.restoreToCount(save);
         }
 
         private Bitmap bitmapFor(String base) {
-            if ("night".equals(base)) return nightSky;
-            if ("rain".equals(base)) return rainSky;
-            if ("snow".equals(base)) return snowSky;
-            return daySky;
+            return SkyAssetCache.get(getContext(), base, 1);
         }
 
         private void drawCover(Canvas canvas, Bitmap bitmap, float w, float h, int alpha,
                 long now) {
-            if (bitmap == null || bitmap.getWidth() <= 0 || bitmap.getHeight() <= 0) return;
-            float destinationRatio = w / h;
-            float sourceRatio = bitmap.getWidth() / (float) bitmap.getHeight();
-            if (sourceRatio > destinationRatio) {
-                int sourceWidth = Math.round(bitmap.getHeight() * destinationRatio);
-                int left = (bitmap.getWidth() - sourceWidth) / 2;
-                sourceRect.set(left, 0, left + sourceWidth, bitmap.getHeight());
-            } else {
-                int sourceHeight = Math.round(bitmap.getWidth() / destinationRatio);
-                int top = (bitmap.getHeight() - sourceHeight) / 2;
-                sourceRect.set(0, top, bitmap.getWidth(), top + sourceHeight);
-            }
-            // Overscan the moving sky so its edges stay offscreen.
-            float marginX = w * 0.018f;
-            float marginY = h * 0.018f;
-            float driftX = (float) Math.sin(now * 0.000045) * marginX * 0.70f;
-            float driftY = (float) Math.sin(now * 0.000032 + 1.2) * marginY * 0.70f;
-            destinationRect.set(-marginX + driftX, -marginY + driftY,
-                    w + marginX + driftX, h + marginY + driftY);
-            paint.setShader(null);
-            paint.setStyle(Paint.Style.FILL);
-            paint.setAlpha(alpha);
-            canvas.drawBitmap(bitmap, sourceRect, destinationRect, paint);
-            paint.setAlpha(255);
-        }
-
-        private void drawSnow(Canvas canvas, float w, float h, long now) {
-            paint.setShader(null);
-            paint.setStyle(Paint.Style.FILL);
-            paint.setColor(Color.argb(178, 255, 255, 255));
-            float seconds = now / 1000f;
-            for (int i = 0; i < particleX.length; i++) {
-                float base = particleX[i] * w;
-                float x = base + (float) Math.sin(seconds * 0.7f + i) * dp(9f);
-                float y = ((particleY[i] + seconds * particleSpeed[i] * 0.17f) % 1.08f) * h - h * 0.04f;
-                canvas.drawCircle(x, y, dp(particleSize[i] * 1.35f), paint);
-            }
-        }
-
-        private void drawFog(Canvas canvas, float w, float h, long now) {
-            float seconds = now / 1000f;
-            paint.setStyle(Paint.Style.FILL);
-            for (int i = 0; i < fogBankShaders.length; i++) {
-                float topFraction;
-                float heightFraction;
-                float speed;
-                switch (i) {
-                    case 0: topFraction = 0.08f; heightFraction = 0.22f; speed = 0.055f; break;
-                    case 1: topFraction = 0.28f; heightFraction = 0.25f; speed = -0.038f; break;
-                    case 2: topFraction = 0.50f; heightFraction = 0.20f; speed = 0.031f; break;
-                    default: topFraction = 0.68f; heightFraction = 0.24f; speed = -0.024f; break;
-                }
-                float top = h * topFraction;
-                float bankHeight = h * heightFraction;
-                float drift = (float) Math.sin(seconds * speed + i * 1.7f) * w * 0.13f;
-                float left = -w * 0.48f + drift;
-                float right = w * 1.48f + drift;
-
-                fogPath.reset();
-                fogPath.moveTo(left, top + bankHeight * 0.34f);
-                fogPath.cubicTo(left + w * 0.36f, top - bankHeight * 0.05f,
-                        left + w * 0.68f, top + bankHeight * 0.05f,
-                        left + w, top + bankHeight * 0.22f);
-                fogPath.cubicTo(left + w * 1.24f, top + bankHeight * 0.34f,
-                        left + w * 1.58f, top - bankHeight * 0.02f,
-                        right, top + bankHeight * 0.26f);
-                fogPath.lineTo(right, top + bankHeight * 0.82f);
-                fogPath.cubicTo(left + w * 1.56f, top + bankHeight * 1.00f,
-                        left + w * 1.28f, top + bankHeight * 0.72f,
-                        left + w, top + bankHeight * 0.80f);
-                fogPath.cubicTo(left + w * 0.70f, top + bankHeight * 0.96f,
-                        left + w * 0.34f, top + bankHeight * 0.73f,
-                        left, top + bankHeight * 0.84f);
-                fogPath.close();
-                paint.setShader(fogBankShaders[i]);
-                canvas.drawPath(fogPath, paint);
-            }
-            paint.setShader(fogWashShader);
-            canvas.drawRect(0, 0, w, h, paint);
-            paint.setShader(null);
-            paint.setAlpha(255);
+            SkyAssetCache.drawCover(canvas, bitmap, w, h, alpha, now, true,
+                    sourceRect, destinationRect, paint);
         }
 
     }
@@ -1222,138 +1183,19 @@ abstract class WeatherVisualEffectsActivity extends WeatherActivityFoundation {
     }
 
     void drawWeatherGlyph(Canvas canvas, String condition, boolean daytime, float cx, float cy, float size) {
-        String key = conditionKey(condition);
-        Paint p = new Paint(Paint.ANTI_ALIAS_FLAG);
-        p.setStrokeCap(Paint.Cap.ROUND);
-        p.setStrokeJoin(Paint.Join.ROUND);
-
-        if ("clear".equals(key)) {
-            if (daytime) {
-                drawSun(canvas, p, cx, cy, size * 0.28f);
-            } else {
-                drawMoonCrescent(canvas, p, cx, cy, size * 0.34f);
-            }
-            return;
-        }
-
-        if ("partly".equals(key)) {
-            if (daytime) {
-                drawSun(canvas, p, cx + size * 0.18f, cy - size * 0.16f, size * 0.20f);
-            } else {
-                drawMoonCrescent(canvas, p, cx + size * 0.20f, cy - size * 0.17f, size * 0.22f);
-            }
-            drawCloud(canvas, p, cx - size * 0.06f, cy + size * 0.08f, size * 0.62f);
-            return;
-        }
-
-        if ("fog".equals(key)) {
-            p.setStyle(Paint.Style.STROKE);
-            p.setColor(WHITE);
-            p.setStrokeWidth(Math.max(2f, size * 0.07f));
-            for (int i = -1; i <= 1; i++) {
-                float y = cy + i * size * 0.17f;
-                canvas.drawLine(cx - size * 0.38f, y, cx + size * 0.38f, y, p);
-            }
-            return;
-        }
-
-        drawCloud(canvas, p, cx, cy - size * 0.04f, size * 0.68f);
-
-        if ("rain".equals(key)) {
-            p.setColor(ACCENT_BLUE);
-            p.setStyle(Paint.Style.STROKE);
-            p.setStrokeWidth(Math.max(2f, size * 0.065f));
-            for (int i = -1; i <= 1; i++) {
-                float x = cx + i * size * 0.20f;
-                canvas.drawLine(x, cy + size * 0.28f, x - size * 0.05f, cy + size * 0.43f, p);
-            }
-        } else if ("snow".equals(key)) {
-            p.setColor(WHITE);
-            p.setStyle(Paint.Style.STROKE);
-            p.setStrokeWidth(Math.max(1.6f, size * 0.04f));
-            for (int i = -1; i <= 1; i++) {
-                float x = cx + i * size * 0.21f;
-                float y = cy + size * 0.37f;
-                canvas.drawLine(x - size * 0.06f, y, x + size * 0.06f, y, p);
-                canvas.drawLine(x, y - size * 0.06f, x, y + size * 0.06f, p);
-                canvas.drawLine(x - size * 0.045f, y - size * 0.045f, x + size * 0.045f, y + size * 0.045f, p);
-                canvas.drawLine(x + size * 0.045f, y - size * 0.045f, x - size * 0.045f, y + size * 0.045f, p);
-            }
-        } else if ("thunder".equals(key)) {
-            p.setStyle(Paint.Style.FILL);
-            p.setColor(ACCENT_YELLOW);
-            Path bolt = new Path();
-            bolt.moveTo(cx + size * 0.05f, cy + size * 0.20f);
-            bolt.lineTo(cx - size * 0.10f, cy + size * 0.42f);
-            bolt.lineTo(cx + size * 0.01f, cy + size * 0.40f);
-            bolt.lineTo(cx - size * 0.04f, cy + size * 0.58f);
-            bolt.lineTo(cx + size * 0.18f, cy + size * 0.31f);
-            bolt.lineTo(cx + size * 0.06f, cy + size * 0.33f);
-            bolt.close();
-            canvas.drawPath(bolt, p);
-        }
+        WeatherGlyphDrawer.draw(canvas, condition, daytime, cx, cy, size);
     }
 
     static void drawSun(Canvas canvas, Paint p, float cx, float cy, float r) {
-        p.setShader(null);
-        p.setColor(ACCENT_YELLOW);
-        p.setStyle(Paint.Style.FILL);
-        canvas.drawCircle(cx, cy, r, p);
-        p.setStyle(Paint.Style.STROKE);
-        p.setStrokeWidth(Math.max(2f, r * 0.18f));
-        p.setStrokeCap(Paint.Cap.ROUND);
-        for (int i = 0; i < 8; i++) {
-            double a = Math.toRadians(i * 45);
-            float x1 = cx + (float) Math.cos(a) * r * 1.35f;
-            float y1 = cy + (float) Math.sin(a) * r * 1.35f;
-            float x2 = cx + (float) Math.cos(a) * r * 1.80f;
-            float y2 = cy + (float) Math.sin(a) * r * 1.80f;
-            canvas.drawLine(x1, y1, x2, y2, p);
-        }
+        WeatherGlyphDrawer.drawSun(canvas, p, cx, cy, r);
     }
 
     static void drawMoonCrescent(Canvas canvas, Paint p, float cx, float cy, float r) {
-        Path moon = new Path();
-        moon.addCircle(cx, cy, r, Path.Direction.CW);
-        Path shadow = new Path();
-        shadow.addCircle(cx + r * 0.42f, cy - r * 0.16f, r * 0.90f, Path.Direction.CW);
-        moon.op(shadow, Path.Op.DIFFERENCE);
-
-        p.setStyle(Paint.Style.FILL);
-        p.setShader(new LinearGradient(
-                cx - r,
-                cy - r,
-                cx + r,
-                cy + r,
-                Color.rgb(255, 252, 225),
-                Color.rgb(181, 218, 255),
-                Shader.TileMode.CLAMP));
-        canvas.drawPath(moon, p);
-
-        int save = canvas.save();
-        canvas.clipPath(moon);
-        p.setShader(null);
-        p.setColor(Color.argb(42, 88, 126, 170));
-        canvas.drawCircle(cx - r * 0.28f, cy - r * 0.22f, r * 0.13f, p);
-        canvas.drawCircle(cx - r * 0.17f, cy + r * 0.30f, r * 0.09f, p);
-        canvas.restoreToCount(save);
-
-        p.setShader(null);
-        p.setColor(Color.argb(210, 232, 245, 255));
-        p.setStyle(Paint.Style.STROKE);
-        p.setStrokeWidth(Math.max(1.4f, r * 0.07f));
-        canvas.drawPath(moon, p);
+        WeatherGlyphDrawer.drawMoonCrescent(canvas, p, cx, cy, r);
     }
 
     static void drawCloud(Canvas canvas, Paint p, float cx, float cy, float size) {
-        p.setShader(null);
-        p.setColor(WHITE);
-        p.setStyle(Paint.Style.FILL);
-        float h = size * 0.34f;
-        canvas.drawRoundRect(new RectF(cx - size * 0.46f, cy - h * 0.05f, cx + size * 0.46f, cy + h * 0.62f), h, h, p);
-        canvas.drawCircle(cx - size * 0.20f, cy - h * 0.06f, h * 0.68f, p);
-        canvas.drawCircle(cx + size * 0.07f, cy - h * 0.28f, h * 0.88f, p);
-        canvas.drawCircle(cx + size * 0.28f, cy - h * 0.03f, h * 0.58f, p);
+        WeatherGlyphDrawer.drawCloud(canvas, p, cx, cy, size);
     }
 
 }

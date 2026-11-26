@@ -22,10 +22,15 @@ final class PrecipitationForecast {
 
     static JSONObject loadGoogle(String key, double lat, double lon, Instant from,
             Duration horizon, Request request) throws Exception {
-        String address = "https://weather.googleapis.com/v1/forecast/minutes:lookup"
-                + "?key=" + URLEncoder.encode(key, "UTF-8")
-                + "&location.latitude=" + lat + "&location.longitude=" + lon
-                + "&unitsSystem=METRIC&pageSize=" + PAGE_SIZE;
+        StringBuilder url = new StringBuilder(
+                "https://weather.googleapis.com/v1/forecast/minutes:lookup?");
+        if (key != null && !key.trim().isEmpty()) {
+            url.append("key=").append(URLEncoder.encode(key.trim(), "UTF-8")).append('&');
+        }
+        url.append("location.latitude=").append(lat)
+                .append("&location.longitude=").append(lon)
+                .append("&unitsSystem=METRIC&pageSize=").append(PAGE_SIZE);
+        String address = url.toString();
         JSONObject result = request.get(address);
         JSONArray merged = new JSONArray();
         HashSet<String> intervals = new HashSet<>();

@@ -175,9 +175,9 @@ final class RefreshIndicatorView extends View {
             canvas.restoreToCount(save);
         }
 
-        String label = refreshing
+        String label = UiTranslations.text(getContext(), refreshing
                 ? "Refreshing…"
-                : releaseReady ? "Release to refresh" : "Pull to refresh";
+                : releaseReady ? "Release to refresh" : "Pull to refresh");
         textPaint.setColor(WHITE);
         textPaint.setTextSize(dp(11.5f));
         textPaint.getFontMetrics(textMetrics);

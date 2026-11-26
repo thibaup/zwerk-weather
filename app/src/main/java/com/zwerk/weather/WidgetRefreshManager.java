@@ -30,7 +30,8 @@ final class WidgetRefreshManager {
 
     static boolean hasWidgets(Context context) {
         return WeatherWidgetProvider.widgetIds(context).length > 0
-                || PrecipitationWidgetProvider.widgetIds(context).length > 0;
+                || PrecipitationWidgetProvider.widgetIds(context).length > 0
+                || CombinedForecastWidgetProvider.widgetIds(context).length > 0;
     }
 
     static void reconcile(Context context) {
@@ -124,6 +125,7 @@ final class WidgetRefreshManager {
         SharedPreferences prefs = target.snapshot(context);
         WeatherWidgetTimeline timeline = new WeatherWidgetTimeline(prefs, now);
         boolean coverage = timeline.firstIndex >= 0
+                && (!target.daily || timeline.days.length() > 0)
                 && new WidgetForecastFormatter(context).temperatureUnitSymbol().equals(
                         prefs.getString(WeatherWidgetProvider.KEY_UNIT, ""));
         return WidgetRefreshPolicy.needsRefresh(prefs.getBoolean(WeatherWidgetProvider.KEY_HAS_SNAPSHOT, false),
@@ -185,7 +187,10 @@ final class WidgetRefreshManager {
                         System.currentTimeMillis(), WidgetRefreshPolicy.REFRESH_MILLIS)
                         && new WidgetForecastFormatter(context).degreesOrNull(saved.current.optJSONObject("temperature")) != null
                         && saved.hourly.optJSONArray("forecastHours") != null
-                        && saved.hourly.optJSONArray("forecastHours").length() > 0) {
+                        && saved.hourly.optJSONArray("forecastHours").length() > 0
+                        && (!target.daily || (saved.daily != null
+                                && saved.daily.optJSONArray("forecastDays") != null
+                                && saved.daily.optJSONArray("forecastDays").length() > 0))) {
                     current = saved.current; hourly = saved.hourly; daily = saved.daily;
                     fetchedAt = saved.fetchedAtMillis;
                 } else {
@@ -196,22 +201,40 @@ final class WidgetRefreshManager {
                                 OpenMeteoConfig.readCustomerKey(context));
                         current = forecast.current; hourly = forecast.hourly; daily = forecast.daily;
                     } else {
-                        String query = googleQuery(context, target);
-                        current = BackgroundWeatherRequest.request(context, API_ROOT + "currentConditions:lookup" + query, DiagnosticLog.Area.WIDGET);
+                        String key = RainAlertManager.readApiKey(context);
+                        if (key.isEmpty()) throw new IllegalStateException("Weather key unavailable");
+                        String query = googleQuery(target);
+                        current = BackgroundWeatherRequest.request(
+                                context, API_ROOT + "currentConditions:lookup" + query,
+                                DiagnosticLog.Area.WIDGET, key);
                         target.requireCurrent(context);
                         try {
-                            hourly = BackgroundWeatherRequest.request(context, API_ROOT + "forecast/hours:lookup"
-                                    + query + "&hours=24&pageSize=24", DiagnosticLog.Area.WIDGET);
+                            hourly = BackgroundWeatherRequest.request(
+                                    context, API_ROOT + "forecast/hours:lookup"
+                                            + query + "&hours=24&pageSize=24",
+                                    DiagnosticLog.Area.WIDGET, key);
                         } catch (InterruptedException stopped) { throw stopped; }
                         catch (Exception unavailable) { hourly = new JSONObject(); }
                         target.requireCurrent(context);
                         try {
-                            daily = BackgroundWeatherRequest.request(context, API_ROOT + "forecast/days:lookup"
-                                    + query + "&days=10&pageSize=10", DiagnosticLog.Area.WIDGET);
+                            daily = BackgroundWeatherRequest.request(
+                                    context, API_ROOT + "forecast/days:lookup"
+                                            + query + "&days=10&pageSize=10",
+                                    DiagnosticLog.Area.WIDGET, key);
                         } catch (InterruptedException stopped) { throw stopped; }
                         catch (Exception unavailable) { daily = new JSONObject(); }
                     }
                     fetchedAt = startedAt;
+                    target.requireCurrent(context);
+                    if (current != null && hourly != null && daily != null
+                            && hourly.optJSONArray("forecastHours") != null
+                            && hourly.optJSONArray("forecastHours").length() > 0
+                            && daily.optJSONArray("forecastDays") != null
+                            && daily.optJSONArray("forecastDays").length() > 0) {
+                        cache.persist(target.lat, target.lon, target.language,
+                                target.id + "|" + target.provider,
+                                current, hourly, daily, fetchedAt);
+                    }
                 }
                 target.requireCurrent(context);
                 current.put(SavedForecast.FETCHED_AT, fetchedAt);
@@ -239,30 +262,46 @@ final class WidgetRefreshManager {
         long now = System.currentTimeMillis();
         if (minuteDueAt(context, target, now) <= now && target.isCurrent(context)) {
             try {
-                if (!online) return false;
-                long startedAt = System.currentTimeMillis();
-                synchronized (WeatherWidgetSnapshotPublisher.class) {
-                    target.requireCurrent(context);
-                    target.snapshot(context).edit()
-                            .putString(MINUTE_ATTEMPT_SCOPE, target.minuteScope())
-                            .putLong(MINUTE_ATTEMPT_AT, startedAt).apply();
-                }
+                MinuteCacheStore.Snapshot cachedMinutes = MinuteCacheStore.readFresh(
+                        context, target.lat, target.lon, target.language,
+                        target.precipitationProvider, WidgetRefreshPolicy.REFRESH_MILLIS);
                 JSONObject minutes;
-                if (OpenMeteoConfig.GOOGLE.equals(target.precipitationProvider)) {
-                    String key = RainAlertManager.readApiKey(context);
-                    if (key.isEmpty()) return success;
-                    minutes = PrecipitationForecast.loadGoogle(key, target.lat, target.lon,
-                            Instant.now(), Duration.ofHours(6), address -> {
-                                target.requireCurrent(context);
-                                return BackgroundWeatherRequest.request(context, address, DiagnosticLog.Area.PRECIPITATION);
-                            });
+                long minuteFetchedAt;
+                if (cachedMinutes != null && cachedMinutes.response != null) {
+                    minutes = cachedMinutes.response;
+                    minuteFetchedAt = cachedMinutes.fetchedAtMillis;
                 } else {
-                    minutes = OpenMeteoForecastClient.loadMinute(context, target.lat, target.lon,
-                            OpenMeteoConfig.model(context), OpenMeteoConfig.readCustomerKey(context));
+                    if (!online) return false;
+                    long startedAt = System.currentTimeMillis();
+                    synchronized (WeatherWidgetSnapshotPublisher.class) {
+                        target.requireCurrent(context);
+                        target.snapshot(context).edit()
+                                .putString(MINUTE_ATTEMPT_SCOPE, target.minuteScope())
+                                .putLong(MINUTE_ATTEMPT_AT, startedAt).apply();
+                    }
+                    if (OpenMeteoConfig.GOOGLE.equals(target.precipitationProvider)) {
+                        String key = RainAlertManager.readApiKey(context);
+                        if (key.isEmpty()) return success;
+                        minutes = PrecipitationForecast.loadGoogle("", target.lat, target.lon,
+                                Instant.now(), Duration.ofHours(6), address -> {
+                                    target.requireCurrent(context);
+                                    return BackgroundWeatherRequest.request(
+                                            context, address, DiagnosticLog.Area.PRECIPITATION, key);
+                                });
+                    } else {
+                        minutes = OpenMeteoForecastClient.loadMinute(context, target.lat, target.lon,
+                                OpenMeteoConfig.model(context), OpenMeteoConfig.readCustomerKey(context));
+                    }
+                    minuteFetchedAt = startedAt;
+                    target.requireCurrent(context);
+                    if (minutes != null) {
+                        MinuteCacheStore.write(context, target.lat, target.lon, target.language,
+                                target.precipitationProvider, minuteFetchedAt, minutes);
+                    }
                 }
                 synchronized (WeatherWidgetSnapshotPublisher.class) {
                     target.requireCurrent(context);
-                    PrecipitationWidgetProvider.publishMinute(context, minutes, startedAt,
+                    PrecipitationWidgetProvider.publishMinute(context, minutes, minuteFetchedAt,
                             target.lat, target.lon, target.snapshot(context));
                 }
             } catch (Exception failure) {
@@ -273,11 +312,8 @@ final class WidgetRefreshManager {
         return success;
     }
 
-    private static String googleQuery(Context context, Target target) throws Exception {
-        String key = RainAlertManager.readApiKey(context);
-        if (key.isEmpty()) throw new IllegalStateException("Weather key unavailable");
-        return "?key=" + URLEncoder.encode(key, StandardCharsets.UTF_8.name())
-                + "&location.latitude=" + target.lat + "&location.longitude=" + target.lon
+    private static String googleQuery(Target target) throws Exception {
+        return "?location.latitude=" + target.lat + "&location.longitude=" + target.lon
                 + "&unitsSystem=METRIC&languageCode=" + URLEncoder.encode(target.language, StandardCharsets.UTF_8.name());
     }
 
@@ -285,6 +321,7 @@ final class WidgetRefreshManager {
         final String snapshotCity, id, name, provider, precipitationProvider, language, scope, units;
         final double lat, lon;
         boolean precipitation;
+        boolean daily;
 
         Target(Context context, String snapshotCity, String id, String name, double lat, double lon) {
             this.snapshotCity = snapshotCity;
@@ -295,28 +332,31 @@ final class WidgetRefreshManager {
             provider = OpenMeteoConfig.cacheScope(context);
             precipitationProvider = OpenMeteoConfig.precipitationCacheScope(context);
             Context localized = AppLocaleManager.wrap(context);
-            language = localized.getResources().getConfiguration().getLocales().get(0).toLanguageTag();
+            language = AppLocaleManager.activeLocale(localized).toLanguageTag();
             scope = PrecipitationWidgetData.locationScope(lat, lon, provider);
             WeatherPreferences prefs = new WeatherPreferences(context);
             boolean fahrenheit = WeatherPreferences.TEMP_FAHRENHEIT.equals(prefs.temperatureUnit());
             units = prefs.temperatureUnit() + "|" + prefs.windUnit(fahrenheit)
-                    + "|" + prefs.pressureUnit() + "|" + prefs.visibilityUnit(fahrenheit);
+                    + "|" + prefs.pressureUnit() + "|" + prefs.visibilityUnit(fahrenheit)
+                    + "|" + prefs.precipitationUnit(fahrenheit);
         }
         static Map<String, Target> forWidgets(Context context) {
             Map<String, Target> targets = new LinkedHashMap<>();
             Target selected = selected(context);
-            for (int id : WeatherWidgetProvider.widgetIds(context)) add(context, targets, selected, id, false);
-            for (int id : PrecipitationWidgetProvider.widgetIds(context)) add(context, targets, selected, id, true);
+            for (int id : WeatherWidgetProvider.widgetIds(context)) add(context, targets, selected, id, false, false);
+            for (int id : PrecipitationWidgetProvider.widgetIds(context)) add(context, targets, selected, id, true, false);
+            for (int id : CombinedForecastWidgetProvider.widgetIds(context)) add(context, targets, selected, id, false, true);
             return targets;
         }
 
         private static void add(Context context, Map<String, Target> targets,
-                Target selected, int widgetId, boolean precipitation) {
+                Target selected, int widgetId, boolean precipitation, boolean daily) {
             CityManagerActivity.LocationSnapshot city = WidgetConfiguration.read(context, widgetId).city(context);
             Target target = city == null ? selected : targets.computeIfAbsent(city.id,
                     key -> new Target(context, key, city.id, city.name, city.lat, city.lon));
             if (target == null) return;
             target.precipitation |= precipitation;
+            target.daily |= daily;
             targets.put(target.snapshotCity, target);
         }
 

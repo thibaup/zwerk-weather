@@ -13,12 +13,20 @@ final class PrecipitationWidgetChart {
 
     static Bitmap render(PrecipitationWidgetData data, int widthDp, int heightDp,
             String[] timeLabels, String emptyLabel, float textScale) {
-        // Two pixels per dp keep bars and lettering sharp without large RemoteViews parcels.
+        return render(data, widthDp, heightDp, timeLabels, emptyLabel, textScale, false, 2f);
+    }
+
+    static Bitmap render(PrecipitationWidgetData data, int widthDp, int heightDp,
+            String[] timeLabels, String emptyLabel, float textScale,
+            boolean useInches, float density) {
         int width = Math.max(160, Math.min(600, widthDp));
         int height = Math.max(32, Math.min(280, heightDp));
-        Bitmap bitmap = Bitmap.createBitmap(width * 2, height * 2, Bitmap.Config.ARGB_8888);
+        float scaleFactor = CombinedForecastWidgetChart.bitmapScale(width, height, density);
+        int pixelW = Math.max(1, Math.round(width * scaleFactor));
+        int pixelH = Math.max(1, Math.round(height * scaleFactor));
+        Bitmap bitmap = Bitmap.createBitmap(pixelW, pixelH, Bitmap.Config.ARGB_8888);
         Canvas canvas = new Canvas(bitmap);
-        canvas.scale(2f, 2f);
+        canvas.scale(pixelW / (float) width, pixelH / (float) height);
         Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG | Paint.DITHER_FLAG);
         paint.setTextSize(10f * textScale);
         float left = 43f * textScale;
@@ -27,7 +35,10 @@ final class PrecipitationWidgetChart {
         float bottom = height - (timeLabels == null ? 4f : 17f * textScale);
         float plotHeight = bottom - top;
         paint.setStrokeWidth(0.7f);
-        double maximum = PrecipitationWidgetData.chartMaximum(data.peakMm);
+        double peakDisplay = useInches ? data.peakMm / 25.4d : data.peakMm;
+        double maximum = useInches ? chartMaximumInches(peakDisplay)
+                : PrecipitationWidgetData.chartMaximum(data.peakMm);
+        String unitSuffix = useInches ? " in" : " mm";
         for (int tick : new int[]{2, 1, 0}) {
             float y = bottom - plotHeight * tick / 2f;
             paint.setColor(Color.argb(tick == 0 ? 140 : 65, 235, 249, 255));
@@ -36,7 +47,7 @@ final class PrecipitationWidgetChart {
                 paint.setColor(Color.argb(225, 235, 249, 255));
                 paint.setTextAlign(Paint.Align.RIGHT);
                 canvas.drawText(PrecipitationWidgetData.amountLabel(maximum * tick / 2d)
-                        + (tick == 2 ? " mm" : ""), left - 4f, y + 3f, paint);
+                        + (tick == 2 ? unitSuffix : ""), left - 4f, y + 3f, paint);
             }
         }
         for (int tick = 0; tick <= 6; tick++) {
@@ -55,10 +66,11 @@ final class PrecipitationWidgetChart {
             float end = left + (i + 1) * cell - gap / 2f;
             double amount = data.amountsMm[i];
             if (Double.isFinite(amount) && amount > 0d) {
+                double displayAmount = useInches ? amount / 25.4d : amount;
                 paint.setShader(fill);
                 paint.setAlpha(255);
                 paint.setStyle(Paint.Style.FILL);
-                float barTop = bottom - plotHeight * (float) (amount / maximum);
+                float barTop = bottom - plotHeight * (float) Math.min(1d, displayAmount / maximum);
                 bar.set(x, barTop, end, bottom);
                 canvas.drawRoundRect(bar, 1.2f, 1.2f, paint);
             }
@@ -80,5 +92,12 @@ final class PrecipitationWidgetChart {
                     top + plotHeight / 2f + 3f, paint);
         }
         return bitmap;
+    }
+
+    private static double chartMaximumInches(double peakInches) {
+        double value = Double.isFinite(peakInches) ? Math.max(0.02d, peakInches) : 0.02d;
+        double magnitude = Math.pow(10d, Math.floor(Math.log10(value)));
+        double scaled = value / magnitude;
+        return (scaled <= 1d ? 1d : scaled <= 2d ? 2d : scaled <= 5d ? 5d : 10d) * magnitude;
     }
 }

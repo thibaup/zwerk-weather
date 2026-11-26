@@ -8,30 +8,35 @@ import java.io.ByteArrayOutputStream;
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
 import java.util.Locale;
+import java.util.concurrent.ConcurrentHashMap;
 
 /** Translates static forecast UI labels while keeping English as a safe fallback. */
 final class UiTranslations {
-    private static String loadedTag = "";
-    private static JSONObject translations = new JSONObject();
+    static final String MAP_THEME_LIGHT_KEY = "Map theme: Light";
+    private static final ConcurrentHashMap<String, JSONObject> CACHE = new ConcurrentHashMap<>();
 
     private UiTranslations() { }
 
     static String text(Context context, String english) {
-        if (english == null || english.isEmpty() || context == null) return english;
-        String tag = catalogTag(Locale.getDefault());
-        if ("en".equals(tag)) return english;
-        synchronized (UiTranslations.class) {
-            if (!tag.equals(loadedTag)) {
-                translations = load(context, tag);
-                loadedTag = tag;
-            }
-            String translated = translations.optString(english, "");
-            return translated.isEmpty()
-                    ? UiResourceFallback.text(context, english) : translated;
+        if (english == null || english.isEmpty()) return english;
+        boolean isMapThemeLight = MAP_THEME_LIGHT_KEY.equals(english);
+        if (context == null) return isMapThemeLight ? "Light" : english;
+        String tag = catalogTag(AppLocaleManager.activeLocale(context));
+        if ("en".equals(tag)) return isMapThemeLight ? "Light" : english;
+        JSONObject catalog = CACHE.get(tag);
+        if (catalog == null) {
+            JSONObject loaded = load(context, tag);
+            JSONObject existing = CACHE.putIfAbsent(tag, loaded);
+            catalog = existing != null ? existing : loaded;
         }
+        String translated = catalog.optString(english, "");
+        if (!translated.isEmpty()) return translated;
+        if (isMapThemeLight) return "Light";
+        return UiResourceFallback.text(context, english);
     }
 
     private static String catalogTag(Locale locale) {
+        if (locale == null) return "en";
         String language = locale.getLanguage();
         if ("pt".equals(language)) {
             return "BR".equalsIgnoreCase(locale.getCountry()) ? "pt-BR" : "pt-PT";

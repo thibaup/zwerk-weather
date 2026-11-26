@@ -100,8 +100,25 @@ final class AppLocaleManager {
 
     static boolean isContextStale(Context context) {
         Locale desired = localesForTag(selectedTag(context)).get(0);
-        Locale current = context.getResources().getConfiguration().getLocales().get(0);
+        Locale current = activeLocale(context);
         return !desired.toLanguageTag().equalsIgnoreCase(current.toLanguageTag());
+    }
+
+    static Locale activeLocale(Context context) {
+        if (context != null) {
+            Resources resources = context.getResources();
+            if (resources != null) {
+                Configuration configuration = resources.getConfiguration();
+                if (configuration != null) {
+                    LocaleList locales = configuration.getLocales();
+                    if (locales != null && locales.size() > 0) {
+                        Locale first = locales.get(0);
+                        if (first != null) return first;
+                    }
+                }
+            }
+        }
+        return Locale.getDefault();
     }
 
     private static SharedPreferences preferences(Context context) {
@@ -132,7 +149,7 @@ final class AppLocaleManager {
         Locale.setDefault(locales.get(0));
     }
 
-    private static String capitalize(String value, Locale locale) {
+    static String capitalize(String value, Locale locale) {
         if (value == null || value.isEmpty()) return "";
         int first = value.offsetByCodePoints(0, 1);
         return value.substring(0, first).toUpperCase(locale) + value.substring(first);

@@ -13,7 +13,6 @@ import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
 import android.content.res.ColorStateList;
 import android.graphics.Bitmap;
-import android.graphics.BitmapFactory;
 import android.graphics.Canvas;
 import android.graphics.Color;
 import android.graphics.LinearGradient;
@@ -31,7 +30,6 @@ import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.SystemClock;
-import android.system.Os;
 import android.text.InputType;
 import android.text.method.PasswordTransformationMethod;
 import android.view.Gravity;
@@ -51,10 +49,6 @@ import android.widget.Switch;
 import android.widget.TextView;
 import android.widget.Toast;
 
-import java.io.BufferedReader;
-import java.io.File;
-import java.io.FileOutputStream;
-import java.io.FileReader;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.util.Locale;
@@ -88,7 +82,6 @@ final class SettingsScreen extends android.content.ContextWrapper {
 
     private static final String UI_PREFS = "WEATHER_UI";
     private static final String API_KEY_FILE = "weather_api_key";
-    private static final String API_KEY_TEMP_FILE = "weather_api_key.tmp";
     private static final String API_KEY_GUIDE_URL =
             "https://developers.google.com/maps/documentation/weather/get-api-key";
     private static final String GOOGLE_CLOUD_CREDENTIALS_URL =
@@ -120,6 +113,8 @@ final class SettingsScreen extends android.content.ContextWrapper {
     private static final String STATE_INITIAL_DETAILS = "state_initial_details";
     private static final String STATE_INITIAL_PRECIPITATION_PAGE = "state_initial_precipitation_page";
     private static final String STATE_INITIAL_RADAR_PAGE = "state_initial_radar_page";
+    private static final String STATE_INITIAL_COMBINED_FORECAST = "state_initial_combined_forecast";
+    private static final String STATE_API_KEY_CHANGED = "state_api_key_changed";
     private static final String STATE_TEMPERATURE_CHANGED = "state_temperature_changed";
     private static final String STATE_DISPLAY_CHANGED = "state_display_changed";
     private static final String EXTRA_UNITS_PAGE = "com.zwerk.weather.extra.UNITS_PAGE";
@@ -164,12 +159,15 @@ final class SettingsScreen extends android.content.ContextWrapper {
     private boolean initialSevereAlertsEnabled;
     private boolean initialPrecipitationPageEnabled;
     private boolean initialRadarPageEnabled;
+    private boolean initialCombinedForecastEnabled;
     private String initialProvider;
     private String initialPrecipitationProvider;
     private String initialModel;
+    private boolean apiKeyChanged;
     private boolean openMeteoKeyChanged;
     private String initialWeatherDetailsSignature;
     private String displayedBudgetProfile;
+    private String displayedProvider;
     private boolean displayedNotificationsBlocked;
     private boolean displayedWidgetBackgroundReminder;
     private Dialog widgetBackgroundDialog;
@@ -204,15 +202,20 @@ final class SettingsScreen extends android.content.ContextWrapper {
         initialModel = savedInstanceState == null
                 ? OpenMeteoConfig.model(this)
                 : savedInstanceState.getString("initial_model", OpenMeteoConfig.model(this));
+        apiKeyChanged = savedInstanceState != null
+                && savedInstanceState.getBoolean(STATE_API_KEY_CHANGED, false);
         openMeteoKeyChanged = savedInstanceState != null
                 && savedInstanceState.getBoolean("open_meteo_key_changed", false);
         RainAlertManager.reconcile(this);
+        SevereAlertManager.reconcile(this);
         if (savedInstanceState == null) {
             initialAirQualityEnabled = prefs.getBoolean(PREF_AIR_QUALITY, true);
             initialPollenEnabled = prefs.getBoolean(PREF_POLLEN, true);
             initialSevereAlertsEnabled = prefs.getBoolean(PREF_SEVERE_ALERTS, false);
             initialPrecipitationPageEnabled = prefs.getBoolean(PREF_PRECIPITATION_PAGE, true);
             initialRadarPageEnabled = prefs.getBoolean(PREF_RADAR_PAGE, true);
+            initialCombinedForecastEnabled = prefs.getBoolean(
+                    WeatherPreferences.PREF_COMBINED_FORECAST, false);
             initialWeatherDetailsSignature = weatherDetailsSignature(prefs);
         } else {
             initialAirQualityEnabled = savedInstanceState.getBoolean(
@@ -226,6 +229,9 @@ final class SettingsScreen extends android.content.ContextWrapper {
                     prefs.getBoolean(PREF_PRECIPITATION_PAGE, true));
             initialRadarPageEnabled = savedInstanceState.getBoolean(
                     STATE_INITIAL_RADAR_PAGE, prefs.getBoolean(PREF_RADAR_PAGE, true));
+            initialCombinedForecastEnabled = savedInstanceState.getBoolean(
+                    STATE_INITIAL_COMBINED_FORECAST,
+                    prefs.getBoolean(WeatherPreferences.PREF_COMBINED_FORECAST, false));
             initialWeatherDetailsSignature = savedInstanceState.getString(
                     STATE_INITIAL_DETAILS, weatherDetailsSignature(prefs));
             temperatureUnitChanged = savedInstanceState.getBoolean(
@@ -250,6 +256,8 @@ final class SettingsScreen extends android.content.ContextWrapper {
                 .putString(PREF_WIND_UNIT, preferences.windUnit(fahrenheit))
                 .putString(PREF_PRESSURE_UNIT, preferences.pressureUnit())
                 .putString(PREF_VISIBILITY_UNIT, preferences.visibilityUnit(fahrenheit))
+                .putString(WeatherPreferences.PREF_PRECIPITATION_UNIT,
+                        preferences.precipitationUnit(fahrenheit))
                 .apply();
     }
 
@@ -372,6 +380,7 @@ final class SettingsScreen extends android.content.ContextWrapper {
     private void buildUi() {
         surfaceStyles.clear();
         displayedBudgetProfile = ApiRequestBudgetManager.profile(this);
+        displayedProvider = OpenMeteoConfig.provider(this);
         displayedNotificationsBlocked = alertNotificationsBlocked();
         displayedWidgetBackgroundReminder = WidgetBackgroundAccess.needsReminder(this);
         FrameLayout root = null;
@@ -450,11 +459,20 @@ final class SettingsScreen extends android.content.ContextWrapper {
             addApiSettingsRows();
         } else {
             addSectionHeading(getString(R.string.settings_display));
+            boolean combinedForecastEnabled = getSharedPreferences(UI_PREFS, MODE_PRIVATE)
+                    .getBoolean(WeatherPreferences.PREF_COMBINED_FORECAST, false);
             addSwitchRow(
-                    getString(R.string.settings_precipitation_page),
-                    getString(R.string.settings_precipitation_page_summary),
-                    PREF_PRECIPITATION_PAGE,
-                    true);
+                    "Combine forecast & rain",
+                    "Show rain precipitation inside the multi-day forecast and today's hourly graph.",
+                    WeatherPreferences.PREF_COMBINED_FORECAST,
+                    false);
+            if (!combinedForecastEnabled) {
+                addSwitchRow(
+                        getString(R.string.settings_precipitation_page),
+                        getString(R.string.settings_precipitation_page_summary),
+                        PREF_PRECIPITATION_PAGE,
+                        true);
+            }
             addSwitchRow(
                     getString(R.string.settings_radar_page),
                     getString(R.string.settings_radar_page_summary),
@@ -520,7 +538,13 @@ final class SettingsScreen extends android.content.ContextWrapper {
                     Intent notificationSettings = new Intent(
                             android.provider.Settings.ACTION_APP_NOTIFICATION_SETTINGS)
                             .putExtra(android.provider.Settings.EXTRA_APP_PACKAGE, getPackageName());
-                    startActivity(notificationSettings);
+                    try {
+                        startActivity(notificationSettings);
+                    } catch (Exception ignored) {
+                        Toast.makeText(this,
+                                UiTranslations.text(this, "Couldn’t open notification settings."),
+                                Toast.LENGTH_SHORT).show();
+                    }
                 });
             }
 
@@ -573,18 +597,13 @@ final class SettingsScreen extends android.content.ContextWrapper {
         }
         activity.setContentView(root);
         root.setOnApplyWindowInsetsListener((v, insets) -> {
-            int top;
-            int bottom;
+            Rect safe = WeatherSystemBars.safeInsets(insets);
+            int bottom = safe.bottom;
             if (Build.VERSION.SDK_INT >= 30) {
-                android.graphics.Insets bars = insets.getInsets(WindowInsets.Type.systemBars());
                 android.graphics.Insets ime = insets.getInsets(WindowInsets.Type.ime());
-                top = bars.top;
-                bottom = Math.max(bars.bottom, ime.bottom);
-            } else {
-                top = insets.getSystemWindowInsetTop();
-                bottom = insets.getSystemWindowInsetBottom();
+                bottom = Math.max(bottom, ime.bottom);
             }
-            page.setPadding(dp(18), top, dp(18), bottom + dp(32));
+            page.setPadding(dp(18) + safe.left, safe.top, dp(18) + safe.right, bottom + dp(32));
             return insets;
         });
         root.requestApplyInsets();
@@ -646,13 +665,14 @@ final class SettingsScreen extends android.content.ContextWrapper {
     private String radarMapThemeLabel() {
         String theme = new WeatherPreferences(this).radarMapTheme();
         return WeatherPreferences.MAP_DARK.equals(theme) ? "Dark"
-                : WeatherPreferences.MAP_LIGHT.equals(theme) ? "Light" : "Automatic";
+                : WeatherPreferences.MAP_LIGHT.equals(theme)
+                        ? UiTranslations.MAP_THEME_LIGHT_KEY : "Automatic";
     }
 
     private void showRadarMapThemeDialog() {
         String theme = new WeatherPreferences(this).radarMapTheme();
         showGlassChoiceDialog("Radar map appearance",
-                new String[]{"Automatic", "Light", "Dark"},
+                new String[]{"Automatic", UiTranslations.MAP_THEME_LIGHT_KEY, "Dark"},
                 new String[]{"Follows day and night", "Always a light map",
                         "Black map with the original rain colours"},
                 WeatherPreferences.MAP_DARK.equals(theme) ? 2
@@ -699,6 +719,7 @@ final class SettingsScreen extends android.content.ContextWrapper {
             if (activity instanceof MainActivity) {
                 MainActivity main = (MainActivity) activity;
                 main.applyTileTransparency();
+                main.applyForecastPagePreferences();
                 main.updateDailyHistory();
             }
             if (languageChanged) getWindow().getDecorView().post(this::recreate);
@@ -1311,31 +1332,14 @@ final class SettingsScreen extends android.content.ContextWrapper {
     }
 
     private boolean hasConfiguredApiKey() {
-        File keyFile = new File(getFilesDir(), API_KEY_FILE);
-        if (!keyFile.isFile()) return false;
-        try (BufferedReader reader = new BufferedReader(new FileReader(keyFile))) {
-            String line = reader.readLine();
-            return line != null && !line.trim().isEmpty();
-        } catch (Exception ignored) {
-            return false;
-        }
+        return !ApiKeyStore.read(this, API_KEY_FILE).isEmpty();
     }
 
     private void writeApiKeyAtomically(String value) throws Exception {
-        File target = new File(getFilesDir(), API_KEY_FILE);
-        File temp = new File(getFilesDir(), API_KEY_TEMP_FILE);
-        if (temp.exists() && !temp.delete()) {
+        ApiKeyStore.write(this, API_KEY_FILE, value);
+        if (value != null && !value.trim().isEmpty()
+                && ApiKeyStore.read(this, API_KEY_FILE).isEmpty()) {
             throw new IOException("Could not prepare private credential file");
-        }
-        try {
-            try (FileOutputStream out = openFileOutput(API_KEY_TEMP_FILE, MODE_PRIVATE)) {
-                out.write(value.getBytes(StandardCharsets.UTF_8));
-                out.flush();
-                out.getFD().sync();
-            }
-            Os.rename(temp.getAbsolutePath(), target.getAbsolutePath());
-        } finally {
-            if (temp.exists()) temp.delete();
         }
     }
 
@@ -1555,19 +1559,11 @@ final class SettingsScreen extends android.content.ContextWrapper {
         private final RectF destinationRect = new RectF();
         private final Path clipPath = new Path();
         private final Path fogPath = new Path();
-        private final Bitmap daySky = BitmapFactory.decodeResource(
-                getResources(), R.drawable.weather_sky_day);
-        private final Bitmap nightSky = BitmapFactory.decodeResource(
-                getResources(), R.drawable.weather_sky_night);
-        private final Bitmap rainSky = BitmapFactory.decodeResource(
-                getResources(), R.drawable.weather_sky_rain);
-        private final Bitmap snowSky = BitmapFactory.decodeResource(
-                getResources(), R.drawable.weather_sky_snow);
         private final float[] particleX = new float[66];
         private final float[] particleY = new float[66];
         private final float[] particleSpeed = new float[66];
         private final float[] particleSize = new float[66];
-        private final Shader[] fogBankShaders = new Shader[4];
+        private Shader[] fogBankShaders = new Shader[4];
 
         private String scene = "day";
         private SceneSpec previewSpec = settingsScene(scene, true);
@@ -1579,12 +1575,8 @@ final class SettingsScreen extends android.content.ContextWrapper {
         ScenePreviewView(Context context) {
             super(context);
             setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_YES);
-            for (int i = 0; i < particleX.length; i++) {
-                particleX[i] = ((i * 37) % 97) / 97f;
-                particleY[i] = ((i * 53) % 101) / 101f;
-                particleSpeed[i] = 0.25f + (((i * 29) % 41) / 82f);
-                particleSize[i] = 0.72f + (((i * 17) % 23) / 20f);
-            }
+            SkyAssetCache.initParticles(particleX, particleY, particleSpeed, particleSize);
+            atmosphere.setOnTexturesReady(this::postInvalidate);
         }
 
         void setScene(String nextScene, String label) {
@@ -1616,6 +1608,12 @@ final class SettingsScreen extends android.content.ContextWrapper {
             }
         }
 
+        @Override
+        protected void onDetachedFromWindow() {
+            animationRunning = false;
+            super.onDetachedFromWindow();
+        }
+
         private boolean hasAnimatedOverlay() {
             return true;
         }
@@ -1629,53 +1627,8 @@ final class SettingsScreen extends android.content.ContextWrapper {
             super.onSizeChanged(w, h, oldw, oldh);
             if (w <= 0 || h <= 0) return;
             atmosphere.onSizeChanged(w, h);
-            fogWashShader = new LinearGradient(
-                    0, 0, 0, h,
-                    new int[]{Color.argb(8, 232, 241, 248), Color.argb(27, 232, 241, 248), Color.argb(13, 224, 236, 246)},
-                    new float[]{0f, 0.57f, 1f},
-                    Shader.TileMode.CLAMP);
-            buildFogShaders(h);
-        }
-
-        private void buildFogShaders(float h) {
-            for (int i = 0; i < fogBankShaders.length; i++) {
-                float topFraction;
-                float heightFraction;
-                int alpha;
-                switch (i) {
-                    case 0:
-                        topFraction = 0.08f;
-                        heightFraction = 0.22f;
-                        alpha = 42;
-                        break;
-                    case 1:
-                        topFraction = 0.28f;
-                        heightFraction = 0.25f;
-                        alpha = 56;
-                        break;
-                    case 2:
-                        topFraction = 0.50f;
-                        heightFraction = 0.20f;
-                        alpha = 38;
-                        break;
-                    default:
-                        topFraction = 0.68f;
-                        heightFraction = 0.24f;
-                        alpha = 48;
-                        break;
-                }
-                float top = h * topFraction;
-                float bottom = top + h * heightFraction;
-                fogBankShaders[i] = new LinearGradient(
-                        0, top, 0, bottom,
-                        new int[]{
-                                Color.argb(0, 244, 250, 255),
-                                Color.argb(alpha, 244, 250, 255),
-                                Color.argb(Math.max(1, alpha - 6), 232, 241, 248),
-                                Color.argb(0, 232, 241, 248)},
-                        new float[]{0f, 0.30f, 0.68f, 1f},
-                        Shader.TileMode.CLAMP);
-            }
+            fogWashShader = SkyAssetCache.buildFogWashShader(h);
+            fogBankShaders = SkyAssetCache.buildFogBankShaders(h);
         }
 
         @Override
@@ -1695,17 +1648,15 @@ final class SettingsScreen extends android.content.ContextWrapper {
             int save = canvas.save();
             canvas.clipPath(clipPath);
 
-            Bitmap sky = daySky;
-            if ("night".equals(scene)) {
-                sky = nightSky;
-            } else if ("rain".equals(scene) || "thunder".equals(scene) || "fog".equals(scene)) {
-                sky = rainSky;
-            } else if ("snow".equals(scene)) {
-                sky = snowSky;
-            }
-
+            long now = visualNow();
+            String base = "night".equals(scene) ? "night"
+                    : ("rain".equals(scene) || "thunder".equals(scene) || "fog".equals(scene))
+                            ? "rain"
+                    : "snow".equals(scene) ? "snow" : "day";
+            Bitmap sky = SkyAssetCache.get(getContext(), base, 2);
             if (sky != null) {
-                drawCover(canvas, sky, w, h);
+                SkyAssetCache.drawCover(canvas, sky, w, h, 255, now, false,
+                        sourceRect, destinationRect, paint);
             } else {
                 canvas.drawColor(Color.rgb(29, 63, 103));
             }
@@ -1717,7 +1668,6 @@ final class SettingsScreen extends android.content.ContextWrapper {
                     : Color.argb(22, 0, 26, 70));
             canvas.drawRect(0, 0, w, h, paint);
 
-            long now = visualNow();
             atmosphere.drawAmbient(canvas, w, h, now, previewSpec);
             if ("thunder".equals(scene)) {
                 atmosphere.drawRain(canvas, w, h, now, previewSpec);
@@ -1727,9 +1677,12 @@ final class SettingsScreen extends android.content.ContextWrapper {
             } else if ("rain".equals(scene)) {
                 atmosphere.drawRain(canvas, w, h, now, previewSpec);
             } else if ("snow".equals(scene)) {
-                drawSnow(canvas, w, h, now);
+                SkyAssetCache.drawSnow(canvas, w, h, now,
+                        getResources().getDisplayMetrics().density,
+                        particleX, particleY, particleSpeed, particleSize, paint);
             } else if ("fog".equals(scene)) {
-                drawFog(canvas, w, h, now);
+                SkyAssetCache.drawFog(canvas, w, h, now, fogBankShaders, fogWashShader,
+                        fogPath, paint);
             }
 
             canvas.restoreToCount(save);
@@ -1738,106 +1691,6 @@ final class SettingsScreen extends android.content.ContextWrapper {
                         || "snow".equals(scene) ? 33L : 55L);
             }
         }
-
-        private void drawCover(Canvas canvas, Bitmap bitmap, float w, float h) {
-            if (bitmap.getWidth() <= 0 || bitmap.getHeight() <= 0) return;
-            float destinationRatio = w / h;
-            float sourceRatio = bitmap.getWidth() / (float) bitmap.getHeight();
-            if (sourceRatio > destinationRatio) {
-                int sourceWidth = Math.round(bitmap.getHeight() * destinationRatio);
-                int left = (bitmap.getWidth() - sourceWidth) / 2;
-                sourceRect.set(left, 0, left + sourceWidth, bitmap.getHeight());
-            } else {
-                int sourceHeight = Math.round(bitmap.getWidth() / destinationRatio);
-                int top = (bitmap.getHeight() - sourceHeight) / 2;
-                sourceRect.set(0, top, bitmap.getWidth(), top + sourceHeight);
-            }
-            destinationRect.set(0, 0, w, h);
-            paint.setShader(null);
-            paint.setStyle(Paint.Style.FILL);
-            paint.setAlpha(255);
-            canvas.drawBitmap(bitmap, sourceRect, destinationRect, paint);
-        }
-
-        private void drawSnow(Canvas canvas, float w, float h, long now) {
-            paint.setShader(null);
-            paint.setStyle(Paint.Style.FILL);
-            paint.setColor(Color.argb(205, 255, 255, 255));
-            float seconds = now / 1000f;
-            for (int i = 0; i < particleX.length; i++) {
-                float x = particleX[i] * w
-                        + (float) Math.sin(seconds * 0.72f + i) * dp(6f);
-                float y = ((particleY[i] + seconds * particleSpeed[i] * 0.16f) % 1.08f) * h
-                        - h * 0.04f;
-                canvas.drawCircle(x, y, dp(particleSize[i] * 1.2f), paint);
-            }
-        }
-
-        private void drawFog(Canvas canvas, float w, float h, long now) {
-            float seconds = now / 1000f;
-            paint.setStyle(Paint.Style.FILL);
-            for (int i = 0; i < fogBankShaders.length; i++) {
-                float topFraction;
-                float heightFraction;
-                float speed;
-                switch (i) {
-                    case 0:
-                        topFraction = 0.08f;
-                        heightFraction = 0.22f;
-                        speed = 0.060f;
-                        break;
-                    case 1:
-                        topFraction = 0.28f;
-                        heightFraction = 0.25f;
-                        speed = -0.042f;
-                        break;
-                    case 2:
-                        topFraction = 0.50f;
-                        heightFraction = 0.20f;
-                        speed = 0.034f;
-                        break;
-                    default:
-                        topFraction = 0.68f;
-                        heightFraction = 0.24f;
-                        speed = -0.027f;
-                        break;
-                }
-                float top = h * topFraction;
-                float bankHeight = h * heightFraction;
-                float drift = (float) Math.sin(seconds * speed + i * 1.7f) * w * 0.13f;
-                float left = -w * 0.48f + drift;
-                float right = w * 1.48f + drift;
-
-                fogPath.reset();
-                fogPath.moveTo(left, top + bankHeight * 0.34f);
-                fogPath.cubicTo(
-                        left + w * 0.36f, top - bankHeight * 0.05f,
-                        left + w * 0.68f, top + bankHeight * 0.05f,
-                        left + w, top + bankHeight * 0.22f);
-                fogPath.cubicTo(
-                        left + w * 1.24f, top + bankHeight * 0.34f,
-                        left + w * 1.58f, top - bankHeight * 0.02f,
-                        right, top + bankHeight * 0.26f);
-                fogPath.lineTo(right, top + bankHeight * 0.82f);
-                fogPath.cubicTo(
-                        left + w * 1.56f, top + bankHeight * 1.00f,
-                        left + w * 1.28f, top + bankHeight * 0.72f,
-                        left + w, top + bankHeight * 0.80f);
-                fogPath.cubicTo(
-                        left + w * 0.70f, top + bankHeight * 0.96f,
-                        left + w * 0.34f, top + bankHeight * 0.73f,
-                        left, top + bankHeight * 0.84f);
-                fogPath.close();
-
-                paint.setShader(fogBankShaders[i]);
-                canvas.drawPath(fogPath, paint);
-            }
-            paint.setShader(fogWashShader);
-            canvas.drawRect(0, 0, w, h, paint);
-            paint.setShader(null);
-            paint.setAlpha(255);
-        }
-
     }
 
     private final class SettingsBackButton extends View {
@@ -1885,17 +1738,12 @@ final class SettingsScreen extends android.content.ContextWrapper {
         private final Rect source = new Rect();
         private final RectF destination = new RectF();
         private final Path path = new Path();
-        private final Bitmap daySky = BitmapFactory.decodeResource(
-                getResources(), R.drawable.weather_sky_day);
-        private final Bitmap nightSky = BitmapFactory.decodeResource(
-                getResources(), R.drawable.weather_sky_night);
-        private final Bitmap rainSky = BitmapFactory.decodeResource(
-                getResources(), R.drawable.weather_sky_rain);
-        private final Bitmap snowSky = BitmapFactory.decodeResource(
-                getResources(), R.drawable.weather_sky_snow);
         private final float[] particleX = new float[78];
         private final float[] particleY = new float[78];
         private final float[] particleSpeed = new float[78];
+        private final float[] particleSize = new float[78];
+        private Shader[] fogBankShaders = new Shader[4];
+        private Shader fogWashShader;
         private Shader backdropShade;
         private boolean animationRunning = true;
         private long frozenTime = SystemClock.uptimeMillis();
@@ -1908,11 +1756,8 @@ final class SettingsScreen extends android.content.ContextWrapper {
             this.sceneKey = sceneKey == null ? "day" : sceneKey;
             backdropSpec = settingsScene(this.sceneKey, sceneDaytime);
             setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
-            for (int i = 0; i < particleX.length; i++) {
-                particleX[i] = ((i * 37) % 97) / 97f;
-                particleY[i] = ((i * 53) % 101) / 101f;
-                particleSpeed[i] = 0.22f + (((i * 29) % 41) / 82f);
-            }
+            SkyAssetCache.initParticles(particleX, particleY, particleSpeed, particleSize);
+            atmosphere.setOnTexturesReady(this::postInvalidate);
         }
 
         void setAnimationRunning(boolean running) {
@@ -1931,6 +1776,12 @@ final class SettingsScreen extends android.content.ContextWrapper {
             }
         }
 
+        @Override
+        protected void onDetachedFromWindow() {
+            animationRunning = false;
+            super.onDetachedFromWindow();
+        }
+
         private boolean isAnimatedScene() {
             return true;
         }
@@ -1944,6 +1795,8 @@ final class SettingsScreen extends android.content.ContextWrapper {
             super.onSizeChanged(w, h, oldw, oldh);
             if (w <= 0 || h <= 0) return;
             atmosphere.onSizeChanged(w, h);
+            fogBankShaders = SkyAssetCache.buildFogBankShaders(h);
+            fogWashShader = SkyAssetCache.buildFogWashShader(h);
             backdropShade = new LinearGradient(0, 0, 0, h,
                     new int[]{Color.argb(34, 0, 24, 65), Color.argb(50, 3, 20, 48),
                             Color.argb(88, 3, 10, 24)},
@@ -1957,21 +1810,24 @@ final class SettingsScreen extends android.content.ContextWrapper {
             float h = getHeight();
             if (w <= 0 || h <= 0) return;
 
-            Bitmap sky;
+            long now = visualNow();
+            String base;
             if ("night".equals(sceneKey)) {
-                sky = nightSky;
+                base = "night";
             } else if ("snow".equals(sceneKey)) {
-                sky = snowSky;
+                base = "snow";
             } else if ("rain".equals(sceneKey)
                     || "thunder".equals(sceneKey)
                     || "fog".equals(sceneKey)) {
-                sky = backdropSpec.daytime ? rainSky : nightSky;
+                base = backdropSpec.daytime ? "rain" : "night";
             } else {
-                sky = daySky;
+                base = "day";
             }
 
+            Bitmap sky = SkyAssetCache.get(getContext(), base, 1);
             if (sky != null) {
-                drawCover(canvas, sky, w, h);
+                SkyAssetCache.drawCover(canvas, sky, w, h, 255, now, false,
+                        source, destination, paint);
             } else {
                 canvas.drawColor(scrimBase);
             }
@@ -1981,7 +1837,6 @@ final class SettingsScreen extends android.content.ContextWrapper {
             canvas.drawRect(0, 0, w, h, paint);
             paint.setShader(null);
 
-            long now = visualNow();
             atmosphere.drawAmbient(canvas, w, h, now, backdropSpec);
             if ("thunder".equals(sceneKey)) {
                 atmosphere.drawRain(canvas, w, h, now, backdropSpec);
@@ -1991,9 +1846,12 @@ final class SettingsScreen extends android.content.ContextWrapper {
             } else if ("rain".equals(sceneKey)) {
                 atmosphere.drawRain(canvas, w, h, now, backdropSpec);
             } else if ("snow".equals(sceneKey)) {
-                drawSnow(canvas, w, h, now);
+                SkyAssetCache.drawSnow(canvas, w, h, now,
+                        getResources().getDisplayMetrics().density,
+                        particleX, particleY, particleSpeed, particleSize, paint);
             } else if ("fog".equals(sceneKey)) {
-                drawFog(canvas, w, h, now);
+                SkyAssetCache.drawFog(canvas, w, h, now, fogBankShaders, fogWashShader,
+                        path, paint);
             }
 
             if (animationRunning && isAnimatedScene()) {
@@ -2001,65 +1859,6 @@ final class SettingsScreen extends android.content.ContextWrapper {
                         || "snow".equals(sceneKey) ? 33L : 55L);
             }
         }
-
-        private void drawCover(Canvas canvas, Bitmap bitmap, float w, float h) {
-            float destinationRatio = w / h;
-            float sourceRatio = bitmap.getWidth() / (float) bitmap.getHeight();
-            if (sourceRatio > destinationRatio) {
-                int sourceWidth = Math.round(bitmap.getHeight() * destinationRatio);
-                int left = (bitmap.getWidth() - sourceWidth) / 2;
-                source.set(left, 0, left + sourceWidth, bitmap.getHeight());
-            } else {
-                int sourceHeight = Math.round(bitmap.getWidth() / destinationRatio);
-                int top = (bitmap.getHeight() - sourceHeight) / 2;
-                source.set(0, top, bitmap.getWidth(), top + sourceHeight);
-            }
-            destination.set(0, 0, w, h);
-            paint.setShader(null);
-            paint.setAlpha(255);
-            canvas.drawBitmap(bitmap, source, destination, paint);
-        }
-
-        private void drawSnow(Canvas canvas, float w, float h, long now) {
-            paint.setShader(null);
-            paint.setStyle(Paint.Style.FILL);
-            paint.setColor(Color.argb(158, 255, 255, 255));
-            float seconds = now / 1000f;
-            for (int i = 0; i < particleX.length; i++) {
-                float x = particleX[i] * w
-                        + (float) Math.sin(seconds * 0.68f + i) * dp(6f);
-                float y = ((particleY[i] + seconds * particleSpeed[i] * 0.15f) % 1.06f) * h;
-                canvas.drawCircle(x, y, dp(1.0f + (i % 4) * 0.28f), paint);
-            }
-        }
-
-        private void drawFog(Canvas canvas, float w, float h, long now) {
-            float seconds = now / 1000f;
-            paint.setShader(null);
-            paint.setStyle(Paint.Style.FILL);
-            for (int i = 0; i < 4; i++) {
-                float center = h * (0.18f + i * 0.22f);
-                float drift = (float) Math.sin(seconds * (0.05f + i * 0.012f) + i)
-                        * w * 0.10f;
-                path.reset();
-                path.moveTo(-w * 0.35f + drift, center);
-                path.cubicTo(
-                        w * 0.12f + drift, center - h * 0.06f,
-                        w * 0.54f + drift, center + h * 0.05f,
-                        w * 1.35f + drift, center - h * 0.01f);
-                path.lineTo(w * 1.35f + drift, center + h * 0.11f);
-                path.cubicTo(
-                        w * 0.80f + drift, center + h * 0.16f,
-                        w * 0.24f + drift, center + h * 0.08f,
-                        -w * 0.35f + drift, center + h * 0.13f);
-                path.close();
-                paint.setColor(Color.argb(24 + i * 6, 238, 246, 252));
-                canvas.drawPath(path, paint);
-            }
-            paint.setColor(Color.argb(20, 232, 241, 248));
-            canvas.drawRect(0, h * 0.10f, w, h * 0.92f, paint);
-        }
-
     }
 
     private void addSectionHeading(String value) {
@@ -2092,7 +1891,10 @@ final class SettingsScreen extends android.content.ContextWrapper {
         row.setFocusable(true);
         row.setBackground(settingsActionBackground());
         String helper = subtitle == null ? "" : subtitle.trim();
-        row.setContentDescription(helper.isEmpty() ? title : title + ". " + helper);
+        String translatedTitle = UiTranslations.text(this, title);
+        String translatedHelper = helper.isEmpty() ? "" : UiTranslations.text(this, helper);
+        row.setContentDescription(translatedHelper.isEmpty()
+                ? translatedTitle : translatedTitle + ". " + translatedHelper);
         row.setOnClickListener(v -> action.run());
 
         LinearLayout labels = new LinearLayout(this);
@@ -2209,10 +2011,28 @@ final class SettingsScreen extends android.content.ContextWrapper {
                     && activity instanceof MainActivity) {
                 ((MainActivity) activity).updateDailyHistory();
             }
+            if (WeatherPreferences.PREF_COMBINED_FORECAST.equals(preferenceKey)) {
+                if (activity instanceof MainActivity) {
+                    ((MainActivity) activity).applyForecastPagePreferences();
+                }
+                ScrollView oldScroll = containingScroll();
+                int scrollY = oldScroll == null ? 0 : oldScroll.getScrollY();
+                buildUi();
+                ScrollView newScroll = containingScroll();
+                if (newScroll != null) newScroll.post(() -> newScroll.scrollTo(0, scrollY));
+            } else if ((PREF_PRECIPITATION_PAGE.equals(preferenceKey)
+                    || PREF_RADAR_PAGE.equals(preferenceKey))
+                    && activity instanceof MainActivity) {
+                ((MainActivity) activity).applyForecastPagePreferences();
+            }
             if (preferenceKey.startsWith("widget_")) WeatherWidgetProvider.requestRefresh(this);
             if (PREF_RAIN_ALERTS.equals(preferenceKey)) {
                 RainAlertManager.reconcile(this);
                 if (isChecked) RainAlertManager.checkSoon(this);
+            }
+            if (PREF_SEVERE_ALERTS.equals(preferenceKey)) {
+                SevereAlertManager.reconcile(this);
+                if (isChecked) SevereAlertManager.checkSoon(this);
             }
             if ((PREF_RAIN_ALERTS.equals(preferenceKey)
                     || PREF_SEVERE_ALERTS.equals(preferenceKey))
@@ -2260,6 +2080,12 @@ final class SettingsScreen extends android.content.ContextWrapper {
                 getString(R.string.settings_visibility), "", PREF_VISIBILITY_UNIT,
                 new String[]{VISIBILITY_KM, VISIBILITY_MI},
                 new String[]{"km", "mi"}, VISIBILITY_KM);
+        boolean fahrenheit = TEMP_FAHRENHEIT.equals(new WeatherPreferences(this).temperatureUnit());
+        addChoiceUnitRow(parent,
+                "Precipitation", "", WeatherPreferences.PREF_PRECIPITATION_UNIT,
+                new String[]{WeatherPreferences.PRECIP_MM, WeatherPreferences.PRECIP_IN},
+                new String[]{"Millimeters (mm)", "Inches (in)"},
+                fahrenheit ? WeatherPreferences.PRECIP_IN : WeatherPreferences.PRECIP_MM);
     }
 
     private void addTemperatureUnitRow(LinearLayout parent) {
@@ -2388,6 +2214,9 @@ final class SettingsScreen extends android.content.ContextWrapper {
         if (!normalizedNext.equals(current)) {
             prefs.edit().putString(preferenceKey, normalizedNext).apply();
             displayUnitChanged = true;
+            if (WeatherPreferences.PREF_PRECIPITATION_UNIT.equals(preferenceKey)) {
+                WeatherWidgetProvider.requestRefresh(this);
+            }
         }
         updateChoiceOptions(options, values, labels, normalizedNext, accessibilityName);
     }
@@ -2404,7 +2233,8 @@ final class SettingsScreen extends android.content.ContextWrapper {
             option.setSelected(selected);
             option.setAlpha(selected ? 1f : 0.80f);
             option.setBackground(unitOptionBackground(selected));
-            option.setContentDescription(labels[i] + " " + accessibilityName + ", "
+            option.setContentDescription(UiTranslations.text(this, labels[i]) + " "
+                    + UiTranslations.text(this, accessibilityName) + ", "
                     + getString(selected ? R.string.settings_selected : R.string.settings_not_selected));
             if (Build.VERSION.SDK_INT >= 30) {
                 option.setStateDescription(getString(selected
@@ -2440,6 +2270,9 @@ final class SettingsScreen extends android.content.ContextWrapper {
         }
         if (PREF_VISIBILITY_UNIT.equals(preferenceKey)) {
             return WeatherPreferences.normalizeVisibilityUnit(value);
+        }
+        if (WeatherPreferences.PREF_PRECIPITATION_UNIT.equals(preferenceKey)) {
+            return WeatherPreferences.normalizePrecipitationUnit(value);
         }
         return value == null ? "" : value.trim();
     }
@@ -2608,13 +2441,26 @@ final class SettingsScreen extends android.content.ContextWrapper {
         return result;
     }
 
+    private void deliverAction(Intent intent) {
+        if (intent == null) return;
+        if (embeddedContainer != null && activity instanceof MainActivity) {
+            ((MainActivity) activity).onActivityResult(
+                    WeatherActivityFoundation.SETTINGS_REQUEST, RESULT_OK, intent);
+        } else {
+            setResult(RESULT_OK, intent);
+        }
+    }
+
     private void returnAction(String action) {
         setResult(RESULT_OK, createResult(action));
         finishAfterTransition();
     }
 
     Intent takeChanges() {
-        Intent changes = createResult(ACTION_PREFERENCES_CHANGED);
+        String action = apiKeyChanged ? ACTION_API_KEY_CHANGED
+                : openMeteoKeyChanged ? ACTION_OPEN_METEO_KEY_CHANGED
+                : ACTION_PREFERENCES_CHANGED;
+        Intent changes = createResult(action);
         acceptChanges();
         return changes;
     }
@@ -2629,9 +2475,12 @@ final class SettingsScreen extends android.content.ContextWrapper {
         initialSevereAlertsEnabled = prefs.getBoolean(PREF_SEVERE_ALERTS, false);
         initialPrecipitationPageEnabled = prefs.getBoolean(PREF_PRECIPITATION_PAGE, true);
         initialRadarPageEnabled = prefs.getBoolean(PREF_RADAR_PAGE, true);
+        initialCombinedForecastEnabled = prefs.getBoolean(
+                WeatherPreferences.PREF_COMBINED_FORECAST, false);
         initialWeatherDetailsSignature = weatherDetailsSignature(prefs);
         temperatureUnitChanged = false;
         displayUnitChanged = false;
+        apiKeyChanged = false;
         openMeteoKeyChanged = false;
         pendingResult = null;
     }
@@ -2703,7 +2552,9 @@ final class SettingsScreen extends android.content.ContextWrapper {
         SharedPreferences prefs = getSharedPreferences(UI_PREFS, MODE_PRIVATE);
         return prefs.getBoolean(PREF_PRECIPITATION_PAGE, true)
                         != initialPrecipitationPageEnabled
-                || prefs.getBoolean(PREF_RADAR_PAGE, true) != initialRadarPageEnabled;
+                || prefs.getBoolean(PREF_RADAR_PAGE, true) != initialRadarPageEnabled
+                || prefs.getBoolean(WeatherPreferences.PREF_COMBINED_FORECAST, false)
+                        != initialCombinedForecastEnabled;
     }
 
     private boolean providerPreferenceChanged() {
@@ -2729,13 +2580,16 @@ final class SettingsScreen extends android.content.ContextWrapper {
 
     void onResume() {
         String currentProfile = ApiRequestBudgetManager.profile(this);
+        String currentProvider = OpenMeteoConfig.provider(this);
         boolean notificationsBlocked = alertNotificationsBlocked();
         boolean widgetBackgroundReminder = WidgetBackgroundAccess.needsReminder(this);
         if (displayedNotificationsBlocked && !notificationsBlocked) {
             RainAlertManager.checkSoon(this);
+            SevereAlertManager.checkSoon(this);
         }
         if (page != null && displayedBudgetProfile != null
                 && (!displayedBudgetProfile.equals(currentProfile)
+                || !currentProvider.equals(displayedProvider)
                 || displayedNotificationsBlocked != notificationsBlocked
                 || displayedWidgetBackgroundReminder != widgetBackgroundReminder)) {
             ScrollView oldScroll = containingScroll();
@@ -2809,6 +2663,39 @@ final class SettingsScreen extends android.content.ContextWrapper {
                 saveDiagnosticLogs(data.getData());
             return;
         }
+        if (requestCode == REQUEST_API_PAGE) {
+            if (resultCode != RESULT_OK || data == null) return;
+            String action = data.getStringExtra(EXTRA_ACTION);
+            boolean apiKeyUpdated = ACTION_API_KEY_CHANGED.equals(action);
+            boolean openMeteoUpdated = ACTION_OPEN_METEO_KEY_CHANGED.equals(action);
+            boolean providerUpdated = data.getBooleanExtra(EXTRA_PROVIDER_CHANGED, false);
+            boolean precipProviderUpdated = data.getBooleanExtra(
+                    EXTRA_PRECIPITATION_PROVIDER_CHANGED, false);
+            if (apiKeyUpdated) apiKeyChanged = true;
+            if (openMeteoUpdated) openMeteoKeyChanged = true;
+            if (apiKeyUpdated || openMeteoUpdated || providerUpdated || precipProviderUpdated) {
+                String resultAction = apiKeyUpdated ? ACTION_API_KEY_CHANGED
+                        : openMeteoUpdated ? ACTION_OPEN_METEO_KEY_CHANGED
+                        : ACTION_PREFERENCES_CHANGED;
+                Intent forwarded = createResult(resultAction);
+                if (providerUpdated || openMeteoUpdated) {
+                    forwarded.putExtra(EXTRA_PROVIDER_CHANGED, true);
+                }
+                if (precipProviderUpdated) {
+                    forwarded.putExtra(EXTRA_PRECIPITATION_PROVIDER_CHANGED, true);
+                }
+                deliverAction(forwarded);
+                if (embeddedContainer != null) {
+                    initialProvider = OpenMeteoConfig.provider(this);
+                    initialPrecipitationProvider = OpenMeteoConfig.precipitationProvider(this);
+                    initialModel = OpenMeteoConfig.model(this);
+                    apiKeyChanged = false;
+                    openMeteoKeyChanged = false;
+                }
+                buildUi();
+            }
+            return;
+        }
         if (requestCode != REQUEST_UNITS_PAGE || resultCode != RESULT_OK || data == null) return;
         temperatureUnitChanged |= data.getBooleanExtra(EXTRA_UNIT_CHANGED, false);
         displayUnitChanged |= data.getBooleanExtra(EXTRA_DISPLAY_UNIT_CHANGED, false);
@@ -2821,12 +2708,14 @@ final class SettingsScreen extends android.content.ContextWrapper {
         outState.putBoolean(STATE_INITIAL_PRECIPITATION_PAGE,
                 initialPrecipitationPageEnabled);
         outState.putBoolean(STATE_INITIAL_RADAR_PAGE, initialRadarPageEnabled);
+        outState.putBoolean(STATE_INITIAL_COMBINED_FORECAST, initialCombinedForecastEnabled);
         outState.putString(STATE_INITIAL_DETAILS, initialWeatherDetailsSignature);
         outState.putBoolean(STATE_TEMPERATURE_CHANGED, temperatureUnitChanged);
         outState.putBoolean(STATE_DISPLAY_CHANGED, displayUnitChanged);
         outState.putString("initial_provider", initialProvider);
         outState.putString("initial_precipitation_provider", initialPrecipitationProvider);
         outState.putString("initial_model", initialModel);
+        outState.putBoolean(STATE_API_KEY_CHANGED, apiKeyChanged);
         outState.putBoolean("open_meteo_key_changed", openMeteoKeyChanged);
     }
 
@@ -2836,6 +2725,7 @@ final class SettingsScreen extends android.content.ContextWrapper {
             if (grantResults.length > 0
                     && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
                 RainAlertManager.checkSoon(this);
+                SevereAlertManager.checkSoon(this);
             }
             buildUi();
         }
@@ -2861,8 +2751,12 @@ final class SettingsScreen extends android.content.ContextWrapper {
             return;
         }
         if (apiPage) {
-            Intent result = createResult(ACTION_PREFERENCES_CHANGED);
-            if (result.hasExtra(EXTRA_PROVIDER_CHANGED)
+            String action = apiKeyChanged ? ACTION_API_KEY_CHANGED
+                    : openMeteoKeyChanged ? ACTION_OPEN_METEO_KEY_CHANGED
+                    : ACTION_PREFERENCES_CHANGED;
+            Intent result = createResult(action);
+            if (apiKeyChanged || openMeteoKeyChanged
+                    || result.hasExtra(EXTRA_PROVIDER_CHANGED)
                     || result.hasExtra(EXTRA_PRECIPITATION_PROVIDER_CHANGED)) {
                 setResult(RESULT_OK, result);
             }
@@ -2878,8 +2772,11 @@ final class SettingsScreen extends android.content.ContextWrapper {
         boolean precipitationProviderChanged = precipitationProviderPreferenceChanged();
         if (temperatureUnitChanged || displayUnitChanged || airQualityChanged || pollenChanged
                 || severeAlertsChanged || weatherDetailsChanged || forecastPagesChanged
-                || providerChanged || precipitationProviderChanged) {
-            Intent result = new Intent().putExtra(EXTRA_ACTION, ACTION_PREFERENCES_CHANGED);
+                || providerChanged || precipitationProviderChanged || apiKeyChanged) {
+            String action = apiKeyChanged ? ACTION_API_KEY_CHANGED
+                    : openMeteoKeyChanged ? ACTION_OPEN_METEO_KEY_CHANGED
+                    : ACTION_PREFERENCES_CHANGED;
+            Intent result = new Intent().putExtra(EXTRA_ACTION, action);
             if (temperatureUnitChanged) result.putExtra(EXTRA_UNIT_CHANGED, true);
             if (displayUnitChanged) result.putExtra(EXTRA_DISPLAY_UNIT_CHANGED, true);
             if (airQualityChanged) result.putExtra(EXTRA_AIR_QUALITY_CHANGED, true);

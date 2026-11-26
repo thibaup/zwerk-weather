@@ -6,4 +6,8 @@
     <string name="precipitation_widget_name" translatable="false">Zwerk Precipitation</string>
     <string name="precipitation_widget_description" translatable="false">Precipitation amounts for the next six hours.</string>
     <string name="precipitation_widget_preview_title" translatable="false">Next 6 hours</string>
+    <string name="combined_forecast_widget_name" translatable="false">Zwerk Forecast</string>
+    <string name="combined_forecast_widget_description" translatable="false">Multi-day temperature and precipitation forecast graph.</string>
+    <string name="combined_forecast_widget_preview_title" translatable="false">London · 19°</string>
+    <string name="combined_forecast_widget_preview_meta" translatable="false">11.2mm</string>
 </resources>

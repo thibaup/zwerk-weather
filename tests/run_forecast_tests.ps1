@@ -14,8 +14,9 @@ if ((Get-FileHash -LiteralPath $jsonJar -Algorithm SHA1).Hash.ToLowerInvariant()
 # Minimal Android I/O adapters, not mocks of the production cache/forecast logic.
 $stubs = @{
     'Address.java' = 'package android.location; public class Address { private String locality, feature, admin, sub, country, code; private double lat,lon; public Address(java.util.Locale locale) {} public String getLocality(){return locality;} public void setLocality(String v){locality=v;} public String getFeatureName(){return feature;} public void setFeatureName(String v){feature=v;} public String getAdminArea(){return admin;} public void setAdminArea(String v){admin=v;} public String getSubAdminArea(){return sub;} public void setSubAdminArea(String v){sub=v;} public String getCountryName(){return country;} public void setCountryName(String v){country=v;} public String getCountryCode(){return code;} public void setCountryCode(String v){code=v;} public double getLatitude(){return lat;} public void setLatitude(double v){lat=v;} public double getLongitude(){return lon;} public void setLongitude(double v){lon=v;} }'
-    'Context.java' = 'package android.content; public class Context { public static final int MODE_PRIVATE=0; private final java.io.File dir; public Context(java.io.File dir) { this.dir=dir; } public java.io.File getFilesDir() { return dir; } public String getString(int id) { return ""; } public SharedPreferences getSharedPreferences(String name,int mode) { return new SharedPreferences() { public String getString(String key,String fallback) { return fallback; } public long getLong(String key,long fallback) { return fallback; } public boolean getBoolean(String key,boolean fallback) { return fallback; } }; } }'
+    'Context.java' = 'package android.content; public class Context { public static final int MODE_PRIVATE=0; private final java.io.File filesDir, cacheDir; public Context(java.io.File dir) { this(dir, dir); } public Context(java.io.File filesDir, java.io.File cacheDir) { this.filesDir=filesDir; this.cacheDir=cacheDir; } public java.io.File getFilesDir() { return filesDir; } public java.io.File getCacheDir() { return cacheDir; } public String getString(int id) { return ""; } public SharedPreferences getSharedPreferences(String name,int mode) { return new SharedPreferences() { public String getString(String key,String fallback) { return fallback; } public long getLong(String key,long fallback) { return fallback; } public boolean getBoolean(String key,boolean fallback) { return fallback; } }; } }'
     'SharedPreferences.java' = 'package android.content; public interface SharedPreferences { String getString(String key,String fallback); long getLong(String key,long fallback); boolean getBoolean(String key,boolean fallback); }'
+    'BuildConfig.java' = 'package com.zwerk.weather; public final class BuildConfig { public static final String VERSION_NAME="1.5.2"; }'
     'Os.java' = 'package android.system; public class Os { public static void rename(String a,String b) throws Exception { java.nio.file.Files.move(java.nio.file.Path.of(a),java.nio.file.Path.of(b),java.nio.file.StandardCopyOption.REPLACE_EXISTING); } }'
     'OpenMeteoConfig.java' = 'package com.zwerk.weather; final class OpenMeteoConfig { static final String OPEN_METEO="open-meteo"; }'
     'WeatherWidgetProvider.java' = 'package com.zwerk.weather; final class WeatherWidgetProvider { static final String KEY_HOURLY_JSON="hourly_json", KEY_DAILY_JSON="daily_json", KEY_ZONE="zone", KEY_UPDATED_EPOCH_MS="updated_epoch_ms", KEY_OPEN_METEO="open_meteo"; }'
@@ -27,12 +28,13 @@ $stubs = @{
 foreach ($entry in $stubs.GetEnumerator()) {
     [System.IO.File]::WriteAllText((Join-Path $testDir $entry.Key), $entry.Value)
 }
-$sources = @('ForecastClock.java','ForecastDiskCache.java','HourlyCoverageQueue.java','SavedForecast.java','WeatherWidgetTimeline.java','WeatherTimeFormat.java','PrecipitationWidgetData.java','PrecipitationForecast.java','RadarPlaybackClock.java','PrecipitationWindow.java','PrecipitationModelPolicy.java','CitySearchClient.java','LocationNaming.java','RadarMapTransform.java','WeatherModels.java','BlurKernel.java') |
+$sources = @('CacheKeys.java','ForecastClock.java','ForecastDiskCache.java','HourlyCoverageQueue.java','SavedForecast.java','WeatherWidgetTimeline.java','WeatherTimeFormat.java','PrecipitationWidgetData.java','CombinedForecastData.java','PrecipitationForecast.java','RadarPlaybackClock.java','PrecipitationWindow.java','PrecipitationModelPolicy.java','CitySearchClient.java','LocationNaming.java','RadarMapTransform.java','WeatherModels.java','BlurKernel.java') |
     ForEach-Object { Join-Path $sourceDir $_ }
 $sources += Get-ChildItem -LiteralPath $testDir -Filter '*.java' | Select-Object -ExpandProperty FullName
 $sources += Join-Path $PSScriptRoot 'ForecastOfflineWidgetTest.java'
 $sources += Join-Path $sourceDir 'WidgetRefreshPolicy.java'
 $sources += Join-Path $PSScriptRoot 'PrecipitationWidgetDataTest.java'
+$sources += Join-Path $PSScriptRoot 'CombinedForecastWidgetDataTest.java'
 $sources += Join-Path $PSScriptRoot 'WidgetRefreshPolicyTest.java'
 $sources += Join-Path $PSScriptRoot 'PrecipitationForecastTest.java'
 $sources += Join-Path $PSScriptRoot 'PrecipitationCoverageTest.java'
@@ -61,3 +63,5 @@ if ($LASTEXITCODE -ne 0) { throw 'Scene animation tests failed.' }
 if ($LASTEXITCODE -ne 0) { throw 'Expanded forecast cache tests failed.' }
 & java -cp ($testDir + [System.IO.Path]::PathSeparator + $jsonJar) com.zwerk.weather.BlurKernelTest
 if ($LASTEXITCODE -ne 0) { throw 'Backdrop blur tests failed.' }
+& java -cp ($testDir + [System.IO.Path]::PathSeparator + $jsonJar) com.zwerk.weather.CombinedForecastWidgetDataTest
+if ($LASTEXITCODE -ne 0) { throw 'Combined forecast widget tests failed.' }

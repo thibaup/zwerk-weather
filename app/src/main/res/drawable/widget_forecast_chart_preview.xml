@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="200dp"
+    android:height="85dp"
+    android:viewportWidth="260"
+    android:viewportHeight="110">
+    <!-- Subtle today column highlight -->
+    <path android:fillColor="#16FFFFFF"
+        android:pathData="M4,2 L48,2 C51,2 52,3 52,6 L52,106 C52,108 51,109 48,109 L4,109 C2,109 1,108 1,106 L1,6 C1,3 2,2 4,2 Z" />
+    <!-- Guide & baseline -->
+    <path android:strokeColor="#22FFFFFF" android:strokeWidth="0.8"
+        android:pathData="M2,63 L258,63" />
+    <path android:strokeColor="#66E0F3FF" android:strokeWidth="1"
+        android:pathData="M2,93 L258,93" />
+    <!-- Precipitation bars overlapping behind temperature curves -->
+    <path android:fillColor="#9E4FAEEB"
+        android:pathData="M18,52 L34,52 L34,93 L18,93 Z M70,79 L86,79 L86,93 L70,93 Z M174,64 L190,64 L190,93 L174,93 Z M226,84 L242,84 L242,93 L226,93 Z" />
+    <path android:strokeColor="#D8B6F0FF" android:strokeWidth="1.2"
+        android:pathData="M19,52 L33,52 M71,79 L85,79 M175,64 L189,64 M227,84 L241,84" />
+    <!-- Subtle thermal envelope -->
+    <path android:fillColor="#1EFFF8E8"
+        android:pathData="M26,46 C52,46 52,39 78,39 C104,39 104,28 130,28 C156,28 156,37 182,37 C208,37 208,42 234,42 L234,72 C208,72 208,68 182,68 C156,68 156,62 130,62 C104,62 104,70 78,70 C52,70 52,75 26,75 Z" />
+    <!-- High temperature smooth curve -->
+    <path android:strokeColor="#F5FFF7E4" android:strokeWidth="2.2" android:strokeLineCap="round"
+        android:pathData="M26,46 C52,46 52,39 78,39 C104,39 104,28 130,28 C156,28 156,37 182,37 C208,37 208,42 234,42" />
+    <!-- Low temperature smooth curve -->
+    <path android:strokeColor="#D8D6EAFF" android:strokeWidth="1.7" android:strokeLineCap="round"
+        android:pathData="M26,75 C52,75 52,70 78,70 C104,70 104,62 130,62 C156,62 156,68 182,68 C208,68 208,72 234,72" />
+    <!-- High dots -->
+    <path android:fillColor="#FFFFFFFF"
+        android:pathData="M26,43.5 A2.5,2.5 0 1,1 25.99,43.5 Z M78,36.5 A2.5,2.5 0 1,1 77.99,36.5 Z M130,25.5 A2.5,2.5 0 1,1 129.99,25.5 Z M182,34.5 A2.5,2.5 0 1,1 181.99,34.5 Z M234,39.5 A2.5,2.5 0 1,1 233.99,39.5 Z" />
+    <!-- Low dots -->
+    <path android:fillColor="#FFD6EAFF"
+        android:pathData="M26,73 A2,2 0 1,1 25.99,73 Z M78,68 A2,2 0 1,1 77.99,68 Z M130,60 A2,2 0 1,1 129.99,60 Z M182,66 A2,2 0 1,1 181.99,66 Z M234,70 A2,2 0 1,1 233.99,70 Z" />
+</vector>

@@ -10,15 +10,25 @@ import android.graphics.Path;
 import android.graphics.RadialGradient;
 import android.graphics.RectF;
 import android.graphics.Shader;
+import android.os.Handler;
+import android.os.Looper;
+import android.os.SystemClock;
+
+import java.util.ArrayList;
 
 /** Procedural, time-based atmosphere shared by the forecast and settings previews. */
 final class WeatherAtmosphereRenderer {
     private static final int CLOUD_WIDTH = 384;
     private static final int CLOUD_HEIGHT = 144;
+    private static final long CLOUD_FADE_MILLIS = 450L;
     private static final long[] LIGHTNING_INTERVALS = {6700L, 9100L, 4800L, 10700L, 7300L};
     private static final long LIGHTNING_CYCLE = 38600L;
-    private static Bitmap farClouds;
-    private static Bitmap nearClouds;
+    private static final Object CLOUD_LOCK = new Object();
+    private static final ArrayList<Runnable> READY_LISTENERS = new ArrayList<>();
+    private static volatile Bitmap farClouds;
+    private static volatile Bitmap nearClouds;
+    private static volatile long cloudsReadyAtMs;
+    private static boolean cloudBuildStarted;
 
     private final float density;
     private final Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG | Paint.DITHER_FLAG);
@@ -56,7 +66,12 @@ final class WeatherAtmosphereRenderer {
 
     WeatherAtmosphereRenderer(float density) {
         this.density = Math.max(1f, density);
-        ensureCloudTextures();
+        ensureCloudTexturesAsync(null);
+    }
+
+    void setOnTexturesReady(Runnable onReady) {
+        if (onReady == null) return;
+        ensureCloudTexturesAsync(onReady);
     }
 
     void onSizeChanged(int w, int h) {
@@ -117,18 +132,23 @@ final class WeatherAtmosphereRenderer {
                 : spec.daytime ? daylightClouds : moonlitClouds;
         LightingColorFilter shadowFilter = spec.daytime
                 ? daylightCloudShadows : nightCloudShadows;
-        int farAlpha = storm ? 174 : rain ? 145 : snow ? 135 : fog ? 73
-                : cloud ? 138 : partly ? 105 : 37;
-        int nearAlpha = storm ? 162 : rain ? 132 : snow ? 118 : fog ? 58
-                : cloud ? 123 : partly ? 84 : 25;
-        drawCloudBand(canvas, farClouds, filter, shadowFilter, farAlpha, w, h,
-                -0.06f, 0.32f, 1.55f, 0.0f, 21.0f, now);
-        drawCloudBand(canvas, nearClouds, filter, shadowFilter, nearAlpha, w, h,
-                0.27f, 0.31f, 1.70f, 0.38f, -34.0f, now);
-        if (storm || rain || cloud || snow || fog) {
-            drawCloudBand(canvas, farClouds, filter, shadowFilter,
-                    Math.round(nearAlpha * 0.76f), w, h,
-                    0.68f, 0.30f, 1.42f, 0.72f, 17.0f, now);
+        Bitmap far = farClouds;
+        Bitmap near = nearClouds;
+        if (far != null && near != null) {
+            float fade = cloudFadeFactor();
+            int farAlpha = Math.round((storm ? 174 : rain ? 145 : snow ? 135 : fog ? 73
+                    : cloud ? 138 : partly ? 105 : 37) * fade);
+            int nearAlpha = Math.round((storm ? 162 : rain ? 132 : snow ? 118 : fog ? 58
+                    : cloud ? 123 : partly ? 84 : 25) * fade);
+            drawCloudBand(canvas, far, filter, shadowFilter, farAlpha, w, h,
+                    -0.06f, 0.32f, 1.55f, 0.0f, 21.0f, now);
+            drawCloudBand(canvas, near, filter, shadowFilter, nearAlpha, w, h,
+                    0.27f, 0.31f, 1.70f, 0.38f, -34.0f, now);
+            if (storm || rain || cloud || snow || fog) {
+                drawCloudBand(canvas, far, filter, shadowFilter,
+                        Math.round(nearAlpha * 0.76f), w, h,
+                        0.68f, 0.30f, 1.42f, 0.72f, 17.0f, now);
+            }
         }
     }
 
@@ -310,10 +330,52 @@ final class WeatherAtmosphereRenderer {
         return 0f;
     }
 
-    private static synchronized void ensureCloudTextures() {
-        if (farClouds != null && nearClouds != null) return;
-        farClouds = buildCloudTexture(11, 0.59f);
-        nearClouds = buildCloudTexture(29, 0.56f);
+    private static float cloudFadeFactor() {
+        long readyAt = cloudsReadyAtMs;
+        if (readyAt <= 0L) return 1f;
+        long elapsed = SystemClock.uptimeMillis() - readyAt;
+        if (elapsed >= CLOUD_FADE_MILLIS) return 1f;
+        float t = Math.max(0f, elapsed / (float) CLOUD_FADE_MILLIS);
+        return t * t * (3f - 2f * t);
+    }
+
+    private static void ensureCloudTexturesAsync(Runnable onReady) {
+        boolean startWorker = false;
+        boolean alreadyReady = false;
+        synchronized (CLOUD_LOCK) {
+            if (farClouds != null && nearClouds != null) {
+                alreadyReady = true;
+            } else {
+                if (onReady != null) READY_LISTENERS.add(onReady);
+                if (!cloudBuildStarted) {
+                    cloudBuildStarted = true;
+                    startWorker = true;
+                }
+            }
+        }
+        if (alreadyReady) {
+            if (onReady != null) onReady.run();
+            return;
+        }
+        if (!startWorker) return;
+        Thread worker = new Thread(() -> {
+            Bitmap far = buildCloudTexture(11, 0.59f);
+            Bitmap near = buildCloudTexture(29, 0.56f);
+            ArrayList<Runnable> callbacks;
+            synchronized (CLOUD_LOCK) {
+                farClouds = far;
+                nearClouds = near;
+                cloudsReadyAtMs = SystemClock.uptimeMillis();
+                callbacks = new ArrayList<>(READY_LISTENERS);
+                READY_LISTENERS.clear();
+            }
+            if (!callbacks.isEmpty()) {
+                Handler main = new Handler(Looper.getMainLooper());
+                for (Runnable callback : callbacks) main.post(callback);
+            }
+        }, "zwerk-cloud-textures");
+        worker.setDaemon(true);
+        worker.start();
     }
 
     private static Bitmap buildCloudTexture(int seed, float threshold) {

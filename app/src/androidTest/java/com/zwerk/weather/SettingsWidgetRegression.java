@@ -3,10 +3,12 @@ package com.zwerk.weather;
 import android.app.Instrumentation;
 import android.content.Context;
 import android.content.SharedPreferences;
+import android.content.res.Configuration;
 import android.graphics.Bitmap;
 import android.graphics.Canvas;
 import android.graphics.Color;
 import android.os.Bundle;
+import android.os.LocaleList;
 import android.os.SystemClock;
 import android.view.ContextThemeWrapper;
 import android.view.KeyEvent;
@@ -23,12 +25,17 @@ import org.json.JSONObject;
 
 import java.io.File;
 import java.io.FileOutputStream;
+import java.lang.reflect.Method;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
+import java.time.Duration;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.time.ZoneId;
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicReference;
@@ -83,6 +90,7 @@ public final class SettingsWidgetRegression extends Instrumentation {
                     checkSlider(context);
                     checkCharts(context);
                     checkDayHistory(context);
+                    checkWave1And2Regressions(context);
                     checkReset(context);
                 }
             } catch (Throwable error) { failure.set(error); }
@@ -191,6 +199,103 @@ public final class SettingsWidgetRegression extends Instrumentation {
         event(chart, now, MotionEvent.ACTION_DOWN, 1050, 50, 60);
         event(chart, now, MotionEvent.ACTION_UP, 1050, 50, 80);
         check(selected[0] == 9, "The tenth forecast day remains available");
+
+        selected[0] = -1;
+        chart.setCombinedMode(true, CombinedForecastData.PRECIP_STYLE_LINE);
+        chart.measure(View.MeasureSpec.makeMeasureSpec(1100, View.MeasureSpec.EXACTLY),
+                View.MeasureSpec.makeMeasureSpec(480, View.MeasureSpec.EXACTLY));
+        chart.layout(0, 0, 1100, 480);
+        Bitmap combinedImg = Bitmap.createBitmap(1100, 480, Bitmap.Config.ARGB_8888);
+        try {
+            chart.draw(new Canvas(combinedImg));
+            chart.setPrecipitationStyle(CombinedForecastData.PRECIP_STYLE_COLUMNS);
+            chart.draw(new Canvas(combinedImg));
+        } finally {
+            combinedImg.recycle();
+        }
+        event(chart, now, MotionEvent.ACTION_DOWN, 150, 50, 90);
+        event(chart, now, MotionEvent.ACTION_UP, 150, 50, 110);
+        check(selected[0] == 0, "Combined Line chart column taps open day hourly details");
+
+        double[] hourlyTemps = {12.0, 14.0, 17.0, 15.0};
+        double[] hourlyRain = {0.0, 0.1, 2.4, 0.4};
+        String[] hourlyTimes = {"12:00", "13:00", "14:00", "15:00"};
+        String[] hourlyTempLabels = {"12°", "14°", "17°", "15°"};
+        String[] hourlyRainLabels = {"", "0.1", "2.4", "0.4"};
+        String[] hourlyKeys = {"h:0", "h:1", "h:2", "h:3"};
+        HourlyDayChartView hourlyOverlay = new HourlyDayChartView(context, hourlyTemps, hourlyRain,
+                hourlyTimes, hourlyTempLabels, hourlyRainLabels, hourlyKeys, hourlyKeys, 1,
+                index -> { }, index -> { });
+        hourlyOverlay.setCombinedOverlay(true, CombinedForecastData.PRECIP_STYLE_LINE, false);
+        hourlyOverlay.measure(View.MeasureSpec.makeMeasureSpec(900, View.MeasureSpec.EXACTLY),
+                View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED));
+        int overlayHeight = Math.max(200, hourlyOverlay.getMeasuredHeight());
+        hourlyOverlay.layout(0, 0, 900, overlayHeight);
+        Bitmap hourlyImg = Bitmap.createBitmap(900, overlayHeight, Bitmap.Config.ARGB_8888);
+        try {
+            hourlyOverlay.draw(new Canvas(hourlyImg));
+            hourlyOverlay.setCombinedOverlay(true, CombinedForecastData.PRECIP_STYLE_LINE, true);
+            hourlyOverlay.draw(new Canvas(hourlyImg));
+            hourlyOverlay.setCombinedOverlay(true, CombinedForecastData.PRECIP_STYLE_COLUMNS);
+            hourlyOverlay.draw(new Canvas(hourlyImg));
+        } finally {
+            hourlyImg.recycle();
+        }
+
+        ZoneId zone = ZoneId.of("Europe/Brussels");
+        Instant windowStart = Instant.now().minusSeconds(120);
+        Instant windowEnd = windowStart.plus(Duration.ofHours(6));
+        ArrayList<MinuteSegment> segments = new ArrayList<>();
+        double[] segMm = {0.0, 0.2, 0.9, 1.4, 0.6, 0.1, 0.0, 0.0};
+        for (int i = 0; i < segMm.length; i++) {
+            Instant segStart = windowStart.plus(Duration.ofMinutes(i * 15L));
+            Instant segEnd = segStart.plus(Duration.ofMinutes(15));
+            segments.add(new MinuteSegment(new JSONObject(), segStart, segEnd,
+                    segMm[i] > 0d ? 75 : 5, segMm[i], "MILLIMETERS",
+                    null, "", segMm[i] > 0d ? "RAIN" : "", segMm[i] > 0.8d ? "MODERATE" : "LIGHT"));
+        }
+        MinuteForecastViewsActivity.MinutePrecipitationGraphView minuteGraph =
+                host.new MinutePrecipitationGraphView(host, segments, zone, windowStart, windowEnd);
+        minuteGraph.measure(View.MeasureSpec.makeMeasureSpec(900, View.MeasureSpec.EXACTLY),
+                View.MeasureSpec.makeMeasureSpec(420, View.MeasureSpec.EXACTLY));
+        minuteGraph.layout(0, 0, 900, 420);
+        Bitmap minuteImg = Bitmap.createBitmap(900, 420, Bitmap.Config.ARGB_8888);
+        try {
+            minuteGraph.draw(new Canvas(minuteImg));
+            long startMs = windowStart.toEpochMilli();
+            long[] tempEpochs = {
+                    startMs - 1_800_000L,
+                    startMs + 1_800_000L,
+                    startMs + 5_400_000L,
+                    startMs + 9_000_000L,
+                    startMs + 12_600_000L,
+                    startMs + 16_200_000L,
+                    startMs + 19_800_000L,
+                    startMs + 23_400_000L
+            };
+            double[] tempVals = {14.0, 15.0, 17.0, 18.0, 16.0, 15.0, 14.0, 13.0};
+            String[] tempLabels = {"14°", "15°", "17°", "18°", "16°", "15°", "14°", "13°"};
+            minuteGraph.setTemperatureSeries(tempEpochs, tempVals, tempLabels, "°C");
+            Double midTemp = minuteGraph.temperatureAt(startMs + 3_600_000L);
+            check(midTemp != null && Math.abs(midTemp - 16.0d) < 0.05d,
+                    "Minute precipitation graph interpolates overlaid hourly temperature");
+            minuteGraph.draw(new Canvas(minuteImg));
+            minuteGraph.setCompactCombinedLayout(true);
+            minuteGraph.measure(View.MeasureSpec.makeMeasureSpec(900, View.MeasureSpec.EXACTLY),
+                    View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED));
+            check(minuteGraph.getMeasuredHeight() == hourlyOverlay.getMeasuredHeight(),
+                    "Compact 6h minute graph matches 24h combined hourly chart height");
+            minuteGraph.layout(0, 0, 900, minuteGraph.getMeasuredHeight());
+            Bitmap compactMinuteImg = Bitmap.createBitmap(
+                    900, Math.max(1, minuteGraph.getMeasuredHeight()), Bitmap.Config.ARGB_8888);
+            try {
+                minuteGraph.draw(new Canvas(compactMinuteImg));
+            } finally {
+                compactMinuteImg.recycle();
+            }
+        } finally {
+            minuteImg.recycle();
+        }
     }
 
     private static JSONObject historyHour(String start) throws Exception {
@@ -252,6 +357,19 @@ public final class SettingsWidgetRegression extends Instrumentation {
         check(Color.alpha(bitmap.getPixel(337, 50)) > 200, "rain bars must be visible above the baseline");
         check(Color.alpha(bitmap.getPixel(96, 50)) == 0, "zero quantity must not become a rain bar");
         bitmap.recycle();
+        Bitmap inchesBitmap = PrecipitationWidgetChart.render(data, 280, 80,
+                new String[]{"Now", "+3h", "+6h"}, "No forecast available", 1f, true, 2f);
+        try {
+            check(inchesBitmap.getWidth() == 560 && inchesBitmap.getHeight() == 160,
+                    "inches chart overload matches allocation");
+            // 0.85 mm/h = 0.2125 mm/15m = 0.0084 in on the 0.02 in floor (~42% of plot height -> y 78..126).
+            check(Color.alpha(inchesBitmap.getPixel(337, 105)) > 200,
+                    "inches chart overload renders visible rain bars");
+            check(Color.alpha(inchesBitmap.getPixel(96, 105)) == 0,
+                    "inches chart overload keeps zero intervals empty");
+        } finally {
+            inchesBitmap.recycle();
+        }
         SharedPreferences snapshot = context.getSharedPreferences(WeatherWidgetProvider.PREFS_NAME, Context.MODE_PRIVATE);
         Map<String, ?> original = new HashMap<>(snapshot.getAll());
         try {
@@ -298,7 +416,231 @@ public final class SettingsWidgetRegression extends Instrumentation {
                     && ((android.text.Spanned) title.getText()).getSpans(0, title.length(),
                             android.text.style.RelativeSizeSpan.class).length == 1,
                     "widget text scaling reaches the launcher view");
+
+            // Combined multi-day forecast widget rendering across 4x2 sizes and both precipitation styles.
+            long day0 = LocalDate.now(ZoneId.systemDefault()).atStartOfDay(ZoneId.systemDefault())
+                    .toInstant().toEpochMilli();
+            long dayMs = 24L * 3_600_000L;
+            JSONArray daily = new JSONArray();
+            int[] highs = {19, 21, 24, 22, 18, 16, 20};
+            int[] lows = {11, 12, 13, 12, 9, 8, 10};
+            double[] rainMm = {6.4, 0.3, 0.0, 1.8, 12.5, 2.0, 0.0};
+            int[] probs = {84, 24, 0, 45, 92, 40, 10};
+            String[] conds = {"RAIN", "PARTLY_CLOUDY", "CLEAR", "PARTLY_CLOUDY", "THUNDERSTORM", "CLOUDY", "CLEAR"};
+            for (int i = 0; i < 7; i++) {
+                daily.put(new JSONObject()
+                        .put("start", day0 + i * dayMs)
+                        .put("end", day0 + (i + 1) * dayMs)
+                        .put("date", LocalDate.now(ZoneId.systemDefault()).plusDays(i).toString())
+                        .put("high", highs[i]).put("low", lows[i])
+                        .put("precipitationMm", rainMm[i]).put("precipitation", probs[i])
+                        .put("conditionType", conds[i]));
+            }
+            snapshot.edit().putString(WeatherWidgetProvider.KEY_DAILY_JSON, daily.toString())
+                    .putInt(WeatherWidgetProvider.KEY_TEMPERATURE, 19)
+                    .putString(WeatherWidgetProvider.KEY_UNIT, "°C")
+                    .putString(WeatherWidgetProvider.KEY_ZONE, ZoneId.systemDefault().getId())
+                    .putBoolean(WeatherWidgetProvider.KEY_OPEN_METEO, true).commit();
+            WidgetConfiguration combinedCols = new WidgetConfiguration("", 100, true, true,
+                    5, CombinedForecastData.PRECIP_STYLE_COLUMNS,
+                    WidgetConfiguration.BG_DARK, 10, 1, WidgetBackground.DEFAULT_COLOUR);
+            WidgetConfiguration combinedLine = new WidgetConfiguration("", 95, true, true,
+                    7, CombinedForecastData.PRECIP_STYLE_LINE,
+                    WidgetConfiguration.BG_BLUE, 15, 1, WidgetBackground.DEFAULT_COLOUR);
+            for (WidgetConfiguration cfg : new WidgetConfiguration[]{combinedCols, combinedLine}) {
+                for (int[] size : new int[][]{{240, 118}, {280, 144}, {360, 200}}) {
+                    RemoteViews remote = CombinedForecastWidgetProvider.buildForSize(
+                            context, size[0], size[1], 0, cfg, null);
+                    View forecastWidget = remote.apply(context, new LinearLayout(context));
+                    float density = context.getResources().getDisplayMetrics().density;
+                    int width = Math.round(size[0] * density), height = Math.round(size[1] * density);
+                    forecastWidget.measure(View.MeasureSpec.makeMeasureSpec(width, View.MeasureSpec.EXACTLY),
+                            View.MeasureSpec.makeMeasureSpec(height, View.MeasureSpec.EXACTLY));
+                    forecastWidget.layout(0, 0, width, height);
+                    ImageView chartView = forecastWidget.findViewById(R.id.forecast_widget_chart);
+                    check(chartView.getHeight() >= Math.round(70 * density),
+                            "combined widget chart keeps readable height at 4x2 and above");
+                }
+            }
+
+            // Dry header check (no bare "mm"/"in"/"%") and inches rendering for CombinedForecastWidgetProvider.
+            SharedPreferences uiPrefs = context.getSharedPreferences(WeatherPreferences.PREFS_NAME, Context.MODE_PRIVATE);
+            Map<String, ?> originalUi = new HashMap<>(uiPrefs.getAll());
+            try {
+                JSONArray dryDaily = new JSONArray();
+                JSONArray noPrecipDaily = new JSONArray();
+                for (int i = 0; i < 5; i++) {
+                    dryDaily.put(new JSONObject()
+                            .put("start", day0 + i * dayMs)
+                            .put("end", day0 + (i + 1) * dayMs)
+                            .put("date", LocalDate.now(ZoneId.systemDefault()).plusDays(i).toString())
+                            .put("high", 20 + i).put("low", 10 + i)
+                            .put("precipitationMm", 0.0).put("precipitation", 0)
+                            .put("conditionType", "CLEAR"));
+                    noPrecipDaily.put(new JSONObject()
+                            .put("start", day0 + i * dayMs)
+                            .put("end", day0 + (i + 1) * dayMs)
+                            .put("date", LocalDate.now(ZoneId.systemDefault()).plusDays(i).toString())
+                            .put("high", 20 + i).put("low", 10 + i)
+                            .put("conditionType", "CLEAR"));
+                }
+                snapshot.edit().putString(WeatherWidgetProvider.KEY_DAILY_JSON, dryDaily.toString()).commit();
+                uiPrefs.edit().putString("temperature_unit", WeatherPreferences.TEMP_CELSIUS)
+                        .putString(WeatherPreferences.PREF_PRECIPITATION_UNIT, WeatherPreferences.PRECIP_MM).commit();
+                View dryMmWidget = CombinedForecastWidgetProvider.buildForSize(
+                        context, 280, 144, 0, combinedLine, null).apply(context, new LinearLayout(context));
+                TextView dryMmMeta = dryMmWidget.findViewById(R.id.forecast_widget_meta);
+                check(dryMmMeta.getVisibility() == View.VISIBLE && "0 mm".equals(dryMmMeta.getText().toString()),
+                        "dry metric combined widget shows '0 mm' rather than bare 'mm'");
+
+                uiPrefs.edit().putString(WeatherPreferences.PREF_PRECIPITATION_UNIT, WeatherPreferences.PRECIP_IN).commit();
+                View dryInWidget = CombinedForecastWidgetProvider.buildForSize(
+                        context, 280, 144, 0, combinedLine, null).apply(context, new LinearLayout(context));
+                TextView dryInMeta = dryInWidget.findViewById(R.id.forecast_widget_meta);
+                check(dryInMeta.getVisibility() == View.VISIBLE && "0 in".equals(dryInMeta.getText().toString()),
+                        "dry imperial combined widget shows '0 in' rather than bare 'in'");
+
+                snapshot.edit().putString(WeatherWidgetProvider.KEY_DAILY_JSON, noPrecipDaily.toString())
+                        .putString(WeatherWidgetProvider.KEY_HOURLY_JSON, "[]").commit();
+                View noPrecipWidget = CombinedForecastWidgetProvider.buildForSize(
+                        context, 280, 144, 0, combinedLine, null).apply(context, new LinearLayout(context));
+                TextView noPrecipMeta = noPrecipWidget.findViewById(R.id.forecast_widget_meta);
+                check(noPrecipMeta.getVisibility() == View.GONE,
+                        "combined widget hides meta header when precipitation data is absent");
+
+                CombinedForecastData inData = CombinedForecastData.fromWidgetTimeline(
+                        new WeatherWidgetTimeline(snapshot, now), now, 5, true);
+                Bitmap inChart = CombinedForecastWidgetChart.render(inData, 260, 110,
+                        new String[]{"Today", "Thu", "Fri", "Sat", "Sun"},
+                        new String[]{"T", "T", "F", "S", "S"},
+                        CombinedForecastData.PRECIP_STYLE_LINE, true, "Empty", 1f, 2f);
+                try {
+                    check(inChart.getWidth() > 0 && inChart.getHeight() > 0,
+                            "CombinedForecastWidgetChart renders cleanly in inches");
+                } finally {
+                    inChart.recycle();
+                }
+            } finally {
+                restore(uiPrefs, originalUi);
+            }
         } finally { restore(snapshot, original); }
+    }
+
+    private void checkWave1And2Regressions(Context context) throws Exception {
+        // 1. ApiKeyStore round-trip encryption + legacy plaintext migration using a temporary test file.
+        final String tempKeyFile = "_test_regression_api_key";
+        Context appContext = context.getApplicationContext();
+        if (appContext == null) appContext = context;
+        File keyFile = new File(appContext.getFilesDir(), tempKeyFile);
+        try {
+            ApiKeyStore.delete(context, tempKeyFile);
+            check("".equals(ApiKeyStore.read(context, tempKeyFile)), "missing API key reads as empty");
+            ApiKeyStore.write(context, tempKeyFile, "  zwerk-test-secret-01  ");
+            check("zwerk-test-secret-01".equals(ApiKeyStore.read(context, tempKeyFile)),
+                    "ApiKeyStore round-trip returns trimmed secret");
+            String storedRaw = new String(Files.readAllBytes(keyFile.toPath()), StandardCharsets.UTF_8).trim();
+            if (storedRaw.startsWith("ENC1:")) {
+                check(!storedRaw.contains("zwerk-test-secret-01"),
+                        "encrypted API key file does not store plaintext");
+            }
+            ApiKeyStore.delete(context, tempKeyFile);
+            check(!keyFile.exists(), "ApiKeyStore.delete removes temp key file");
+
+            Files.write(keyFile.toPath(), "legacy-plain-secret-02\n".getBytes(StandardCharsets.UTF_8));
+            check("legacy-plain-secret-02".equals(ApiKeyStore.read(context, tempKeyFile)),
+                    "ApiKeyStore reads legacy plaintext key");
+            check("legacy-plain-secret-02".equals(ApiKeyStore.read(context, tempKeyFile)),
+                    "ApiKeyStore still reads key after transparent migration");
+        } finally {
+            ApiKeyStore.delete(context, tempKeyFile);
+        }
+
+        // 2. UpdateChecker URL validation (HTTPS github.com / *.githubusercontent.com only).
+        Method isAllowed = UpdateChecker.class.getDeclaredMethod("isAllowedUpdateUrl", String.class);
+        isAllowed.setAccessible(true);
+        check(Boolean.TRUE.equals(isAllowed.invoke(null,
+                "https://github.com/thiba/zwerk-weather/releases/download/v1.5.2/app.apk")),
+                "UpdateChecker accepts HTTPS github.com release URL");
+        check(Boolean.TRUE.equals(isAllowed.invoke(null,
+                "https://objects.githubusercontent.com/github-production-release-asset/12345")),
+                "UpdateChecker accepts HTTPS objects.githubusercontent.com asset URL");
+        check(Boolean.FALSE.equals(isAllowed.invoke(null,
+                "http://github.com/thiba/zwerk-weather/releases/download/v1.5.2/app.apk")),
+                "UpdateChecker rejects plaintext HTTP URL");
+        check(Boolean.FALSE.equals(isAllowed.invoke(null, "https://evil.example/app.apk")),
+                "UpdateChecker rejects untrusted HTTPS host");
+        check(Boolean.FALSE.equals(isAllowed.invoke(null, "https://github.com.evil.example/app.apk")),
+                "UpdateChecker rejects spoofed subdomain host");
+        check(Boolean.FALSE.equals(isAllowed.invoke(null, "")),
+                "UpdateChecker rejects empty URL");
+        check(Boolean.FALSE.equals(isAllowed.invoke(null, (Object) null)),
+                "UpdateChecker rejects null URL");
+
+        // 3. UiTranslations context-locale lookup & MAP_THEME_LIGHT_KEY homonym fix in French.
+        Configuration frConfig = new Configuration(context.getResources().getConfiguration());
+        frConfig.setLocales(new LocaleList(Locale.FRENCH));
+        Context frContext = context.createConfigurationContext(frConfig);
+        check("Clair".equals(UiTranslations.text(frContext, UiTranslations.MAP_THEME_LIGHT_KEY)),
+                "French MAP_THEME_LIGHT_KEY translates to 'Clair'");
+        check("Faible".equals(UiTranslations.text(frContext, "Light")),
+                "French precipitation 'Light' translates to 'Faible' without homonym collision");
+        Configuration enConfig = new Configuration(context.getResources().getConfiguration());
+        enConfig.setLocales(new LocaleList(Locale.ENGLISH));
+        Context enContext = context.createConfigurationContext(enConfig);
+        check("Light".equals(UiTranslations.text(enContext, UiTranslations.MAP_THEME_LIGHT_KEY)),
+                "English MAP_THEME_LIGHT_KEY resolves to 'Light'");
+
+        // 4. RadarPageView / RadarMapView opacity, speed, fullscreen state, and trimMemory().
+        SharedPreferences uiPrefs = context.getSharedPreferences(WeatherPreferences.PREFS_NAME, Context.MODE_PRIVATE);
+        Map<String, ?> originalUi = new HashMap<>(uiPrefs.getAll());
+        RadarPageView radar = null;
+        RadarDataClient mapClient = null;
+        try {
+            uiPrefs.edit()
+                    .putInt(WeatherPreferences.PREF_RADAR_OPACITY, 55)
+                    .putFloat(WeatherPreferences.PREF_RADAR_SPEED, 2.0f)
+                    .commit();
+            WeatherPreferences radarPrefs = new WeatherPreferences(context);
+            check(radarPrefs.radarOpacityPercent() == 55, "radar opacity preference persists");
+            check(radarPrefs.radarPlaybackSpeed() == 2.0f, "radar 2x speed preference persists");
+            uiPrefs.edit().putInt(WeatherPreferences.PREF_RADAR_OPACITY, 5).commit();
+            check(radarPrefs.radarOpacityPercent() == 20, "radar opacity clamps to minimum 20%");
+            uiPrefs.edit().putInt(WeatherPreferences.PREF_RADAR_OPACITY, 150).commit();
+            check(radarPrefs.radarOpacityPercent() == 100, "radar opacity clamps to maximum 100%");
+            uiPrefs.edit().putInt(WeatherPreferences.PREF_RADAR_OPACITY, 72)
+                    .putFloat(WeatherPreferences.PREF_RADAR_SPEED, 0.5f).commit();
+            check(radarPrefs.radarPlaybackSpeed() == 0.5f, "radar 0.5x speed preference persists");
+
+            radar = new RadarPageView(context);
+            check(!radar.isFullscreen(), "RadarPageView starts non-fullscreen");
+            radar.setFullscreen(true);
+            check(radar.isFullscreen(), "RadarPageView enters fullscreen state");
+            radar.setFullscreen(false);
+            check(!radar.isFullscreen(), "RadarPageView exits fullscreen state");
+            radar.measure(View.MeasureSpec.makeMeasureSpec(900, View.MeasureSpec.EXACTLY),
+                    View.MeasureSpec.makeMeasureSpec(1200, View.MeasureSpec.EXACTLY));
+            radar.layout(0, 0, 900, 1200);
+            Bitmap radarBmp = Bitmap.createBitmap(900, 1200, Bitmap.Config.ARGB_8888);
+            try {
+                radar.draw(new Canvas(radarBmp));
+            } finally {
+                radarBmp.recycle();
+            }
+            radar.applyTileTransparency();
+            radar.refreshTimeFormat();
+            radar.trimMemory();
+
+            mapClient = new RadarDataClient(context);
+            RadarMapView mapView = new RadarMapView(context, mapClient, () -> { });
+            mapView.setRadarOpacity(60);
+            mapView.setRadarOpacity(5);
+            mapView.refreshScaleUnit();
+            mapView.trimRetainedLayers();
+        } finally {
+            if (radar != null) radar.dispose();
+            if (mapClient != null) mapClient.dispose();
+            restore(uiPrefs, originalUi);
+        }
     }
 
     private void checkReset(Context context) throws Exception {
@@ -313,15 +655,43 @@ public final class SettingsWidgetRegression extends Instrumentation {
         }
         try {
             SharedPreferences ui = context.getSharedPreferences(WeatherPreferences.PREFS_NAME, 0);
-            ui.edit().remove(WeatherPreferences.PREF_SHOW_YESTERDAY).commit();
-            check(!new WeatherPreferences(context).showYesterday(), "Yesterday is hidden by default");
+            ui.edit().remove(WeatherPreferences.PREF_SHOW_YESTERDAY)
+                    .remove(WeatherPreferences.PREF_COMBINED_FORECAST)
+                    .remove(WeatherPreferences.PREF_COMBINED_PRECIP_STYLE)
+                    .remove(WeatherPreferences.PREF_PRECIPITATION_UNIT)
+                    .remove(WeatherPreferences.PREF_RADAR_OPACITY)
+                    .remove(WeatherPreferences.PREF_RADAR_SPEED).commit();
+            WeatherPreferences initialPrefs = new WeatherPreferences(context);
+            check(!initialPrefs.showYesterday(), "Yesterday is hidden by default");
+            check(!initialPrefs.combinedForecastMode(), "Combined forecast mode is off by default");
+            check(CombinedForecastData.PRECIP_STYLE_LINE.equals(initialPrefs.combinedPrecipitationStyle()),
+                    "Combined precipitation defaults to line style");
+            check(WeatherPreferences.PRECIP_MM.equals(initialPrefs.precipitationUnit(false))
+                    && WeatherPreferences.PRECIP_IN.equals(initialPrefs.precipitationUnit(true)),
+                    "Precipitation unit follows temperature unit when unset");
+            ui.edit().putString("temperature_unit", WeatherPreferences.TEMP_CELSIUS)
+                    .putString(WeatherPreferences.PREF_PRECIPITATION_UNIT, WeatherPreferences.PRECIP_IN).commit();
+            check(new WeatherPreferences(context).isPrecipitationInches(),
+                    "Inches precipitation works independently of Celsius");
+            ui.edit().putString("temperature_unit", WeatherPreferences.TEMP_FAHRENHEIT)
+                    .putString(WeatherPreferences.PREF_PRECIPITATION_UNIT, WeatherPreferences.PRECIP_MM).commit();
+            check(!new WeatherPreferences(context).isPrecipitationInches(),
+                    "Millimeters precipitation works independently of Fahrenheit");
             ui.edit().putInt(WeatherPreferences.PREF_TILE_TRANSPARENCY, 3).putString("temperature_unit", "F")
                     .putBoolean(WeatherPreferences.PREF_SHOW_YESTERDAY, true)
+                    .putBoolean(WeatherPreferences.PREF_COMBINED_FORECAST, true)
+                    .putString(WeatherPreferences.PREF_COMBINED_PRECIP_STYLE,
+                            CombinedForecastData.PRECIP_STYLE_COLUMNS)
+                    .putString(WeatherPreferences.PREF_PRECIPITATION_UNIT, WeatherPreferences.PRECIP_IN)
+                    .putInt(WeatherPreferences.PREF_RADAR_OPACITY, 45)
+                    .putFloat(WeatherPreferences.PREF_RADAR_SPEED, 2.0f)
                     .putString(WeatherPreferences.PREF_RADAR_MAP_THEME, WeatherPreferences.MAP_DARK)
                     .putBoolean("weather_animations", false).putBoolean("radar_page_enabled", false)
                     .putInt("widget_transparency", 88).putString("widget_colour", "custom")
                     .putBoolean("weather_detail_uv_index", false).putBoolean("weather_detail_dew_point", true)
                     .putString("_test_internal_state", "keep").commit();
+            check(new WeatherPreferences(context).combinedForecastMode(),
+                    "Combined forecast mode can be enabled");
             ApiRequestBudgetManager.applyProfile(context, ApiRequestBudgetManager.PROFILE_CONSERVATIVE);
             OpenMeteoRequestBudgetManager.setLimits(context, 20, 300);
             WeatherSettingsDefaults.restore(context);
@@ -329,6 +699,17 @@ public final class SettingsWidgetRegression extends Instrumentation {
             check(defaults.tileTransparency() == 70 && "C".equals(defaults.temperatureUnit()), "reset display and units");
             check(defaults.animationsAllowed() && ui.getBoolean("radar_page_enabled", true), "reset animation and pages");
             check(!defaults.showYesterday(), "Reset hides Yesterday");
+            check(!defaults.combinedForecastMode(), "Reset disables combined forecast mode");
+            check(CombinedForecastData.PRECIP_STYLE_LINE.equals(defaults.combinedPrecipitationStyle()),
+                    "Reset restores default combined line precipitation style");
+            check(!ui.contains(WeatherPreferences.PREF_PRECIPITATION_UNIT) && !defaults.isPrecipitationInches(),
+                    "Reset clears independent precipitation unit preference");
+            check(!ui.contains(WeatherPreferences.PREF_RADAR_OPACITY)
+                    && defaults.radarOpacityPercent() == WeatherPreferences.DEFAULT_RADAR_OPACITY,
+                    "Reset restores default radar opacity");
+            check(!ui.contains(WeatherPreferences.PREF_RADAR_SPEED)
+                    && defaults.radarPlaybackSpeed() == WeatherPreferences.DEFAULT_RADAR_SPEED,
+                    "Reset restores default radar playback speed");
             check(defaults.radarMapTheme().equals(WeatherPreferences.MAP_AUTOMATIC), "reset automatic map appearance");
             check(!ui.contains("widget_transparency") && !ui.contains("widget_colour"), "reset widget preferences");
             for (WeatherDetailSettingsActivity.DetailOption option : WeatherDetailSettingsActivity.OPTIONS)

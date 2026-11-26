@@ -12,11 +12,15 @@ final class WeatherSettingsDefaults {
                 WeatherPreferences.PREFS_NAME, Context.MODE_PRIVATE);
         SharedPreferences.Editor edit = prefs.edit();
         for (String key : new String[]{
-                "temperature_unit", "wind_unit", "pressure_unit", "visibility_unit", WeatherTimeFormat.PREF,
+                "temperature_unit", "wind_unit", "pressure_unit", "visibility_unit",
+                WeatherPreferences.PREF_PRECIPITATION_UNIT, WeatherTimeFormat.PREF,
                 "weather_animations", "rain_alerts", "severe_weather_alerts",
                 "precipitation_page_enabled", "radar_page_enabled", "forecast_page_mode",
+                WeatherPreferences.PREF_COMBINED_FORECAST,
+                WeatherPreferences.PREF_COMBINED_PRECIP_STYLE,
                 "daily_mode", "widget_show_hourly", "widget_show_advice", "widget_show_icon",
                 WeatherPreferences.PREF_TILE_TRANSPARENCY, WeatherPreferences.PREF_RADAR_MAP_THEME,
+                WeatherPreferences.PREF_RADAR_OPACITY, WeatherPreferences.PREF_RADAR_SPEED,
                 WeatherPreferences.PREF_SHOW_YESTERDAY,
                 OpenMeteoConfig.PREF_PROVIDER, OpenMeteoConfig.PREF_PRECIPITATION_PROVIDER,
                 OpenMeteoConfig.PREF_MODEL, "google_air_quality_enabled", "google_pollen_enabled",
@@ -37,6 +41,7 @@ final class WeatherSettingsDefaults {
         ApiRequestBudgetManager.applyProfile(context, ApiRequestBudgetManager.PROFILE_GOOGLE_FREE);
         OpenMeteoRequestBudgetManager.restoreDefaultLimits(context);
         RainAlertManager.reconcile(context);
+        SevereAlertManager.reconcile(context);
         WeatherWidgetProvider.requestRefresh(context);
     }
 }

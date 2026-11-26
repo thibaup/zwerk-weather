@@ -175,6 +175,7 @@ public class WeatherWidgetProvider extends AppWidgetProvider {
                 .setAction(ACTION_REFRESH);
         context.sendBroadcast(refresh);
         PrecipitationWidgetProvider.requestRefresh(context);
+        CombinedForecastWidgetProvider.requestRefresh(context);
     }
 
     @Override
@@ -418,7 +419,7 @@ public class WeatherWidgetProvider extends AppWidgetProvider {
 
         String range = config.showDetails ? highLowLabel(context, high, low) : "";
         views.setContentDescription(R.id.widget_root,
-                String.format(Locale.getDefault(), "%s, %s%s, %s, %s. %s",
+                String.format(AppLocaleManager.activeLocale(context), "%s, %s%s, %s, %s. %s",
                         city,
                         temperature == Integer.MIN_VALUE ? "" : Integer.toString(temperature),
                         temperature == Integer.MIN_VALUE ? "" : unit,
@@ -431,7 +432,7 @@ public class WeatherWidgetProvider extends AppWidgetProvider {
 
     private static void applyAppearance(Context context, RemoteViews views, WidgetMode mode,
             WidgetConfiguration config, String conditionType, boolean daytime) {
-        WidgetBackground.apply(context, views, R.id.widget_scene, conditionType, daytime);
+        WidgetBackground.apply(context, views, R.id.widget_scene, conditionType, daytime, config);
         views.setInt(R.id.widget_hour_strip, "setBackgroundColor", Color.TRANSPARENT);
         views.setViewVisibility(R.id.widget_hour_strip,
                 hasHourlyStrip(mode) && config.showForecast ? View.VISIBLE : View.GONE);

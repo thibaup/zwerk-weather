@@ -367,9 +367,8 @@ public class WeatherDetailSettingsActivity extends Activity {
 
         setContentView(root);
         root.setOnApplyWindowInsetsListener((v, insets) -> {
-            int top = insets.getSystemWindowInsetTop();
-            int bottom = insets.getSystemWindowInsetBottom();
-            page.setPadding(dp(18), top, dp(18), bottom + dp(32));
+            android.graphics.Rect safe = WeatherSystemBars.safeInsets(insets);
+            page.setPadding(dp(18) + safe.left, safe.top, dp(18) + safe.right, safe.bottom + dp(32));
             return insets;
         });
         root.requestApplyInsets();
@@ -536,7 +535,9 @@ public class WeatherDetailSettingsActivity extends Activity {
         setSwitch(PREF_POLLEN, true);
         syncingSwitches = false;
 
-        Toast.makeText(this, "Recommended defaults restored", Toast.LENGTH_SHORT).show();
+        Toast.makeText(this,
+                UiTranslations.text(this, "Recommended defaults restored"),
+                Toast.LENGTH_SHORT).show();
     }
 
     private void setSwitch(String key, boolean value) {

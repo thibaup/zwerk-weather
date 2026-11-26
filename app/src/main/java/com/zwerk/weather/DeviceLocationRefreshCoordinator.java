@@ -146,24 +146,19 @@ final class DeviceLocationRefreshCoordinator {
         }
 
         try {
+            fallbackLocation = bestLastKnownLocation(manager);
             String provider = preferredProvider(manager);
             if (provider == null) {
-                finishUnavailable();
+                if (fallbackLocation != null) finishWithLocation(fallbackLocation);
+                else finishUnavailable();
                 return;
             }
 
             if (Build.VERSION.SDK_INT >= 30) {
-                cancellationSignal = new CancellationSignal();
-                mainHandler.postDelayed(timeoutRunnable, LOCATION_TIMEOUT_MILLIS);
-                manager.getCurrentLocation(
-                        provider,
-                        cancellationSignal,
-                        activity.getMainExecutor(),
-                        this::finishWithLocation);
+                requestCurrentLocationApi30(manager, provider, true);
                 return;
             }
 
-            fallbackLocation = bestLastKnownLocation(manager);
             activeLocationManager = manager;
             activeListener = new LocationListener() {
                 @Override
@@ -187,8 +182,51 @@ final class DeviceLocationRefreshCoordinator {
         }
     }
 
+    @SuppressWarnings("MissingPermission")
+    private void requestCurrentLocationApi30(
+            LocationManager manager, String provider, boolean allowGpsRetry) {
+        if (Build.VERSION.SDK_INT < 30) return;
+        cancellationSignal = new CancellationSignal();
+        mainHandler.removeCallbacks(timeoutRunnable);
+        mainHandler.postDelayed(timeoutRunnable, LOCATION_TIMEOUT_MILLIS);
+        final CancellationSignal signal = cancellationSignal;
+        manager.getCurrentLocation(
+                provider,
+                signal,
+                activity.getMainExecutor(),
+                location -> {
+                    if (!active || cancellationSignal != signal) return;
+                    if (location != null) {
+                        finishWithLocation(location);
+                        return;
+                    }
+                    if (allowGpsRetry
+                            && LocationManager.NETWORK_PROVIDER.equals(provider)
+                            && isProviderEnabledSafe(manager, LocationManager.GPS_PROVIDER)) {
+                        try {
+                            requestCurrentLocationApi30(manager, LocationManager.GPS_PROVIDER, false);
+                            return;
+                        } catch (Exception ignored) { }
+                    }
+                    finishWithLocation(fallbackLocation);
+                });
+    }
+
+    private boolean isProviderEnabledSafe(LocationManager manager, String provider) {
+        try {
+            return manager.isProviderEnabled(provider);
+        } catch (Exception ignored) {
+            return false;
+        }
+    }
+
     private String preferredProvider(LocationManager manager) {
         try {
+            if (Build.VERSION.SDK_INT >= 31
+                    && manager.hasProvider(LocationManager.FUSED_PROVIDER)
+                    && manager.isProviderEnabled(LocationManager.FUSED_PROVIDER)) {
+                return LocationManager.FUSED_PROVIDER;
+            }
             if (manager.isProviderEnabled(LocationManager.NETWORK_PROVIDER)) {
                 return LocationManager.NETWORK_PROVIDER;
             }
@@ -202,23 +240,35 @@ final class DeviceLocationRefreshCoordinator {
 
     @SuppressWarnings("MissingPermission")
     private Location bestLastKnownLocation(LocationManager manager) {
-        Location network = null;
-        Location gps = null;
+        Location best = null;
+        if (Build.VERSION.SDK_INT >= 31) {
+            try {
+                if (manager.hasProvider(LocationManager.FUSED_PROVIDER)
+                        && manager.isProviderEnabled(LocationManager.FUSED_PROVIDER)) {
+                    best = newerLocation(best, manager.getLastKnownLocation(LocationManager.FUSED_PROVIDER));
+                }
+            } catch (Exception ignored) {
+            }
+        }
         try {
             if (manager.isProviderEnabled(LocationManager.NETWORK_PROVIDER)) {
-                network = manager.getLastKnownLocation(LocationManager.NETWORK_PROVIDER);
+                best = newerLocation(best, manager.getLastKnownLocation(LocationManager.NETWORK_PROVIDER));
             }
         } catch (Exception ignored) {
         }
         try {
             if (manager.isProviderEnabled(LocationManager.GPS_PROVIDER)) {
-                gps = manager.getLastKnownLocation(LocationManager.GPS_PROVIDER);
+                best = newerLocation(best, manager.getLastKnownLocation(LocationManager.GPS_PROVIDER));
             }
         } catch (Exception ignored) {
         }
-        if (network == null) return gps;
-        if (gps == null) return network;
-        return gps.getTime() > network.getTime() ? gps : network;
+        return best;
+    }
+
+    private static Location newerLocation(Location current, Location candidate) {
+        if (candidate == null) return current;
+        if (current == null) return candidate;
+        return candidate.getTime() > current.getTime() ? candidate : current;
     }
 
     private void onLocationTimeout() {

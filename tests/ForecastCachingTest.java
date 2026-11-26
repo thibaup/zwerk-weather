@@ -94,6 +94,34 @@ public final class ForecastCachingTest {
         check(queue.beginRetry(newerForecast), "manual retry can start after failure");
         check(!queue.beginRetry(newerForecast), "duplicate manual retries coalesce");
         queue.finish(newerForecast, true);
+
+        // ForecastDiskCache uses getCacheDir() and CacheKeys.sha256Hex16() filenames.
+        java.io.File rootDir = Files.createTempDirectory("zwerk-cache-dir-").toFile();
+        java.io.File filesDir = new java.io.File(rootDir, "files");
+        java.io.File cacheDir = new java.io.File(rootDir, "cache");
+        filesDir.mkdirs();
+        cacheDir.mkdirs();
+        String hashA = CacheKeys.sha256Hex16("50.850,4.350|en|city|google");
+        String hashB = CacheKeys.sha256Hex16("51.050,3.720|en|city|google");
+        check(hashA.length() == 16 && hashA.matches("[0-9a-f]{16}"), "sha256Hex16 returns 16 lowercase hex chars");
+        check(!hashA.equals(hashB), "distinct cache keys produce distinct hashes");
+        ForecastDiskCache splitCache = new ForecastDiskCache(new Context(filesDir, cacheDir));
+        splitCache.persist(50.85, 4.35, "en", "city|google", current, hourly, daily, refreshedAt);
+        java.io.File[] filesDirEntries = filesDir.listFiles();
+        java.io.File[] cacheDirEntries = cacheDir.listFiles();
+        check(filesDirEntries == null || filesDirEntries.length == 0,
+                "ForecastDiskCache writes to getCacheDir(), not getFilesDir()");
+        boolean foundHashedCache = false;
+        if (cacheDirEntries != null) {
+            for (java.io.File f : cacheDirEntries) {
+                String n = f.getName();
+                if (n.startsWith("weather_forecast_cache_v2_") && n.endsWith(".json")) {
+                    String middle = n.substring("weather_forecast_cache_v2_".length(), n.length() - ".json".length());
+                    if (middle.matches("[0-9a-f]{16}")) foundHashedCache = true;
+                }
+            }
+        }
+        check(foundHashedCache, "ForecastDiskCache uses v2 SHA-256 hex filename in getCacheDir()");
         System.out.println("Passed " + checks + " expanded-cache/worker checks.");
     }
 }

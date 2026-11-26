@@ -17,14 +17,8 @@ import android.os.Build;
 
 import org.json.JSONObject;
 
-import java.io.BufferedReader;
-import java.io.File;
-import java.io.FileInputStream;
-import java.io.InputStreamReader;
 import java.net.HttpURLConnection;
-import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
-import java.time.Duration;
 import java.time.Duration;
 import java.time.Instant;
 
@@ -97,19 +91,32 @@ public final class RainAlertManager {
         if (location == null) return;
 
         String source = OpenMeteoConfig.precipitationCacheScope(app);
+        String language = AppLocaleManager.activeLocale(AppLocaleManager.wrap(app)).toLanguageTag();
         try {
+            MinuteCacheStore.Snapshot cached = MinuteCacheStore.readFresh(
+                    app, location.lat, location.lon, language, source, PERIOD_MILLIS);
             JSONObject response;
-            if (OpenMeteoConfig.GOOGLE.equals(source)) {
-                String key = readApiKey(app);
-                if (key.isEmpty()) return;
-                response = PrecipitationForecast.loadGoogle(key, location.lat, location.lon,
-                        Instant.now(), Duration.ofMillis(ALERT_WINDOW_MILLIS), address -> {
-                            if (!scopeCurrent(app, source, location)) throw new InterruptedException();
-                            return BackgroundWeatherRequest.request(app, address, DiagnosticLog.Area.PRECIPITATION);
-                        });
+            if (cached != null && cached.response != null) {
+                response = cached.response;
             } else {
-                response = OpenMeteoForecastClient.loadMinute(app, location.lat, location.lon,
-                        OpenMeteoConfig.model(app), OpenMeteoConfig.readCustomerKey(app));
+                long startedAt = System.currentTimeMillis();
+                if (OpenMeteoConfig.GOOGLE.equals(source)) {
+                    String key = readApiKey(app);
+                    if (key.isEmpty()) return;
+                    response = PrecipitationForecast.loadGoogle("", location.lat, location.lon,
+                            Instant.now(), Duration.ofMillis(ALERT_WINDOW_MILLIS), address -> {
+                                if (!scopeCurrent(app, source, location)) throw new InterruptedException();
+                                return BackgroundWeatherRequest.request(
+                                        app, address, DiagnosticLog.Area.PRECIPITATION, key);
+                            });
+                } else {
+                    response = OpenMeteoForecastClient.loadMinute(app, location.lat, location.lon,
+                            OpenMeteoConfig.model(app), OpenMeteoConfig.readCustomerKey(app));
+                }
+                if (scopeCurrent(app, source, location) && response != null) {
+                    MinuteCacheStore.write(
+                            app, location.lat, location.lon, language, source, startedAt, response);
+                }
             }
             if (scopeCurrent(app, source, location)) {
                 evaluateMinuteForecast(app, response, location.lat, location.lon, location.name);
@@ -194,6 +201,7 @@ public final class RainAlertManager {
         }
 
         Intent openApp = new Intent(context, MainActivity.class)
+                .setAction(MainActivity.ACTION_WIDGET_PRECIPITATION)
                 .addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP | Intent.FLAG_ACTIVITY_SINGLE_TOP);
         PendingIntent contentIntent = PendingIntent.getActivity(
                 context,
@@ -226,7 +234,7 @@ public final class RainAlertManager {
         }
 
         Notification notification = new Notification.Builder(localized, CHANNEL_ID)
-                .setSmallIcon(android.R.drawable.stat_notify_more)
+                .setSmallIcon(R.drawable.ic_notify_rain)
                 .setContentTitle(UiTranslations.text(localized,
                         underway ? "Rain nearby now"
                                 : minutes <= 1L ? "Rain starting now" : "Rain starting soon"))
@@ -286,15 +294,7 @@ public final class RainAlertManager {
     }
 
     static String readApiKey(Context context) {
-        File keyFile = new File(context.getFilesDir(), API_KEY_FILE);
-        if (!keyFile.isFile()) return "";
-        try (BufferedReader reader = new BufferedReader(new InputStreamReader(
-                new FileInputStream(keyFile), StandardCharsets.UTF_8))) {
-            String line = reader.readLine();
-            return line == null ? "" : line.trim();
-        } catch (Exception ignored) {
-            return "";
-        }
+        return ApiKeyStore.read(context, API_KEY_FILE);
     }
 
     static void applyAndroidApiKeyRestrictionHeaders(

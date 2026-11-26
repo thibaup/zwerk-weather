@@ -24,7 +24,9 @@ import org.json.JSONObject;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.time.ZoneId;
+import java.time.format.DateTimeFormatter;
 import java.util.Locale;
+import java.util.function.Consumer;
 
 final class RadarPageView extends FrameLayout {
 
@@ -48,12 +50,22 @@ final class RadarPageView extends FrameLayout {
     private final TextView mapMessage;
     private final RadarPlaybackButton playButton;
     private final SeekBar timelineBar;
+    private final TextView speedButton;
+    private final TextView opacityButton;
+    private final LinearLayout opacityRow;
+    private final SeekBar opacityBar;
+    private final TextView opacityValue;
     private final ProgressBar loading;
     private final RadarRefreshButton refreshButton;
+    private final RadarFullscreenButton fullscreenButton;
     private final Handler handler = new Handler(Looper.getMainLooper());
     private RadarDataClient.Timeline timeline;
     private int frameIndex = -1;
     private boolean active;
+    private boolean fullscreen;
+    private Consumer<Boolean> fullscreenToggleListener;
+    private float playbackSpeed = 1.0f;
+    private int radarOpacityPercent = 88;
     private boolean playing;
     private boolean preparing;
     private boolean pendingPlay;
@@ -91,7 +103,9 @@ final class RadarPageView extends FrameLayout {
             if (action == RadarPlaybackClock.ADVANCE) {
                 showFrame(nextIndex, false);
                 preloadPlaybackWindow();
-                handler.postDelayed(this, PLAYBACK_FRAME_DELAY_MS);
+                long delay = RadarPlaybackClock.frameDelayMillis(
+                        PLAYBACK_FRAME_DELAY_MS, playbackSpeed, nextIndex, count);
+                handler.postDelayed(this, delay);
                 return;
             }
             if (action == RadarPlaybackClock.STOP) {
@@ -144,6 +158,14 @@ final class RadarPageView extends FrameLayout {
         Button recenter = control("⌖", "Center radar on selected location");
         recenter.setOnClickListener(v -> map.recenter());
         mapControls.addView(recenter, new LinearLayout.LayoutParams(dp(44), dp(44)));
+        fullscreenButton = new RadarFullscreenButton(context);
+        fullscreenButton.setOnClickListener(v -> {
+            boolean next = !fullscreen;
+            setFullscreen(next);
+            if (fullscreenToggleListener != null) fullscreenToggleListener.accept(next);
+        });
+        surfaceControls.add(fullscreenButton);
+        mapControls.addView(fullscreenButton, new LinearLayout.LayoutParams(dp(44), dp(44)));
 
         loading = new ProgressBar(context);
         loading.setVisibility(GONE);
@@ -167,22 +189,47 @@ final class RadarPageView extends FrameLayout {
         messageParams.rightMargin = dp(16);
         overlays.addView(mapMessage, messageParams);
 
+        WeatherPreferences prefs = new WeatherPreferences(context);
+        playbackSpeed = RadarPlaybackClock.normalizeSpeed(prefs.radarPlaybackSpeed());
+        radarOpacityPercent = Math.max(20, Math.min(100, prefs.radarOpacityPercent()));
+        map.setRadarOpacity(radarOpacityPercent);
+
         playbackPanel = new LinearLayout(context);
         playbackPanel.setOrientation(LinearLayout.VERTICAL);
         playbackPanel.setPadding(dp(12), dp(10), dp(12), dp(4));
         surfaceControls.add(playbackPanel);
         overlays.addView(playbackPanel, new FrameLayout.LayoutParams(-1, -2, Gravity.BOTTOM));
         playbackPanel.addView(summary);
+
+        LinearLayout headerRow = new LinearLayout(context);
+        headerRow.setGravity(Gravity.CENTER_VERTICAL);
         frameTime = label("Radar timeline", 14, true, Color.WHITE);
-        frameTime.setPadding(dp(3), 0, 0, 0);
-        playbackPanel.addView(frameTime);
+        frameTime.setPadding(dp(3), 0, dp(6), 0);
+        headerRow.addView(frameTime, new LinearLayout.LayoutParams(0, -2, 1f));
+
+        opacityButton = new TextView(context);
+        opacityButton.setTextSize(11.5f);
+        opacityButton.setTextColor(Color.WHITE);
+        opacityButton.setTypeface(Typeface.create("sans-serif", Typeface.BOLD));
+        opacityButton.setGravity(Gravity.CENTER);
+        opacityButton.setPadding(dp(9), dp(4), dp(9), dp(4));
+        opacityButton.setMinHeight(dp(28));
+        opacityButton.setClickable(true);
+        opacityButton.setFocusable(true);
+        opacityButton.setCompoundDrawablesRelativeWithIntrinsicBounds(
+                new RadarOpacityIconDrawable(context), null, null, null);
+        opacityButton.setCompoundDrawablePadding(dp(5));
+        opacityButton.setOnClickListener(v -> toggleOpacityRow());
+        headerRow.addView(opacityButton, new LinearLayout.LayoutParams(-2, -2));
+        playbackPanel.addView(headerRow, new LinearLayout.LayoutParams(-1, -2));
+
         LinearLayout playbackRow = new LinearLayout(context);
         playbackRow.setGravity(Gravity.CENTER_VERTICAL);
         playbackPanel.addView(playbackRow, new LinearLayout.LayoutParams(-1, dp(54)));
         playButton = new RadarPlaybackButton(context);
         playButton.setOnClickListener(v -> togglePlayback());
         playButton.setBackground(null);
-        playbackRow.addView(playButton, new LinearLayout.LayoutParams(dp(48), dp(48)));
+        playbackRow.addView(playButton, new LinearLayout.LayoutParams(dp(46), dp(48)));
         timelineBar = new WeatherSeekBar(context, false);
         timelineBar.setMax(0);
         timelineBar.setEnabled(false);
@@ -205,17 +252,80 @@ final class RadarPageView extends FrameLayout {
             }
         });
         LinearLayout.LayoutParams seekParams = new LinearLayout.LayoutParams(0, dp(48), 1f);
-        seekParams.leftMargin = dp(8);
+        seekParams.leftMargin = dp(4);
         playbackRow.addView(timelineBar, seekParams);
+
+        speedButton = new TextView(context);
+        speedButton.setTextSize(12f);
+        speedButton.setTextColor(Color.WHITE);
+        speedButton.setTypeface(Typeface.create("sans-serif", Typeface.BOLD));
+        speedButton.setGravity(Gravity.CENTER);
+        speedButton.setPadding(dp(8), dp(4), dp(8), dp(4));
+        speedButton.setMinWidth(dp(42));
+        speedButton.setClickable(true);
+        speedButton.setFocusable(true);
+        speedButton.setBackground(pillBackground(false));
+        speedButton.setOnClickListener(v -> cyclePlaybackSpeed());
+        LinearLayout.LayoutParams speedParams = new LinearLayout.LayoutParams(-2, dp(34));
+        speedParams.leftMargin = dp(4);
+        playbackRow.addView(speedButton, speedParams);
+
         Button latest = control("Now", "Show latest radar frame");
         surfaceControls.remove(latest);
         latest.setBackground(null);
         latest.setTextSize(12f);
+        latest.setPadding(dp(6), 0, dp(6), 0);
+        latest.setMinWidth(dp(46));
         latest.setOnClickListener(v -> {
             stopPlayback();
             if (timeline != null) showFrame(timeline.frames.size() - 1, true);
         });
-        playbackRow.addView(latest, new LinearLayout.LayoutParams(dp(54), dp(42)));
+        playbackRow.addView(latest, new LinearLayout.LayoutParams(-2, dp(42)));
+
+        opacityRow = new LinearLayout(context);
+        opacityRow.setOrientation(LinearLayout.HORIZONTAL);
+        opacityRow.setGravity(Gravity.CENTER_VERTICAL);
+        opacityRow.setPadding(dp(3), 0, dp(3), dp(2));
+        opacityRow.setVisibility(GONE);
+        TextView opacityLabel = label("Radar opacity", 11, false,
+                Color.argb(220, 234, 246, 255));
+        opacityRow.addView(opacityLabel, new LinearLayout.LayoutParams(-2, -2));
+        opacityBar = new WeatherSeekBar(context, false);
+        opacityBar.setMax(80);
+        opacityBar.setProgress(radarOpacityPercent - 20);
+        opacityBar.setProgressTintList(android.content.res.ColorStateList.valueOf(
+                Color.rgb(125, 210, 246)));
+        opacityBar.setThumbTintList(android.content.res.ColorStateList.valueOf(Color.WHITE));
+        opacityBar.setContentDescription(UiTranslations.text(getContext(), "Radar opacity"));
+        opacityBar.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
+            @Override public void onProgressChanged(SeekBar bar, int value, boolean fromUser) {
+                if (!fromUser) return;
+                int percent = Math.max(20, Math.min(100, value + 20));
+                radarOpacityPercent = percent;
+                map.setRadarOpacity(percent);
+                updateOpacityControls();
+                saveRadarOpacity(percent);
+            }
+            @Override public void onStartTrackingTouch(SeekBar bar) { }
+            @Override public void onStopTrackingTouch(SeekBar bar) {
+                int percent = Math.max(20, Math.min(100, bar.getProgress() + 20));
+                radarOpacityPercent = percent;
+                map.setRadarOpacity(percent);
+                updateOpacityControls();
+                saveRadarOpacity(percent);
+            }
+        });
+        LinearLayout.LayoutParams opacitySeekParams = new LinearLayout.LayoutParams(0, dp(40), 1f);
+        opacitySeekParams.leftMargin = dp(8);
+        opacitySeekParams.rightMargin = dp(6);
+        opacityRow.addView(opacityBar, opacitySeekParams);
+        opacityValue = label("", 11, true, Color.WHITE);
+        opacityValue.setGravity(Gravity.END);
+        opacityValue.setMinWidth(dp(36));
+        opacityRow.addView(opacityValue, new LinearLayout.LayoutParams(-2, -2));
+        playbackPanel.addView(opacityRow, new LinearLayout.LayoutParams(-1, -2));
+        updateSpeedButton();
+        updateOpacityControls();
 
         legend = new LinearLayout(context);
         legend.setOrientation(LinearLayout.VERTICAL);
@@ -259,6 +369,9 @@ final class RadarPageView extends FrameLayout {
         radarCredit.setOnClickListener(v -> openUrl("https://www.rainviewer.com/"));
         credits.addView(radarCredit, new LinearLayout.LayoutParams(0, -2, 1f));
         playbackPanel.addView(credits, new LinearLayout.LayoutParams(-1, -2));
+        playbackPanel.addOnLayoutChangeListener((v, l, t, r, b, ol, ot, or, ob) -> {
+            if (b - t != ob - ot || r - l != or - ol) updateScaleBarInsets();
+        });
         mapSurface.addOnLayoutChangeListener((v, l, t, r, b, ol, ot, or, ob) -> {
             if (r - l != or - ol || b - t != ob - ot) {
                 layoutOverlays();
@@ -271,6 +384,27 @@ final class RadarPageView extends FrameLayout {
 
     void setStatusChangedListener(Runnable listener) {
         statusChanged = listener == null ? () -> { } : listener;
+    }
+
+    void setFullscreenToggleListener(Consumer<Boolean> listener) {
+        fullscreenToggleListener = listener;
+    }
+
+    boolean isFullscreen() {
+        return fullscreen;
+    }
+
+    void setFullscreen(boolean value) {
+        if (fullscreen == value && fullscreenButton.isFullscreen() == value) return;
+        fullscreen = value;
+        fullscreenButton.setFullscreen(value);
+        layoutOverlays();
+    }
+
+    void trimMemory() {
+        if (disposed) return;
+        data.trimMemory();
+        map.trimRetainedLayers();
     }
 
     private String statusText() {
@@ -308,6 +442,7 @@ final class RadarPageView extends FrameLayout {
 
         map.setLocation(latitude, longitude);
         updateMapTheme();
+        updateFrameTime();
         timelineError = "";
         mapMessage.setVisibility(GONE);
 
@@ -336,6 +471,8 @@ final class RadarPageView extends FrameLayout {
             cancelViewportWork();
             stopPlayback();
             map.stopMotion();
+            data.trimMemory();
+            map.trimRetainedLayers();
             refreshButton.setLoading(false);
             loading.setVisibility(GONE);
             notifyStatusChanged();
@@ -343,6 +480,13 @@ final class RadarPageView extends FrameLayout {
     }
 
     void applyTileTransparency() {
+        WeatherPreferences prefs = new WeatherPreferences(getContext());
+        playbackSpeed = RadarPlaybackClock.normalizeSpeed(prefs.radarPlaybackSpeed());
+        radarOpacityPercent = Math.max(20, Math.min(100, prefs.radarOpacityPercent()));
+        map.setRadarOpacity(radarOpacityPercent);
+        map.refreshScaleUnit();
+        updateSpeedButton();
+        updateOpacityControls();
         updateMapTheme();
         backdrop.updateAppearance(surfaceControls);
     }
@@ -419,6 +563,84 @@ final class RadarPageView extends FrameLayout {
             params.topMargin = top;
             control.setLayoutParams(params);
         }
+        updateScaleBarInsets();
+        playbackPanel.post(this::updateScaleBarInsets);
+    }
+
+    private void updateScaleBarInsets() {
+        if (disposed) return;
+        int panelHeight = playbackPanel.getHeight();
+        if (panelHeight <= 0) {
+            int width = mapSurface.getWidth();
+            if (width <= 0) width = getResources().getDisplayMetrics().widthPixels;
+            int innerWidth = Math.max(0,
+                    width - overlays.getPaddingLeft() - overlays.getPaddingRight() - dp(32));
+            if (innerWidth > 0) {
+                playbackPanel.measure(
+                        MeasureSpec.makeMeasureSpec(innerWidth, MeasureSpec.EXACTLY),
+                        MeasureSpec.makeMeasureSpec(0, MeasureSpec.UNSPECIFIED));
+                panelHeight = playbackPanel.getMeasuredHeight();
+            }
+        }
+        int left = overlays.getPaddingLeft() + dp(16);
+        int top = overlays.getPaddingTop() + dp(16);
+        int right = overlays.getPaddingRight() + dp(16);
+        int bottom = overlays.getPaddingBottom() + dp(12) + Math.max(0, panelHeight) + dp(10);
+        map.setScaleBarInsets(left, top, right, bottom);
+    }
+
+    private void cyclePlaybackSpeed() {
+        playbackSpeed = RadarPlaybackClock.nextSpeed(playbackSpeed);
+        getContext().getSharedPreferences(WeatherPreferences.PREFS_NAME, Context.MODE_PRIVATE)
+                .edit()
+                .putFloat(WeatherPreferences.PREF_RADAR_SPEED, playbackSpeed)
+                .apply();
+        updateSpeedButton();
+    }
+
+    private void updateSpeedButton() {
+        String label = playbackSpeed < 0.75f ? "0.5×" : playbackSpeed > 1.5f ? "2×" : "1×";
+        speedButton.setText(label);
+        speedButton.setContentDescription(UiTranslations.text(getContext(), "Playback speed")
+                + " " + label);
+    }
+
+    private void toggleOpacityRow() {
+        boolean show = opacityRow.getVisibility() != VISIBLE;
+        opacityRow.setVisibility(show ? VISIBLE : GONE);
+        updateOpacityControls();
+        updateScaleBarInsets();
+        playbackPanel.post(this::updateScaleBarInsets);
+    }
+
+    private void updateOpacityControls() {
+        String pct = radarOpacityPercent + "%";
+        opacityButton.setText(pct);
+        opacityButton.setBackground(pillBackground(opacityRow.getVisibility() == VISIBLE));
+        opacityButton.setContentDescription(UiTranslations.text(getContext(), "Radar opacity")
+                + " " + pct);
+        opacityValue.setText(pct);
+        int targetProgress = Math.max(0, Math.min(80, radarOpacityPercent - 20));
+        if (opacityBar.getProgress() != targetProgress) {
+            opacityBar.setProgress(targetProgress);
+        }
+    }
+
+    private void saveRadarOpacity(int percent) {
+        getContext().getSharedPreferences(WeatherPreferences.PREFS_NAME, Context.MODE_PRIVATE)
+                .edit()
+                .putInt(WeatherPreferences.PREF_RADAR_OPACITY, percent)
+                .apply();
+    }
+
+    private GradientDrawable pillBackground(boolean highlighted) {
+        GradientDrawable bg = new GradientDrawable();
+        bg.setCornerRadius(dp(14));
+        bg.setColor(highlighted
+                ? Color.argb(72, 125, 210, 246)
+                : Color.argb(40, 255, 255, 255));
+        bg.setStroke(Math.max(1, dp(1)), Color.argb(highlighted ? 110 : 48, 255, 255, 255));
+        return bg;
     }
 
     private void setOverlayMargins(View view, int left, int top, int right, int bottom) {
@@ -579,17 +801,46 @@ final class RadarPageView extends FrameLayout {
         if (userSelected) mapMessage.setVisibility(GONE);
     }
 
-    void refreshTimeFormat() { updateFrameTime(); }
+    void refreshTimeFormat() {
+        map.refreshScaleUnit();
+        updateFrameTime();
+    }
+
+    private ZoneId selectedCityZone() {
+        if (getContext() instanceof WeatherActivityFoundation) {
+            WeatherActivityFoundation weather = (WeatherActivityFoundation) getContext();
+            if (weather.displayedForecastMatchesSelection()) {
+                return WeatherActivityFoundation.responseZone(
+                        weather.lastCurrentWeather, weather.lastHourlyWeather, weather.lastDailyWeather);
+            }
+        }
+        return ZoneId.systemDefault();
+    }
 
     private void updateFrameTime() {
         if (disposed || timeline == null || timeline.frames.isEmpty() || frameIndex < 0) return;
         RadarDataClient.Frame frame = timeline.frames.get(frameIndex);
-        String time = WeatherTimeFormat.dated(getContext(),
-                Instant.ofEpochSecond(frame.timeSeconds), ZoneId.systemDefault(), "EEE");
+        Instant instant = Instant.ofEpochSecond(frame.timeSeconds);
+        ZoneId zone = selectedCityZone();
+        ZoneId systemZone = ZoneId.systemDefault();
+        Locale locale = AppLocaleManager.activeLocale(getContext());
+        String time = WeatherTimeFormat.dated(getContext(), instant, zone, "EEE");
+        if (!zone.equals(systemZone)) {
+            String badge = shortZoneBadge(zone, instant, locale);
+            if (!badge.isEmpty()) time = time + " · " + badge;
+        }
         String state = !map.isFrameDisplayed(frame) && !map.frameReady(frame) ? "Loading…"
                 : frameIndex == timeline.frames.size() - 1 ? "Latest" : "Past";
-        frameTime.setText(String.format(Locale.getDefault(), "%1$s · %2$s",
+        frameTime.setText(String.format(locale, "%1$s · %2$s",
                 UiTranslations.text(getContext(), state), time));
+    }
+
+    private static String shortZoneBadge(ZoneId zone, Instant instant, Locale locale) {
+        try {
+            String value = DateTimeFormatter.ofPattern("zzz", locale).withZone(zone).format(instant);
+            if (value != null && !value.trim().isEmpty()) return value.trim();
+        } catch (Exception ignored) { }
+        return zone.getId();
     }
 
     private void togglePlayback() {
@@ -665,7 +916,7 @@ final class RadarPageView extends FrameLayout {
             return;
         }
         if (ready < 2 && SystemClock.uptimeMillis() - preparationStartedAt < 30_000L) {
-            setSummary(String.format(Locale.getDefault(),
+            setSummary(String.format(AppLocaleManager.activeLocale(getContext()),
                     UiTranslations.text(getContext(), "Preparing animation · %d/%d frames"),
                     ready, window));
             schedulePreparationCheck(generation);

@@ -160,11 +160,12 @@ final class WidgetTimeRegression {
 
     private void exportPreviews(Context context) throws Exception {
         int[] layouts = {R.layout.widget_weather_preview, R.layout.widget_weather_small_preview,
-                R.layout.widget_weather_mini_preview, R.layout.widget_precipitation_preview};
-        String[] names = {"weather", "weather_small", "weather_mini", "precipitation"};
-        int[][] sizes = {{280,144},{156,156},{156,72},{280,144}};
+                R.layout.widget_weather_mini_preview, R.layout.widget_precipitation_preview,
+                R.layout.widget_forecast_preview};
+        String[] names = {"weather", "weather_small", "weather_mini", "precipitation", "forecast"};
+        int[][] sizes = {{280,144},{156,156},{156,72},{280,144},{280,144}};
         for (int i = 0; i < layouts.length; i++) {
-            RemoteViews preview = i == 3 ? new RemoteViews(context.getPackageName(), layouts[i])
+            RemoteViews preview = i >= 3 ? new RemoteViews(context.getPackageName(), layouts[i])
                     : samplePreview(context, layouts[i]);
             View view = render(context, preview, sizes[i][0], sizes[i][1]);
             Bitmap bitmap = Bitmap.createBitmap(view.getWidth(), view.getHeight(), Bitmap.Config.ARGB_8888);

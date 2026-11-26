@@ -19,9 +19,11 @@ final class WidgetPreviews {
     private static final class Api35 {
         static void publish(Context context) {
             Class<?>[] providers = {WeatherWidgetProvider.class, WeatherSmallWidgetProvider.class,
-                    WeatherMiniWidgetProvider.class, PrecipitationWidgetProvider.class};
+                    WeatherMiniWidgetProvider.class, PrecipitationWidgetProvider.class,
+                    CombinedForecastWidgetProvider.class};
             int[] layouts = {R.layout.widget_weather_picker_preview, R.layout.widget_weather_small_picker_preview,
-                    R.layout.widget_weather_mini_picker_preview, R.layout.widget_precipitation_picker_preview};
+                    R.layout.widget_weather_mini_picker_preview, R.layout.widget_precipitation_picker_preview,
+                    R.layout.widget_forecast_picker_preview};
             SharedPreferences prefs = context.getSharedPreferences("WIDGET_PREVIEWS", Context.MODE_PRIVATE);
             AppWidgetManager manager = AppWidgetManager.getInstance(context);
             for (int i = 0; i < providers.length; i++) {

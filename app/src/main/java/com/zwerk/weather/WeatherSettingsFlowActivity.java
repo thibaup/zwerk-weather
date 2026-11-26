@@ -44,11 +44,12 @@ abstract class WeatherSettingsFlowActivity extends WeatherOverviewRenderingActiv
                 || providerChanged || precipitationProviderChanged) {
             suppressNextResumeWeatherLoad = true;
         }
-        boolean actionReloadsBaseWeather = SettingsActivity.ACTION_API_KEY_CHANGED.equals(action)
+        boolean actionReloadsBaseWeather = SettingsScreen.ACTION_API_KEY_CHANGED.equals(action)
+                || SettingsScreen.ACTION_OPEN_METEO_KEY_CHANGED.equals(action)
                 || providerChanged
-                || SettingsActivity.ACTION_REFRESH.equals(action)
-                || SettingsActivity.ACTION_DEVICE_LOCATION.equals(action)
-                || SettingsActivity.ACTION_SELECTED_CITY.equals(action);
+                || SettingsScreen.ACTION_REFRESH.equals(action)
+                || SettingsScreen.ACTION_DEVICE_LOCATION.equals(action)
+                || SettingsScreen.ACTION_SELECTED_CITY.equals(action);
         if (airQualityChanged || pollenChanged || severeAlertsChanged) {
             // Clear changed optional state immediately. For actions that already reload base weather,
             // defer optional requests until the new weather generation succeeds; otherwise request
@@ -57,8 +58,14 @@ abstract class WeatherSettingsFlowActivity extends WeatherOverviewRenderingActiv
                     airQualityChanged, pollenChanged, severeAlertsChanged,
                     !actionReloadsBaseWeather);
         }
+        if (severeAlertsChanged || providerChanged) {
+            SevereAlertManager.reconcile(this);
+        }
         if (forecastPagesChanged && this instanceof MainActivity) {
             ((MainActivity) this).applyForecastPagePreferences();
+        }
+        if ((unitChanged || displayUnitChanged) && this instanceof MainActivity) {
+            ((MainActivity) this).refreshTimeFormat();
         }
         if (providerChanged) {
             invalidateMinuteForecastState();
@@ -70,11 +77,13 @@ abstract class WeatherSettingsFlowActivity extends WeatherOverviewRenderingActiv
             } else {
                 refreshWeather(true);
             }
-        } else if (SettingsActivity.ACTION_API_KEY_CHANGED.equals(action)) {
-            refreshWeather(true);
-        } else if (SettingsActivity.ACTION_REFRESH.equals(action)) {
+        } else if (SettingsScreen.ACTION_API_KEY_CHANGED.equals(action)
+                || SettingsScreen.ACTION_OPEN_METEO_KEY_CHANGED.equals(action)) {
+            invalidateMinuteForecastState();
             refreshWeather(true, precipitationMode);
-        } else if (SettingsActivity.ACTION_PREFERENCES_CHANGED.equals(action)) {
+        } else if (SettingsScreen.ACTION_REFRESH.equals(action)) {
+            refreshWeather(true, precipitationMode);
+        } else if (SettingsScreen.ACTION_PREFERENCES_CHANGED.equals(action)) {
             if (unitChanged || displayUnitChanged || weatherDetailsChanged) rerenderLastWeather();
             if (precipitationProviderChanged) {
                 invalidateMinuteForecastState();
@@ -83,23 +92,24 @@ abstract class WeatherSettingsFlowActivity extends WeatherOverviewRenderingActiv
                         && this instanceof MainActivity
                         && !((MainActivity) this).hasConfiguredApiKey()) {
                     ((MainActivity) this).showApiKeySetupDialog();
-                } else if (precipitationMode) {
+                } else if (precipitationMode
+                        || (weatherPreferences.combinedForecastMode() && expandedDayIndex == 0)) {
                     ensureMinuteForecast(true);
                 }
             }
-        } else if (SettingsActivity.ACTION_DEVICE_LOCATION.equals(action)) {
+        } else if (SettingsScreen.ACTION_DEVICE_LOCATION.equals(action)) {
             selectDeviceLocationAndRefresh();
-        } else if (SettingsActivity.ACTION_ADVANCED_COORDINATES.equals(action)) {
-            if (unitChanged || displayUnitChanged || weatherDetailsChanged) rerenderLastWeather();
-            showCoordinateDialog();
-        } else if (SettingsActivity.ACTION_SELECTED_CITY.equals(action)) {
+        } else if (SettingsScreen.ACTION_SELECTED_CITY.equals(action)) {
             applySelectedLocationResult(data);
         } else if (unitChanged || displayUnitChanged || airQualityChanged || pollenChanged
                 || severeAlertsChanged || weatherDetailsChanged) {
             if (unitChanged || displayUnitChanged || weatherDetailsChanged) rerenderLastWeather();
         } else if (precipitationProviderChanged) {
             invalidateMinuteForecastState();
-            if (precipitationMode) ensureMinuteForecast(true);
+            if (precipitationMode
+                    || (weatherPreferences.combinedForecastMode() && expandedDayIndex == 0)) {
+                ensureMinuteForecast(true);
+            }
         }
     }
 
@@ -120,6 +130,7 @@ abstract class WeatherSettingsFlowActivity extends WeatherOverviewRenderingActiv
         if (Double.isNaN(lat) || Double.isNaN(lon)) return;
 
         if (locationRefreshCoordinator != null) locationRefreshCoordinator.onSelectionChanged();
+        expandedDayIndex = -1;
         invalidateMinuteForecastState();
         latitude = lat;
         longitude = lon;
@@ -187,7 +198,8 @@ abstract class WeatherSettingsFlowActivity extends WeatherOverviewRenderingActiv
             });
         }
         widgetSnapshotPublisher.publish(current, today, hourly, lastDailyWeather, zone,
-                forecastLocationName(), latitude, longitude);
+                forecastLocationName(), latitude, longitude, selectedLocationId,
+                WidgetConfiguration.snapshot(this, ""));
     }
 
 }

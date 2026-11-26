@@ -9,9 +9,12 @@ import android.graphics.Canvas;
 import android.graphics.Color;
 import android.graphics.ColorMatrixColorFilter;
 import android.graphics.Paint;
+import android.graphics.Path;
 import android.graphics.RectF;
+import android.graphics.Typeface;
 import android.os.Build;
 import android.os.SystemClock;
+import android.util.TypedValue;
 import android.view.MotionEvent;
 import android.view.ScaleGestureDetector;
 import android.view.VelocityTracker;
@@ -28,19 +31,32 @@ final class RadarMapView extends View {
     private static final int INVALID_POINTER_ID = -1;
     private static final long FRAME_CROSSFADE_MS = 160L;
     private static final long ZOOM_LOAD_DELAY_MS = 350L;
+    private static final double EARTH_EQUATORIAL_CIRCUMFERENCE_M = 40_075_016.68557849d;
+    private static final double METERS_PER_MILE = 1609.344d;
+    private static final double METERS_PER_FOOT = 0.3048d;
     private final RadarDataClient data;
     private final Runnable viewportChanged;
     private final Paint bitmapPaint = new Paint(Paint.FILTER_BITMAP_FLAG | Paint.ANTI_ALIAS_FLAG);
     private final Paint basePaint = new Paint(Paint.FILTER_BITMAP_FLAG | Paint.ANTI_ALIAS_FLAG);
     private boolean darkMap;
+    private int radarOpacityPercent = 88;
+    private int radarAlpha = Math.round(255f * 88 / 100f);
     private final Paint markerPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
     private final Paint placeholderPaint = new Paint();
+    private final Paint scaleBarOutlinePaint = new Paint(Paint.ANTI_ALIAS_FLAG);
+    private final Paint scaleBarFillPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
+    private final Paint scaleTextOutlinePaint = new Paint(Paint.ANTI_ALIAS_FLAG);
+    private final Paint scaleTextPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
+    private final Path scaleBarPath = new Path();
     private final RectF drawRect = new RectF();
     private final int[] radarBounds = new int[4];
     private final Runnable tileReady = this::onTileReady;
     private final ScaleGestureDetector scaleDetector;
     private final OverScroller scroller;
     private final int touchSlop;
+    private final int doubleTapSlopSq;
+    private final int doubleTapTimeout;
+    private final int tapTimeout;
     private final int minimumFlingVelocity;
     private final int maximumFlingVelocity;
     private RadarDataClient.Timeline timeline;
@@ -63,6 +79,15 @@ final class RadarMapView extends View {
     private float downY;
     private float lastX;
     private float lastY;
+    private long downTime;
+    private long lastTapUpTime;
+    private float lastTapX;
+    private float lastTapY;
+    private boolean doubleTapCandidate;
+    private boolean doubleTapDragZooming;
+    private float doubleTapFocusX;
+    private float doubleTapFocusY;
+    private boolean inheritedChangeOnDown;
     private boolean dragging;
     private boolean movedBeyondSlop;
     private boolean scaledDuringGesture;
@@ -72,6 +97,17 @@ final class RadarMapView extends View {
     private Runnable frameDisplayListener;
     private int flingLastX;
     private int flingLastY;
+    private int scaleBarLeftInset;
+    private int scaleBarTopInset;
+    private int scaleBarRightInset;
+    private int scaleBarBottomInset;
+    private boolean imperialScale;
+    private double cachedScaleZoom = Double.NaN;
+    private double cachedScaleLat = Double.NaN;
+    private float cachedScaleMaxBarPx = -1f;
+    private boolean cachedScaleImperial;
+    private float cachedScaleBarPx;
+    private String cachedScaleLabel = "";
     private final RetainedLayer retainedBase = new RetainedLayer();
     private final RetainedLayer retainedRadar = new RetainedLayer();
     private long lastMotionLoadAt;
@@ -106,8 +142,43 @@ final class RadarMapView extends View {
         scroller = new OverScroller(context);
         ViewConfiguration configuration = ViewConfiguration.get(context);
         touchSlop = configuration.getScaledTouchSlop();
+        int doubleTapSlop = configuration.getScaledDoubleTapSlop();
+        doubleTapSlopSq = doubleTapSlop * doubleTapSlop;
+        doubleTapTimeout = ViewConfiguration.getDoubleTapTimeout();
+        tapTimeout = ViewConfiguration.getTapTimeout();
         minimumFlingVelocity = configuration.getScaledMinimumFlingVelocity();
         maximumFlingVelocity = configuration.getScaledMaximumFlingVelocity();
+
+        scaleBarOutlinePaint.setStyle(Paint.Style.STROKE);
+        scaleBarOutlinePaint.setColor(Color.argb(204, 10, 16, 26));
+        scaleBarOutlinePaint.setStrokeWidth(dp(4.2f));
+        scaleBarOutlinePaint.setStrokeCap(Paint.Cap.ROUND);
+        scaleBarOutlinePaint.setStrokeJoin(Paint.Join.ROUND);
+
+        scaleBarFillPaint.setStyle(Paint.Style.STROKE);
+        scaleBarFillPaint.setColor(Color.WHITE);
+        scaleBarFillPaint.setStrokeWidth(dp(2f));
+        scaleBarFillPaint.setStrokeCap(Paint.Cap.ROUND);
+        scaleBarFillPaint.setStrokeJoin(Paint.Join.ROUND);
+
+        float scaleTextPx = sp(11f);
+        Typeface scaleTypeface = Typeface.create("sans-serif", Typeface.BOLD);
+        scaleTextOutlinePaint.setStyle(Paint.Style.STROKE);
+        scaleTextOutlinePaint.setColor(Color.argb(214, 10, 16, 26));
+        scaleTextOutlinePaint.setStrokeWidth(dp(3f));
+        scaleTextOutlinePaint.setStrokeJoin(Paint.Join.ROUND);
+        scaleTextOutlinePaint.setTextSize(scaleTextPx);
+        scaleTextOutlinePaint.setTypeface(scaleTypeface);
+
+        scaleTextPaint.setStyle(Paint.Style.FILL);
+        scaleTextPaint.setColor(Color.WHITE);
+        scaleTextPaint.setTextSize(scaleTextPx);
+        scaleTextPaint.setTypeface(scaleTypeface);
+
+        WeatherPreferences prefs = new WeatherPreferences(context);
+        radarOpacityPercent = Math.max(20, Math.min(100, prefs.radarOpacityPercent()));
+        radarAlpha = Math.round(255f * radarOpacityPercent / 100f);
+        refreshScaleUnit();
         scaleDetector = new ScaleGestureDetector(context,
                 new ScaleGestureDetector.SimpleOnScaleGestureListener() {
                     @Override public boolean onScaleBegin(ScaleGestureDetector detector) {
@@ -201,6 +272,42 @@ final class RadarMapView extends View {
         invalidate();
     }
 
+    void setRadarOpacity(int percent) {
+        int clamped = Math.max(20, Math.min(100, percent));
+        int alpha = Math.round(255f * clamped / 100f);
+        if (radarOpacityPercent == clamped && radarAlpha == alpha) return;
+        radarOpacityPercent = clamped;
+        radarAlpha = alpha;
+        releaseLayer(retainedRadar);
+        invalidate();
+    }
+
+    void setScaleBarInsets(int left, int top, int right, int bottom) {
+        if (scaleBarLeftInset == left && scaleBarTopInset == top
+                && scaleBarRightInset == right && scaleBarBottomInset == bottom) return;
+        scaleBarLeftInset = left;
+        scaleBarTopInset = top;
+        scaleBarRightInset = right;
+        scaleBarBottomInset = bottom;
+        invalidate();
+    }
+
+    void refreshScaleUnit() {
+        WeatherPreferences prefs = new WeatherPreferences(getContext());
+        boolean fahrenheit = WeatherPreferences.TEMP_FAHRENHEIT.equals(prefs.temperatureUnit());
+        boolean nextImperial = WeatherPreferences.VISIBILITY_MI.equals(prefs.visibilityUnit(fahrenheit));
+        if (imperialScale != nextImperial) {
+            imperialScale = nextImperial;
+            cachedScaleZoom = Double.NaN;
+            invalidate();
+        }
+    }
+
+    void trimRetainedLayers() {
+        clearRetainedLayers();
+        releaseBackdrop();
+    }
+
     Object publishedBackdrop() { return backdropNode; }
 
     private void releaseBackdrop() {
@@ -216,17 +323,22 @@ final class RadarMapView extends View {
     }
 
     void zoomBy(int delta) {
+        zoomBy((float) delta, getWidth() / 2f, getHeight() / 2f);
+    }
+
+    private void zoomBy(float delta, float focusX, float focusY) {
         float next = Math.max(3f, Math.min(11f, displayZoom + delta));
         if (Math.abs(next - displayZoom) < 0.01f) return;
         cancelFling(false);
         cancelZoomAnimation();
         cancelFrameTransition();
+        final float fx = focusX;
+        final float fy = focusY;
         ValueAnimator animation = ValueAnimator.ofFloat(displayZoom, next);
         zoomAnimator = animation;
         animation.setDuration(270L);
         animation.setInterpolator(new DecelerateInterpolator());
-        animation.addUpdateListener(value -> changeZoom((float) value.getAnimatedValue(),
-                getWidth() / 2f, getHeight() / 2f));
+        animation.addUpdateListener(value -> changeZoom((float) value.getAnimatedValue(), fx, fy));
         animation.addListener(new AnimatorListenerAdapter() {
             private boolean cancelled;
 
@@ -280,7 +392,7 @@ final class RadarMapView extends View {
     }
 
     private boolean isZoomingOrSettling() {
-        return scaleDetector.isInProgress() || zoomAnimator != null
+        return scaleDetector.isInProgress() || doubleTapDragZooming || zoomAnimator != null
                 || SystemClock.uptimeMillis() < radarZoomSettlesAt;
     }
 
@@ -407,6 +519,86 @@ final class RadarMapView extends View {
         }
         if (!published) drawMapContent(canvas);
         if (backdropDrawListener != null) backdropDrawListener.run();
+        drawScaleBar(canvas);
+    }
+
+    private void drawScaleBar(Canvas canvas) {
+        int width = getWidth();
+        int height = getHeight();
+        if (width <= 0 || height <= 0) return;
+        float left = Math.max(dp(16), scaleBarLeftInset);
+        float bottom = height - Math.max(dp(16), scaleBarBottomInset);
+        float availableWidth = width - left - Math.max(dp(16), scaleBarRightInset);
+        if (availableWidth < dp(56) || bottom - dp(24) < scaleBarTopInset) return;
+
+        float maxBarPx = Math.min(dp(112), Math.max(dp(48), availableWidth * 0.34f));
+        if (Double.isNaN(cachedScaleZoom)
+                || Math.abs(cachedScaleZoom - displayZoom) > 0.002d
+                || Math.abs(cachedScaleLat - centerLat) > 0.05d
+                || Math.abs(cachedScaleMaxBarPx - maxBarPx) > 1f
+                || cachedScaleImperial != imperialScale) {
+            updateScaleBarCache(maxBarPx);
+        }
+        if (cachedScaleBarPx < dp(20) || cachedScaleLabel.isEmpty()) return;
+
+        float barLeft = left;
+        float barRight = barLeft + cachedScaleBarPx;
+        float tickTop = bottom - dp(5f);
+        scaleBarPath.reset();
+        scaleBarPath.moveTo(barLeft, tickTop);
+        scaleBarPath.lineTo(barLeft, bottom);
+        scaleBarPath.lineTo(barRight, bottom);
+        scaleBarPath.lineTo(barRight, tickTop);
+        canvas.drawPath(scaleBarPath, scaleBarOutlinePaint);
+        canvas.drawPath(scaleBarPath, scaleBarFillPaint);
+
+        float textY = bottom - dp(7f);
+        canvas.drawText(cachedScaleLabel, barLeft + dp(2f), textY, scaleTextOutlinePaint);
+        canvas.drawText(cachedScaleLabel, barLeft + dp(2f), textY, scaleTextPaint);
+    }
+
+    private void updateScaleBarCache(float maxBarPx) {
+        cachedScaleZoom = displayZoom;
+        cachedScaleLat = centerLat;
+        cachedScaleMaxBarPx = maxBarPx;
+        cachedScaleImperial = imperialScale;
+        cachedScaleBarPx = 0f;
+        cachedScaleLabel = "";
+
+        double worldPx = TILE_PX * Math.pow(2d, displayZoom);
+        double metersPerPx = (EARTH_EQUATORIAL_CIRCUMFERENCE_M * Math.cos(Math.toRadians(centerLat)))
+                / worldPx;
+        if (!Double.isFinite(metersPerPx) || metersPerPx <= 0d) return;
+        double maxMeters = metersPerPx * maxBarPx;
+        if (!Double.isFinite(maxMeters) || maxMeters <= 0d) return;
+
+        if (imperialScale) {
+            double maxMiles = maxMeters / METERS_PER_MILE;
+            if (maxMiles >= 1d) {
+                double niceMiles = niceScaleValue(maxMiles);
+                cachedScaleBarPx = (float) (niceMiles * METERS_PER_MILE / metersPerPx);
+                cachedScaleLabel = Math.round(niceMiles) + " mi";
+            } else {
+                double maxFeet = maxMeters / METERS_PER_FOOT;
+                double niceFeet = niceScaleValue(maxFeet);
+                cachedScaleBarPx = (float) (niceFeet * METERS_PER_FOOT / metersPerPx);
+                cachedScaleLabel = Math.round(niceFeet) + " ft";
+            }
+        } else {
+            double niceMeters = niceScaleValue(maxMeters);
+            cachedScaleBarPx = (float) (niceMeters / metersPerPx);
+            cachedScaleLabel = niceMeters >= 1000d
+                    ? Math.round(niceMeters / 1000d) + " km"
+                    : Math.round(niceMeters) + " m";
+        }
+    }
+
+    private static double niceScaleValue(double maxVal) {
+        if (maxVal <= 1d) return 1d;
+        double pow10 = Math.pow(10d, Math.floor(Math.log10(maxVal)));
+        double normalized = maxVal / pow10;
+        double step = normalized >= 5d ? 5d : normalized >= 2d ? 2d : 1d;
+        return step * pow10;
     }
 
     void setDarkMap(boolean dark) {
@@ -680,7 +872,7 @@ final class RadarMapView extends View {
             else {
                 int zoom = tileZoom();
                 double scale = mapScale();
-                drawRadarFrame(recording, displayedFrame, 225, width, height, zoom, scale,
+                drawRadarFrame(recording, displayedFrame, radarAlpha, width, height, zoom, scale,
                         toWorldX(centerLon, zoom) * scale, toWorldY(centerLat, zoom) * scale, gutter);
             }
         };
@@ -755,7 +947,7 @@ final class RadarMapView extends View {
         if (displayedFrame == null) return;
         RadarDataClient.Frame from = transitionFromFrame;
         if (from == null) {
-            drawRadarFrame(canvas, displayedFrame, 225, width, height, tileZoom, scale, cx, cy);
+            drawRadarFrame(canvas, displayedFrame, radarAlpha, width, height, tileZoom, scale, cx, cy);
             return;
         }
         // Readiness was checked at commit time. Camera movement cancels the
@@ -766,13 +958,13 @@ final class RadarMapView extends View {
                 transitionFromFrame = null;
                 transitionStartedAt = 0L;
             }
-            drawRadarFrame(canvas, displayedFrame, 225, width, height, tileZoom, scale, cx, cy);
+            drawRadarFrame(canvas, displayedFrame, radarAlpha, width, height, tileZoom, scale, cx, cy);
             return;
         }
         float progress = Math.max(0f, Math.min(1f, elapsed / (float) FRAME_CROSSFADE_MS));
-        drawRadarFrame(canvas, from, Math.round(225f * (1f - progress)),
+        drawRadarFrame(canvas, from, Math.round(radarAlpha * (1f - progress)),
                 width, height, tileZoom, scale, cx, cy);
-        drawRadarFrame(canvas, displayedFrame, Math.round(225f * progress),
+        drawRadarFrame(canvas, displayedFrame, Math.round(radarAlpha * progress),
                 width, height, tileZoom, scale, cx, cy);
         if (advance) postInvalidateOnAnimation();
     }
@@ -817,6 +1009,18 @@ final class RadarMapView extends View {
             activePointerId = event.getPointerId(0);
             downX = lastX = event.getX(0);
             downY = lastY = event.getY(0);
+            downTime = event.getEventTime();
+            inheritedChangeOnDown = inheritedChange;
+            long dt = downTime - lastTapUpTime;
+            float tapDx = downX - lastTapX;
+            float tapDy = downY - lastTapY;
+            doubleTapCandidate = lastTapUpTime > 0L && dt >= 0L && dt <= doubleTapTimeout
+                    && tapDx * tapDx + tapDy * tapDy <= doubleTapSlopSq;
+            doubleTapDragZooming = false;
+            if (doubleTapCandidate) {
+                doubleTapFocusX = downX;
+                doubleTapFocusY = downY;
+            }
             dragging = true;
             movedBeyondSlop = false;
             scaledDuringGesture = false;
@@ -841,18 +1045,34 @@ final class RadarMapView extends View {
                 float x = event.getX(index);
                 float y = event.getY(index);
                 if (event.getPointerCount() == 1 && !scaleDetector.isInProgress()) {
-                    float dx = x - lastX;
-                    float dy = y - lastY;
-                    if (dx != 0f || dy != 0f) {
-                        panByScreenDelta(dx, dy);
-                        gestureViewportChanged = true;
-                    }
                     float totalDx = x - downX;
                     float totalDy = y - downY;
-                    if (!movedBeyondSlop
-                            && totalDx * totalDx + totalDy * totalDy
-                            >= (float) touchSlop * touchSlop) {
-                        movedBeyondSlop = true;
+                    boolean exceededSlop = movedBeyondSlop
+                            || totalDx * totalDx + totalDy * totalDy
+                            >= (float) touchSlop * touchSlop;
+                    if (doubleTapCandidate) {
+                        if (!doubleTapDragZooming && exceededSlop) {
+                            movedBeyondSlop = true;
+                            doubleTapDragZooming = true;
+                        } else if (doubleTapDragZooming) {
+                            float dy = y - lastY;
+                            if (dy != 0f) {
+                                float deltaZoom = dy / Math.max(1f, dp(140f));
+                                float before = displayZoom;
+                                changeZoom(displayZoom + deltaZoom, doubleTapFocusX, doubleTapFocusY);
+                                if (Math.abs(displayZoom - before) > 0.0001f) {
+                                    gestureViewportChanged = true;
+                                }
+                            }
+                        }
+                    } else {
+                        float dx = x - lastX;
+                        float dy = y - lastY;
+                        if (dx != 0f || dy != 0f) {
+                            panByScreenDelta(dx, dy);
+                            gestureViewportChanged = true;
+                        }
+                        if (exceededSlop) movedBeyondSlop = true;
                     }
                 }
                 lastX = x;
@@ -860,6 +1080,9 @@ final class RadarMapView extends View {
                 return true;
             }
             case MotionEvent.ACTION_POINTER_DOWN:
+                doubleTapCandidate = false;
+                doubleTapDragZooming = false;
+                lastTapUpTime = 0L;
                 scaledDuringGesture = true;
                 movedBeyondSlop = true;
                 return true;
@@ -869,13 +1092,38 @@ final class RadarMapView extends View {
                 return true;
             case MotionEvent.ACTION_UP: {
                 dragging = false;
+                boolean wasDoubleTapDrag = doubleTapDragZooming;
+                boolean wasDoubleTap = doubleTapCandidate && !doubleTapDragZooming
+                        && !scaledDuringGesture && !movedBeyondSlop;
+                doubleTapCandidate = false;
+                doubleTapDragZooming = false;
                 boolean flung = false;
-                if (!scaledDuringGesture && movedBeyondSlop && velocityTracker != null
-                        && activePointerId != INVALID_POINTER_ID) {
-                    velocityTracker.computeCurrentVelocity(1000, maximumFlingVelocity);
-                    float velocityX = velocityTracker.getXVelocity(activePointerId);
-                    float velocityY = velocityTracker.getYVelocity(activePointerId);
-                    flung = startFling(velocityX, velocityY);
+                if (wasDoubleTap) {
+                    lastTapUpTime = 0L;
+                    gestureViewportChanged = false;
+                    recycleVelocityTracker();
+                    activePointerId = INVALID_POINTER_ID;
+                    requestParentIntercept(true);
+                    zoomBy(1f, doubleTapFocusX, doubleTapFocusY);
+                    invalidate();
+                    return true;
+                }
+                if (wasDoubleTapDrag) {
+                    lastTapUpTime = 0L;
+                } else if (!scaledDuringGesture && !movedBeyondSlop && !inheritedChangeOnDown
+                        && event.getEventTime() - downTime <= tapTimeout) {
+                    lastTapUpTime = event.getEventTime();
+                    lastTapX = event.getX();
+                    lastTapY = event.getY();
+                } else {
+                    lastTapUpTime = 0L;
+                    if (!scaledDuringGesture && movedBeyondSlop && velocityTracker != null
+                            && activePointerId != INVALID_POINTER_ID) {
+                        velocityTracker.computeCurrentVelocity(1000, maximumFlingVelocity);
+                        float velocityX = velocityTracker.getXVelocity(activePointerId);
+                        float velocityY = velocityTracker.getYVelocity(activePointerId);
+                        flung = startFling(velocityX, velocityY);
+                    }
                 }
                 recycleVelocityTracker();
                 activePointerId = INVALID_POINTER_ID;
@@ -886,6 +1134,9 @@ final class RadarMapView extends View {
             }
             case MotionEvent.ACTION_CANCEL:
                 dragging = false;
+                doubleTapCandidate = false;
+                doubleTapDragZooming = false;
+                lastTapUpTime = 0L;
                 recycleVelocityTracker();
                 activePointerId = INVALID_POINTER_ID;
                 requestParentIntercept(true);
@@ -1013,6 +1264,9 @@ final class RadarMapView extends View {
         MotionEvent cancel = MotionEvent.obtain(now, now, MotionEvent.ACTION_CANCEL, 0f, 0f, 0);
         try { scaleDetector.onTouchEvent(cancel); } finally { cancel.recycle(); }
         dragging = false;
+        doubleTapCandidate = false;
+        doubleTapDragZooming = false;
+        lastTapUpTime = 0L;
         gestureViewportChanged = false;
         activePointerId = INVALID_POINTER_ID;
         recycleVelocityTracker();
@@ -1083,5 +1337,10 @@ final class RadarMapView extends View {
 
     private int dp(float value) {
         return Math.round(value * getResources().getDisplayMetrics().density);
+    }
+
+    private float sp(float value) {
+        return TypedValue.applyDimension(
+                TypedValue.COMPLEX_UNIT_SP, value, getResources().getDisplayMetrics());
     }
 }

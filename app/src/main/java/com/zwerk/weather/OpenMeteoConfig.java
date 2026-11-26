@@ -2,13 +2,6 @@ package com.zwerk.weather;
 
 import android.content.Context;
 import android.content.SharedPreferences;
-import android.system.Os;
-
-import java.io.BufferedReader;
-import java.io.File;
-import java.io.FileOutputStream;
-import java.io.FileReader;
-import java.nio.charset.StandardCharsets;
 
 final class OpenMeteoConfig {
     static final String GOOGLE = "google";
@@ -22,7 +15,6 @@ final class OpenMeteoConfig {
             "weather_provider_global_default_restored_v2";
     private static final String PREFS = "WEATHER_UI";
     private static final String KEY_FILE = "open_meteo_customer_key";
-    private static final String KEY_TEMP_FILE = "open_meteo_customer_key.tmp";
 
     static final String[] MODEL_IDS = {
             "auto", "ecmwf_ifs", "dwd_icon_seamless", "ncep_gfs_seamless",
@@ -118,37 +110,19 @@ final class OpenMeteoConfig {
     }
 
     static String readCustomerKey(Context context) {
-        File file = new File(context.getFilesDir(), KEY_FILE);
-        if (!file.isFile()) return "";
-        try (BufferedReader reader = new BufferedReader(new FileReader(file))) {
-            String key = reader.readLine();
-            return key == null ? "" : key.trim();
-        } catch (Exception ignored) {
-            return "";
-        }
+        return ApiKeyStore.read(context, KEY_FILE);
     }
 
     static boolean hasCustomerKey(Context context) {
         return !readCustomerKey(context).isEmpty();
     }
 
-    static void writeCustomerKey(Context context, String key) throws Exception {
+    static void writeCustomerKey(Context context, String key) {
         String value = key == null ? "" : key.trim();
         if (value.isEmpty()) {
-            context.deleteFile(KEY_FILE);
-            return;
-        }
-        File target = new File(context.getFilesDir(), KEY_FILE);
-        File temp = new File(context.getFilesDir(), KEY_TEMP_FILE);
-        try {
-            try (FileOutputStream out = context.openFileOutput(KEY_TEMP_FILE, Context.MODE_PRIVATE)) {
-                out.write(value.getBytes(StandardCharsets.UTF_8));
-                out.flush();
-                out.getFD().sync();
-            }
-            Os.rename(temp.getAbsolutePath(), target.getAbsolutePath());
-        } finally {
-            if (temp.exists()) temp.delete();
+            ApiKeyStore.delete(context, KEY_FILE);
+        } else {
+            ApiKeyStore.write(context, KEY_FILE, value);
         }
     }
 }

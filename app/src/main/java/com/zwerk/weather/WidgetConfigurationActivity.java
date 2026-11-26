@@ -7,6 +7,7 @@ import android.appwidget.AppWidgetProviderInfo;
 import android.content.ComponentName;
 import android.content.Context;
 import android.content.Intent;
+import android.content.SharedPreferences;
 import android.content.res.ColorStateList;
 import android.graphics.Color;
 import android.graphics.Rect;
@@ -42,27 +43,51 @@ public final class WidgetConfigurationActivity extends Activity {
     private static final String STATE_TEXT_SCALE = "text_scale";
     private static final String STATE_DETAILS = "details";
     private static final String STATE_FORECAST = "forecast";
+    private static final String STATE_FORECAST_DAYS = "forecast_days";
+    private static final String STATE_PRECIP_STYLE = "precip_style";
+    private static final String STATE_BG_MODE = "bg_mode";
+    private static final String STATE_BG_TRANSPARENCY = "bg_transparency";
+    private static final String STATE_BG_GRADIENT = "bg_gradient";
+    private static final String STATE_BG_COLOR = "bg_color";
     private static final String STATE_PICKER_OPEN = "picker_open";
 
     private static final int BACKGROUND = Color.rgb(11, 17, 27);
     private static final int PANEL = Color.rgb(25, 39, 57);
     private static final int CONTROL = Color.rgb(34, 51, 72);
+    private static final int CONTROL_SELECTED = Color.rgb(46, 86, 122);
     private static final int BORDER = Color.rgb(63, 84, 108);
     private static final int PRIMARY = Color.rgb(247, 250, 255);
     private static final int SECONDARY = Color.rgb(178, 194, 214);
     private static final int ACCENT = Color.rgb(115, 199, 255);
 
-    private enum Kind { WEATHER, SMALL, MINI, RAIN }
+    private enum Kind { WEATHER, SMALL, MINI, RAIN, FORECAST }
 
     private int widgetId = AppWidgetManager.INVALID_APPWIDGET_ID;
     private Kind kind;
     private Button locationButton;
     private Dialog locationDialog;
+    private Dialog colorDialog;
     private int selectedLocation;
     private SeekBar sizeSlider;
     private TextView sizeValue;
     private Switch detailsSwitch;
     private Switch forecastSwitch;
+    private int forecastDays = CombinedForecastData.DEFAULT_WIDGET_DAYS;
+    private String precipitationStyle = CombinedForecastData.PRECIP_STYLE_COLUMNS;
+    private final List<Button> dayButtons = new ArrayList<>();
+    private Button columnsStyleButton;
+    private Button lineStyleButton;
+    private String backgroundMode = WidgetConfiguration.BG_APP_DEFAULT;
+    private int transparencyPercent = WidgetConfiguration.TRANSPARENCY_APP_DEFAULT;
+    private int backgroundGradient = WidgetConfiguration.GRADIENT_APP_DEFAULT;
+    private int customColor = WidgetBackground.DEFAULT_COLOUR;
+    private Button backgroundButton;
+    private SeekBar transparencySlider;
+    private TextView transparencyValue;
+    private Button transparencyResetButton;
+    private Button gradientDefaultButton;
+    private Button gradientOnButton;
+    private Button gradientOffButton;
     private WidgetConfigurationPreview preview;
     private final Runnable renderPreview = () -> preview.render(currentConfiguration());
     private final List<String> cityIds = new ArrayList<>();
@@ -94,11 +119,26 @@ public final class WidgetConfigurationActivity extends Activity {
         int scale = stored.textScalePercent;
         boolean details = stored.showDetails;
         boolean forecast = stored.showForecast;
+        forecastDays = stored.forecastDays;
+        precipitationStyle = stored.precipitationStyle;
+        backgroundMode = stored.backgroundMode;
+        transparencyPercent = stored.transparencyPercent;
+        backgroundGradient = stored.backgroundGradient;
+        customColor = stored.customColor;
         if (savedInstanceState != null) {
             cityId = savedInstanceState.getString(STATE_CITY_ID, cityId);
             scale = savedInstanceState.getInt(STATE_TEXT_SCALE, scale);
             details = savedInstanceState.getBoolean(STATE_DETAILS, details);
             forecast = savedInstanceState.getBoolean(STATE_FORECAST, forecast);
+            forecastDays = CombinedForecastData.clampWidgetDays(
+                    savedInstanceState.getInt(STATE_FORECAST_DAYS, forecastDays));
+            precipitationStyle = CombinedForecastData.normalizePrecipitationStyle(
+                    savedInstanceState.getString(STATE_PRECIP_STYLE, precipitationStyle));
+            backgroundMode = WidgetConfiguration.normalizeBackgroundMode(
+                    savedInstanceState.getString(STATE_BG_MODE, backgroundMode));
+            transparencyPercent = savedInstanceState.getInt(STATE_BG_TRANSPARENCY, transparencyPercent);
+            backgroundGradient = savedInstanceState.getInt(STATE_BG_GRADIENT, backgroundGradient);
+            customColor = savedInstanceState.getInt(STATE_BG_COLOR, customColor);
         }
         buildScreen(cityId, Math.max(80, Math.min(120, scale)), details, forecast);
         if (savedInstanceState != null && savedInstanceState.getBoolean(STATE_PICKER_OPEN)) {
@@ -114,12 +154,19 @@ public final class WidgetConfigurationActivity extends Activity {
         state.putInt(STATE_TEXT_SCALE, sizeSlider.getProgress());
         state.putBoolean(STATE_DETAILS, detailsSwitch.isChecked());
         state.putBoolean(STATE_FORECAST, forecastSwitch.isChecked());
+        state.putInt(STATE_FORECAST_DAYS, forecastDays);
+        state.putString(STATE_PRECIP_STYLE, precipitationStyle);
+        state.putString(STATE_BG_MODE, backgroundMode);
+        state.putInt(STATE_BG_TRANSPARENCY, transparencyPercent);
+        state.putInt(STATE_BG_GRADIENT, backgroundGradient);
+        state.putInt(STATE_BG_COLOR, customColor);
         state.putBoolean(STATE_PICKER_OPEN, locationDialog != null);
     }
 
     @Override
     protected void onDestroy() {
         if (locationDialog != null) locationDialog.dismiss();
+        if (colorDialog != null) colorDialog.dismiss();
         if (preview != null) preview.removeCallbacks(renderPreview);
         super.onDestroy();
     }
@@ -133,6 +180,9 @@ public final class WidgetConfigurationActivity extends Activity {
         AppWidgetProviderInfo info = AppWidgetManager.getInstance(this).getAppWidgetInfo(id);
         if (info == null || info.provider == null) return null;
         ComponentName provider = info.provider;
+        if (provider.equals(new ComponentName(this, CombinedForecastWidgetProvider.class))) {
+            return Kind.FORECAST;
+        }
         if (provider.equals(new ComponentName(this, PrecipitationWidgetProvider.class))) {
             return Kind.RAIN;
         }
@@ -193,8 +243,13 @@ public final class WidgetConfigurationActivity extends Activity {
                 ? WeatherWidgetProvider.WidgetMode.MINI : kind == Kind.SMALL
                 ? WeatherWidgetProvider.WidgetMode.SMALL : WeatherWidgetProvider.WidgetMode.NORMAL;
         int defaultWidth = kind == Kind.MINI || kind == Kind.SMALL ? 109 : 280;
-        int defaultHeight = kind == Kind.MINI ? 56 : kind == Kind.RAIN ? 144 : 118;
-        preview = new WidgetConfigurationPreview(this, options, kind == Kind.RAIN, defaultMode,
+        int defaultHeight = kind == Kind.MINI ? 56
+                : (kind == Kind.RAIN || kind == Kind.FORECAST) ? 144 : 118;
+        WidgetConfigurationPreview.Mode previewMode = kind == Kind.RAIN
+                ? WidgetConfigurationPreview.Mode.RAIN
+                : kind == Kind.FORECAST ? WidgetConfigurationPreview.Mode.FORECAST
+                        : WidgetConfigurationPreview.Mode.WEATHER;
+        preview = new WidgetConfigurationPreview(this, options, previewMode, defaultMode,
                 defaultWidth, defaultHeight);
         LinearLayout.LayoutParams previewParams = new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
@@ -203,6 +258,7 @@ public final class WidgetConfigurationActivity extends Activity {
         content.addView(preview, previewParams);
 
         buildOptions(content, cityId, scale, details, forecast);
+        buildAppearancePanel(content);
 
         LinearLayout footer = new LinearLayout(this);
         footer.setGravity(Gravity.CENTER_VERTICAL);
@@ -254,6 +310,61 @@ public final class WidgetConfigurationActivity extends Activity {
         panel.addView(locationButton, locationParams);
         locationButton.setOnClickListener(view -> showLocationPicker());
 
+        if (kind == Kind.FORECAST) {
+            TextView daysLabel = text(label("Forecast days"), 15, PRIMARY, true);
+            panel.addView(daysLabel, fullWidth());
+            LinearLayout daysRow = new LinearLayout(this);
+            daysRow.setOrientation(LinearLayout.HORIZONTAL);
+            LinearLayout.LayoutParams daysRowParams = fullWidth();
+            daysRowParams.topMargin = dp(6);
+            daysRowParams.bottomMargin = dp(14);
+            panel.addView(daysRow, daysRowParams);
+            dayButtons.clear();
+            for (int d = CombinedForecastData.MIN_WIDGET_DAYS; d <= CombinedForecastData.MAX_WIDGET_DAYS; d++) {
+                final int dayCount = d;
+                Button chip = button(Integer.toString(d), CONTROL, PRIMARY);
+                chip.setGravity(Gravity.CENTER);
+                chip.setContentDescription(d + " " + label("days"));
+                LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(0, dp(46), 1f);
+                if (d > CombinedForecastData.MIN_WIDGET_DAYS) lp.setMarginStart(dp(6));
+                daysRow.addView(chip, lp);
+                dayButtons.add(chip);
+                chip.setOnClickListener(view -> {
+                    forecastDays = dayCount;
+                    updateForecastOptionChips();
+                    updatePreview();
+                });
+            }
+
+            TextView styleLabel = text(label("Precipitation style"), 15, PRIMARY, true);
+            panel.addView(styleLabel, fullWidth());
+            LinearLayout styleRow = new LinearLayout(this);
+            styleRow.setOrientation(LinearLayout.HORIZONTAL);
+            LinearLayout.LayoutParams styleRowParams = fullWidth();
+            styleRowParams.topMargin = dp(6);
+            styleRowParams.bottomMargin = dp(16);
+            panel.addView(styleRow, styleRowParams);
+            columnsStyleButton = button(label("Columns"), CONTROL, PRIMARY);
+            columnsStyleButton.setGravity(Gravity.CENTER);
+            styleRow.addView(columnsStyleButton, new LinearLayout.LayoutParams(0, dp(46), 1f));
+            lineStyleButton = button(label("Line"), CONTROL, PRIMARY);
+            lineStyleButton.setGravity(Gravity.CENTER);
+            LinearLayout.LayoutParams lineLp = new LinearLayout.LayoutParams(0, dp(46), 1f);
+            lineLp.setMarginStart(dp(8));
+            styleRow.addView(lineStyleButton, lineLp);
+            columnsStyleButton.setOnClickListener(view -> {
+                precipitationStyle = CombinedForecastData.PRECIP_STYLE_COLUMNS;
+                updateForecastOptionChips();
+                updatePreview();
+            });
+            lineStyleButton.setOnClickListener(view -> {
+                precipitationStyle = CombinedForecastData.PRECIP_STYLE_LINE;
+                updateForecastOptionChips();
+                updatePreview();
+            });
+            updateForecastOptionChips();
+        }
+
         LinearLayout sizeHeading = new LinearLayout(this);
         sizeHeading.setGravity(Gravity.CENTER_VERTICAL);
         sizeHeading.setOrientation(LinearLayout.HORIZONTAL);
@@ -295,15 +406,342 @@ public final class WidgetConfigurationActivity extends Activity {
         });
         addSizeButton(sizeRow, "+", label("Increase text size"), 5);
 
-        detailsSwitch = addSwitch(panel, label(kind == Kind.RAIN
-                ? "Show rain amount" : "Show weather details"), details);
-        forecastSwitch = addSwitch(panel, label(kind == Kind.RAIN
-                ? "Show timeline legend" : "Show forecast"), forecast);
-        if (kind != Kind.RAIN && preview.weatherMode == WeatherWidgetProvider.WidgetMode.MINI) {
+        String detailsTitle = kind == Kind.RAIN
+                ? "Show rain amount"
+                : kind == Kind.FORECAST ? "Show current weather" : "Show weather details";
+        String forecastTitle = kind == Kind.RAIN
+                ? "Show timeline legend"
+                : kind == Kind.FORECAST ? "Show weather icons" : "Show forecast";
+        detailsSwitch = addSwitch(panel, label(detailsTitle), details);
+        forecastSwitch = addSwitch(panel, label(forecastTitle), forecast);
+        if (kind != Kind.RAIN && kind != Kind.FORECAST
+                && preview.weatherMode == WeatherWidgetProvider.WidgetMode.MINI) {
             detailsSwitch.setVisibility(View.GONE);
         }
-        if (kind != Kind.RAIN && !WeatherWidgetProvider.hasHourlyStrip(preview.weatherMode)) {
+        if (kind != Kind.RAIN && kind != Kind.FORECAST
+                && !WeatherWidgetProvider.hasHourlyStrip(preview.weatherMode)) {
             forecastSwitch.setVisibility(View.GONE);
+        }
+    }
+
+    private void buildAppearancePanel(LinearLayout parent) {
+        LinearLayout panel = new LinearLayout(this);
+        panel.setOrientation(LinearLayout.VERTICAL);
+        panel.setBackground(surface(PANEL, 20));
+        panel.setPadding(dp(14), dp(14), dp(14), dp(14));
+        LinearLayout.LayoutParams panelParams = fullWidth();
+        panelParams.topMargin = dp(14);
+        parent.addView(panel, panelParams);
+
+        TextView sectionTitle = text(label("Appearance"), 15, ACCENT, true);
+        sectionTitle.setAccessibilityHeading(true);
+        panel.addView(sectionTitle, fullWidth());
+
+        TextView bgLabel = text(label("Widget background"), 15, PRIMARY, true);
+        LinearLayout.LayoutParams bgLabelParams = fullWidth();
+        bgLabelParams.topMargin = dp(10);
+        panel.addView(bgLabel, bgLabelParams);
+
+        backgroundButton = button("", CONTROL, PRIMARY);
+        backgroundButton.setGravity(Gravity.START | Gravity.CENTER_VERTICAL);
+        backgroundButton.setCompoundDrawablesRelativeWithIntrinsicBounds(
+                0, 0, R.drawable.widget_config_chevron, 0);
+        backgroundButton.setCompoundDrawablePadding(dp(12));
+        updateBackgroundButton();
+        LinearLayout.LayoutParams bgBtnParams = fullWidth();
+        bgBtnParams.topMargin = dp(6);
+        bgBtnParams.bottomMargin = dp(14);
+        panel.addView(backgroundButton, bgBtnParams);
+        backgroundButton.setOnClickListener(view -> showBackgroundPicker());
+
+        SharedPreferences appPrefs = getSharedPreferences(WeatherPreferences.PREFS_NAME, MODE_PRIVATE);
+        int appTransparency = Math.max(0, Math.min(100,
+                appPrefs.getInt(WeatherWidgetProvider.PREF_TRANSPARENCY, 15)));
+
+        LinearLayout transHeader = new LinearLayout(this);
+        transHeader.setOrientation(LinearLayout.HORIZONTAL);
+        transHeader.setGravity(Gravity.CENTER_VERTICAL);
+        panel.addView(transHeader, fullWidth());
+        transHeader.addView(text(label("Widget transparency"), 15, PRIMARY, true),
+                new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+        transparencyValue = text("", 14, ACCENT, true);
+        transHeader.addView(transparencyValue);
+
+        transparencyResetButton = button(label("App default"), CONTROL, SECONDARY);
+        transparencyResetButton.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12);
+        transparencyResetButton.setMinHeight(dp(34));
+        transparencyResetButton.setPaddingRelative(dp(10), dp(4), dp(10), dp(4));
+        LinearLayout.LayoutParams resetLp = new LinearLayout.LayoutParams(-2, dp(34));
+        resetLp.setMarginStart(dp(8));
+        transHeader.addView(transparencyResetButton, resetLp);
+        transparencyResetButton.setOnClickListener(view -> {
+            transparencyPercent = WidgetConfiguration.TRANSPARENCY_APP_DEFAULT;
+            transparencySlider.setProgress(appTransparency);
+            updateTransparencyUi(appTransparency);
+            updatePreview();
+        });
+
+        transparencySlider = new WeatherSeekBar(this, true, true);
+        transparencySlider.setMin(0);
+        transparencySlider.setMax(100);
+        transparencySlider.setProgress(transparencyPercent >= 0 ? transparencyPercent : appTransparency);
+        transparencySlider.setKeyProgressIncrement(5);
+        transparencySlider.setProgressTintList(ColorStateList.valueOf(ACCENT));
+        transparencySlider.setProgressBackgroundTintList(ColorStateList.valueOf(BORDER));
+        transparencySlider.setThumbTintList(ColorStateList.valueOf(ACCENT));
+        transparencySlider.setContentDescription(label("Widget transparency"));
+        transparencySlider.setFocusable(true);
+        LinearLayout.LayoutParams sliderParams = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(48));
+        sliderParams.topMargin = dp(4);
+        panel.addView(transparencySlider, sliderParams);
+        transparencySlider.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
+            @Override public void onProgressChanged(SeekBar seekBar, int progress, boolean fromUser) {
+                if (fromUser) transparencyPercent = progress;
+                updateTransparencyUi(appTransparency);
+                updatePreview();
+            }
+            @Override public void onStartTrackingTouch(SeekBar seekBar) { }
+            @Override public void onStopTrackingTouch(SeekBar seekBar) { }
+        });
+        updateTransparencyUi(appTransparency);
+
+        TextView gradientLabel = text(label("Background gradient"), 15, PRIMARY, true);
+        LinearLayout.LayoutParams gradientLabelParams = fullWidth();
+        gradientLabelParams.topMargin = dp(8);
+        panel.addView(gradientLabel, gradientLabelParams);
+
+        LinearLayout gradientRow = new LinearLayout(this);
+        gradientRow.setOrientation(LinearLayout.HORIZONTAL);
+        LinearLayout.LayoutParams gradientRowParams = fullWidth();
+        gradientRowParams.topMargin = dp(6);
+        panel.addView(gradientRow, gradientRowParams);
+
+        gradientDefaultButton = button(label("App default"), CONTROL, PRIMARY);
+        gradientDefaultButton.setGravity(Gravity.CENTER);
+        gradientRow.addView(gradientDefaultButton, new LinearLayout.LayoutParams(0, dp(46), 1.3f));
+
+        gradientOnButton = button(label("On"), CONTROL, PRIMARY);
+        gradientOnButton.setGravity(Gravity.CENTER);
+        LinearLayout.LayoutParams onLp = new LinearLayout.LayoutParams(0, dp(46), 1f);
+        onLp.setMarginStart(dp(6));
+        gradientRow.addView(gradientOnButton, onLp);
+
+        gradientOffButton = button(label("Off"), CONTROL, PRIMARY);
+        gradientOffButton.setGravity(Gravity.CENTER);
+        LinearLayout.LayoutParams offLp = new LinearLayout.LayoutParams(0, dp(46), 1f);
+        offLp.setMarginStart(dp(6));
+        gradientRow.addView(gradientOffButton, offLp);
+
+        gradientDefaultButton.setOnClickListener(view -> {
+            backgroundGradient = WidgetConfiguration.GRADIENT_APP_DEFAULT;
+            updateGradientChips();
+            updatePreview();
+        });
+        gradientOnButton.setOnClickListener(view -> {
+            backgroundGradient = 1;
+            updateGradientChips();
+            updatePreview();
+        });
+        gradientOffButton.setOnClickListener(view -> {
+            backgroundGradient = 0;
+            updateGradientChips();
+            updatePreview();
+        });
+        updateGradientChips();
+    }
+
+    private void updateGradientChips() {
+        if (gradientDefaultButton == null) return;
+        styleChip(gradientDefaultButton, backgroundGradient < 0);
+        styleChip(gradientOnButton, backgroundGradient > 0);
+        styleChip(gradientOffButton, backgroundGradient == 0);
+    }
+
+    private void updateForecastOptionChips() {
+        for (int i = 0; i < dayButtons.size(); i++) {
+            int dayCount = CombinedForecastData.MIN_WIDGET_DAYS + i;
+            styleChip(dayButtons.get(i), dayCount == forecastDays);
+        }
+        if (columnsStyleButton != null && lineStyleButton != null) {
+            boolean line = CombinedForecastData.PRECIP_STYLE_LINE.equals(precipitationStyle);
+            styleChip(columnsStyleButton, !line);
+            styleChip(lineStyleButton, line);
+        }
+    }
+
+    private void styleChip(Button chip, boolean selected) {
+        chip.setSelected(selected);
+        chip.setBackground(controlBackground(selected ? CONTROL_SELECTED : CONTROL, 12));
+        chip.setTextColor(selected ? Color.WHITE : SECONDARY);
+        chip.setTypeface(Typeface.create(selected ? "sans-serif-medium" : "sans-serif", Typeface.NORMAL));
+        if (Build.VERSION.SDK_INT >= 30) {
+            chip.setStateDescription(getString(selected ? R.string.settings_selected : R.string.settings_not_selected));
+        }
+    }
+
+    private void updateTransparencyUi(int appTransparency) {
+        boolean custom = transparencyPercent >= 0;
+        int shown = custom ? transparencyPercent : appTransparency;
+        String text = custom ? sizeLabel(shown) : label("App default") + " (" + sizeLabel(shown) + ")";
+        transparencyValue.setText(text);
+        if (Build.VERSION.SDK_INT >= 30) transparencySlider.setStateDescription(text);
+        transparencyResetButton.setVisibility(custom ? View.VISIBLE : View.GONE);
+    }
+
+    private void updateBackgroundButton() {
+        String text;
+        if (WidgetConfiguration.BG_WEATHER.equals(backgroundMode)) text = label("Weather");
+        else if (WidgetConfiguration.BG_BLUE.equals(backgroundMode)) text = label("Blue");
+        else if (WidgetConfiguration.BG_DARK.equals(backgroundMode)) text = label("Dark");
+        else if (WidgetConfiguration.BG_CUSTOM.equals(backgroundMode)) text = label("Custom colour");
+        else text = label("App default");
+        backgroundButton.setText(text);
+        backgroundButton.setContentDescription(label("Widget background") + ", " + text);
+    }
+
+    private void showBackgroundPicker() {
+        Dialog dialog = new Dialog(this);
+        dialog.requestWindowFeature(Window.FEATURE_NO_TITLE);
+        dialog.setTitle(label("Widget background"));
+        dialog.setCanceledOnTouchOutside(true);
+
+        LinearLayout panel = new LinearLayout(this);
+        panel.setOrientation(LinearLayout.VERTICAL);
+        panel.setPadding(dp(18), dp(16), dp(18), dp(14));
+        panel.setBackground(surface(PANEL, 24));
+        TextView title = text(label("Widget background"), 22, PRIMARY, true);
+        title.setAccessibilityHeading(true);
+        panel.addView(title, fullWidth());
+
+        String[] modes = {
+                WidgetConfiguration.BG_APP_DEFAULT,
+                WidgetConfiguration.BG_WEATHER,
+                WidgetConfiguration.BG_BLUE,
+                WidgetConfiguration.BG_DARK,
+                WidgetConfiguration.BG_CUSTOM
+        };
+        String[] titles = {
+                label("App default"),
+                label("Weather"),
+                label("Blue"),
+                label("Dark"),
+                label("Custom colour")
+        };
+
+        RadioGroup choices = new RadioGroup(this);
+        LinearLayout.LayoutParams listParams = fullWidth();
+        listParams.topMargin = dp(12);
+        panel.addView(choices, listParams);
+        for (int i = 0; i < modes.length; i++) {
+            final String mode = modes[i];
+            boolean selected = mode.equals(backgroundMode);
+            RadioButton choice = new RadioButton(this);
+            choice.setId(View.generateViewId());
+            choice.setText(titles[i]);
+            choice.setTextColor(PRIMARY);
+            choice.setTextSize(16);
+            choice.setButtonTintList(checkedTint(ACCENT, SECONDARY));
+            choice.setCompoundDrawablePadding(dp(8));
+            choice.setMinimumHeight(dp(50));
+            choice.setPaddingRelative(dp(12), dp(8), dp(12), dp(8));
+            choice.setBackground(controlBackground(selected ? Color.rgb(43, 71, 95) : CONTROL, 12));
+            RadioGroup.LayoutParams choiceParams = new RadioGroup.LayoutParams(-1, -2);
+            choiceParams.bottomMargin = dp(6);
+            choices.addView(choice, choiceParams);
+            if (selected) choices.check(choice.getId());
+            choice.setOnClickListener(view -> {
+                dialog.dismiss();
+                if (WidgetConfiguration.BG_CUSTOM.equals(mode)) {
+                    showCustomColorPicker();
+                } else {
+                    backgroundMode = mode;
+                    updateBackgroundButton();
+                    updatePreview();
+                }
+            });
+        }
+
+        Button cancel = button(label("Cancel"), CONTROL, PRIMARY);
+        LinearLayout.LayoutParams cancelParams = fullWidth();
+        cancelParams.topMargin = dp(8);
+        panel.addView(cancel, cancelParams);
+        cancel.setOnClickListener(view -> dialog.dismiss());
+
+        dialog.setContentView(panel);
+        Window window = dialog.getWindow();
+        if (window != null) {
+            window.setBackgroundDrawable(new ColorDrawable(Color.TRANSPARENT));
+            window.addFlags(WindowManager.LayoutParams.FLAG_DIM_BEHIND);
+            window.setDimAmount(0.66f);
+        }
+        dialog.show();
+        if (window != null) {
+            int width = Math.min(dp(getResources().getConfiguration().screenWidthDp - 32), dp(440));
+            window.setLayout(width, ViewGroup.LayoutParams.WRAP_CONTENT);
+        }
+    }
+
+    private void showCustomColorPicker() {
+        if (colorDialog != null) colorDialog.dismiss();
+        Dialog dialog = new Dialog(this);
+        colorDialog = dialog;
+        dialog.requestWindowFeature(Window.FEATURE_NO_TITLE);
+        dialog.setTitle(label("Custom colour"));
+        dialog.setCanceledOnTouchOutside(true);
+        dialog.setOnDismissListener(ignored -> colorDialog = null);
+
+        ScrollView scroller = new ScrollView(this);
+        LinearLayout panel = new LinearLayout(this);
+        panel.setOrientation(LinearLayout.VERTICAL);
+        panel.setPadding(dp(18), dp(16), dp(18), dp(14));
+        panel.setBackground(surface(PANEL, 24));
+        scroller.addView(panel, new ScrollView.LayoutParams(-1, -2));
+
+        panel.addView(text(label("Custom colour"), 22, PRIMARY, true), fullWidth());
+        boolean appGradient = getSharedPreferences(WeatherPreferences.PREFS_NAME, MODE_PRIVATE)
+                .getBoolean(WeatherWidgetProvider.PREF_GRADIENT, true);
+        boolean gradient = backgroundGradient >= 0 ? backgroundGradient > 0 : appGradient;
+        WidgetColourPicker picker = new WidgetColourPicker(this, customColor, ACCENT, gradient);
+        LinearLayout.LayoutParams pickerLp = fullWidth();
+        pickerLp.topMargin = dp(14);
+        panel.addView(picker, pickerLp);
+
+        LinearLayout actions = new LinearLayout(this);
+        actions.setOrientation(LinearLayout.HORIZONTAL);
+        LinearLayout.LayoutParams actionsLp = fullWidth();
+        actionsLp.topMargin = dp(14);
+        panel.addView(actions, actionsLp);
+
+        Button cancel = button(label("Cancel"), CONTROL, PRIMARY);
+        actions.addView(cancel, new LinearLayout.LayoutParams(0, -2, 1f));
+        cancel.setOnClickListener(view -> dialog.dismiss());
+
+        Button apply = button(label("Apply"), ACCENT, BACKGROUND);
+        LinearLayout.LayoutParams applyLp = new LinearLayout.LayoutParams(0, -2, 1f);
+        applyLp.setMarginStart(dp(10));
+        actions.addView(apply, applyLp);
+        apply.setOnClickListener(view -> {
+            Integer chosen = picker.selectedColour();
+            if (chosen == null) return;
+            customColor = chosen | 0xff000000;
+            backgroundMode = WidgetConfiguration.BG_CUSTOM;
+            updateBackgroundButton();
+            updatePreview();
+            dialog.dismiss();
+        });
+
+        dialog.setContentView(scroller);
+        Window window = dialog.getWindow();
+        if (window != null) {
+            window.setBackgroundDrawable(new ColorDrawable(Color.TRANSPARENT));
+            window.addFlags(WindowManager.LayoutParams.FLAG_DIM_BEHIND);
+            window.setDimAmount(0.66f);
+        }
+        dialog.show();
+        if (window != null) {
+            int width = Math.min(dp(getResources().getConfiguration().screenWidthDp - 32), dp(440));
+            window.setLayout(width, ViewGroup.LayoutParams.WRAP_CONTENT);
         }
     }
 
@@ -418,8 +856,17 @@ public final class WidgetConfigurationActivity extends Activity {
     }
 
     private WidgetConfiguration currentConfiguration() {
-        return new WidgetConfiguration(cityIds.get(selectedLocation), sizeSlider.getProgress(),
-                detailsSwitch.isChecked(), forecastSwitch.isChecked());
+        return new WidgetConfiguration(
+                cityIds.get(selectedLocation),
+                sizeSlider.getProgress(),
+                detailsSwitch.isChecked(),
+                forecastSwitch.isChecked(),
+                forecastDays,
+                precipitationStyle,
+                backgroundMode,
+                transparencyPercent,
+                backgroundGradient,
+                customColor);
     }
 
     private void updatePreview() {
@@ -450,6 +897,7 @@ public final class WidgetConfigurationActivity extends Activity {
             case MINI: return getString(R.string.weather_mini_widget_name);
             case SMALL: return getString(R.string.weather_small_widget_name);
             case RAIN: return getString(R.string.precipitation_widget_name);
+            case FORECAST: return getString(R.string.combined_forecast_widget_name);
             default: return getString(R.string.weather_widget_name);
         }
     }

@@ -18,6 +18,9 @@ final class ForecastDiskCache {
     private static final String FILE_PREFIX = "weather_forecast_cache_v2_";
     private static final String FILE_SUFFIX = ".json";
     private static final double COORDINATE_TOLERANCE = 0.00001d;
+    private static final long CLEANUP_INTERVAL_MS = 60L * 60L * 1000L;
+    private static volatile boolean legacyCleaned;
+    private static volatile long lastCleanupAtMs;
     static final String HOURLY_NEXT_TOKEN = "_cacheHourlyNextPageToken";
     static final String HOURLY_TERMINAL = "_cacheHourlyTerminal";
     static final String HOURLY_RESTART = "_cacheHourlyRestart";
@@ -44,9 +47,22 @@ final class ForecastDiskCache {
     }
 
     synchronized void cleanup() {
-        File[] files = context.getFilesDir().listFiles();
-        if (files == null) return;
+        if (!legacyCleaned) {
+            legacyCleaned = true;
+            File filesDir = context.getFilesDir();
+            File cacheDir = context.getCacheDir();
+            if (filesDir != null && !filesDir.equals(cacheDir)) {
+                CacheKeys.deleteLegacyFiles(filesDir, LEGACY_PREFIX, FILE_PREFIX);
+            }
+        }
         long now = System.currentTimeMillis();
+        if (lastCleanupAtMs > 0L && now >= lastCleanupAtMs
+                && now - lastCleanupAtMs < CLEANUP_INTERVAL_MS) {
+            return;
+        }
+        lastCleanupAtMs = now;
+        File[] files = context.getCacheDir().listFiles();
+        if (files == null) return;
         for (File file : files) {
             if (file == null || !file.isFile()) continue;
             String name = file.getName();
@@ -222,7 +238,7 @@ final class ForecastDiskCache {
 
     private File cacheFile(double lat, double lon, String language, String requestLocationId) {
         String identity = String.format(Locale.US, "%.5f|%.5f|%s|%s", lat, lon, language, requestLocationId);
-        return new File(context.getFilesDir(), FILE_PREFIX + Integer.toHexString(identity.hashCode()) + FILE_SUFFIX);
+        return new File(context.getCacheDir(), FILE_PREFIX + CacheKeys.sha256Hex16(identity) + FILE_SUFFIX);
     }
 
 }

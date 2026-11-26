@@ -27,7 +27,9 @@ import org.json.JSONObject;
 import java.lang.ref.WeakReference;
 import java.time.Duration;
 import java.time.Instant;
+import java.time.LocalDate;
 import java.time.ZoneId;
+import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.Locale;
 
@@ -320,23 +322,34 @@ abstract class ForecastViewsActivity extends WeatherInteractionViewsActivity {
         private HourlyWeatherHistory.Summary yesterday = HourlyWeatherHistory.Summary.EMPTY;
         private String historyStatus;
         private final int desiredWidth;
-        private final int desiredHeight;
+        private final int requestedHeight;
         private final DaySelectionListener daySelectionListener;
         private final int touchSlop;
         private final android.text.TextPaint textPaint = new android.text.TextPaint(Paint.ANTI_ALIAS_FLAG);
+        private final Typeface normalTypeface = Typeface.create("sans-serif", Typeface.NORMAL);
+        private final Typeface mediumTypeface = Typeface.create("sans-serif-medium", Typeface.NORMAL);
         private final Paint linePaint = new Paint(Paint.ANTI_ALIAS_FLAG);
         private final Paint dotPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
         private final Paint disclosurePaint = new Paint(Paint.ANTI_ALIAS_FLAG);
+        private final Paint gridPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
         private final RectF drawBounds = new RectF();
         private final Path smoothLinePath = new Path();
         // Reuse drawing buffers for yesterday and up to ten forecast days.
         private final Integer[] highs = new Integer[MAX_FORECAST_DAYS + 1];
         private final Integer[] lows = new Integer[MAX_FORECAST_DAYS + 1];
         private final int[] pops = new int[MAX_FORECAST_DAYS + 1];
+        private final double[] amountsMm = new double[MAX_FORECAST_DAYS + 1];
         private final float[] highX = new float[MAX_FORECAST_DAYS + 1];
         private final float[] highY = new float[MAX_FORECAST_DAYS + 1];
         private final float[] lowX = new float[MAX_FORECAST_DAYS + 1];
         private final float[] lowY = new float[MAX_FORECAST_DAYS + 1];
+        private final float[] precipFractions = new float[MAX_FORECAST_DAYS + 1];
+        private Locale cachedLocale;
+        private DateTimeFormatter weekdayFormatter;
+        private DateTimeFormatter dateFormatter;
+        private boolean combinedMode;
+        private boolean useInches;
+        private String precipitationStyle = CombinedForecastData.PRECIP_STYLE_LINE;
         private float downX;
         private float downY;
         private boolean moved;
@@ -359,15 +372,66 @@ abstract class ForecastViewsActivity extends WeatherInteractionViewsActivity {
             this.yesterdayLabel = yesterdayLabel;
             this.yesterdayDate = yesterdayDate;
             this.desiredWidth = Math.max(dp(280), desiredWidth);
-            this.desiredHeight = Math.max(dp(290), desiredHeight);
+            this.requestedHeight = desiredHeight;
             this.daySelectionListener = daySelectionListener;
+            this.useInches = new WeatherPreferences(context).isPrecipitationInches();
             touchSlop = ViewConfiguration.get(context).getScaledTouchSlop();
             setMinimumWidth(this.desiredWidth);
-            setMinimumHeight(this.desiredHeight);
+            setMinimumHeight(effectiveDesiredHeight());
             setClickable(true);
             setFocusable(true);
             setContentDescription(chartAccessibilityDescription());
             setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_YES);
+        }
+
+        private int effectiveDesiredHeight() {
+            return Math.max(dp(combinedMode ? 250 : 290), requestedHeight);
+        }
+
+        private static String normalizeChartPrecipitationStyle(String style) {
+            if (style == null || style.trim().isEmpty()) {
+                return CombinedForecastData.PRECIP_STYLE_LINE;
+            }
+            return CombinedForecastData.normalizePrecipitationStyle(style);
+        }
+
+        void setCombinedMode(boolean enabled, String precipitationStyle) {
+            String normalized = normalizeChartPrecipitationStyle(precipitationStyle);
+            boolean modeChanged = combinedMode != enabled;
+            boolean styleChanged = !normalized.equals(this.precipitationStyle);
+            if (!modeChanged && !styleChanged) return;
+            combinedMode = enabled;
+            this.precipitationStyle = normalized;
+            if (modeChanged) {
+                setMinimumHeight(effectiveDesiredHeight());
+                setContentDescription(chartAccessibilityDescription());
+                requestLayout();
+            }
+            invalidate();
+        }
+
+        void setPrecipitationStyle(String precipitationStyle) {
+            String normalized = normalizeChartPrecipitationStyle(precipitationStyle);
+            if (normalized.equals(this.precipitationStyle)) return;
+            this.precipitationStyle = normalized;
+            if (combinedMode) invalidate();
+        }
+
+        void setUseInches(boolean inches) {
+            if (useInches == inches) return;
+            useInches = inches;
+            if (combinedMode) {
+                setContentDescription(chartAccessibilityDescription());
+                invalidate();
+            }
+        }
+
+        private void ensureDateFormatters() {
+            Locale locale = AppLocaleManager.activeLocale(getContext());
+            if (locale.equals(cachedLocale) && weekdayFormatter != null && dateFormatter != null) return;
+            cachedLocale = locale;
+            weekdayFormatter = DateTimeFormatter.ofPattern("EEE", locale);
+            dateFormatter = DateTimeFormatter.ofPattern("d MMM", locale);
         }
 
         private int historyColumns() { return yesterdayLabel == null ? 0 : 1; }
@@ -393,8 +457,23 @@ abstract class ForecastViewsActivity extends WeatherInteractionViewsActivity {
         }
 
         private String columnLabel(int dayIndex, JSONObject day) {
-            if (dayIndex == WeatherOverviewRenderingActivity.YESTERDAY_INDEX) return yesterdayLabel;
-            return dayIndex == 0 ? UiTranslations.text(getContext(), "Today") : dayLabel(day, zone);
+            ensureDateFormatters();
+            if (dayIndex == WeatherOverviewRenderingActivity.YESTERDAY_INDEX) {
+                return AppLocaleManager.capitalize(yesterdayLabel, cachedLocale);
+            }
+            if (dayIndex == 0) {
+                return AppLocaleManager.capitalize(UiTranslations.text(getContext(), "Today"), cachedLocale);
+            }
+            LocalDate date = displayDate(day, zone);
+            if (date == null) return "—";
+            return AppLocaleManager.capitalize(date.format(weekdayFormatter), cachedLocale);
+        }
+
+        private String columnDate(int dayIndex, JSONObject day) {
+            if (dayIndex < 0) return yesterdayDate;
+            ensureDateFormatters();
+            LocalDate date = displayDate(day, zone);
+            return date == null ? "" : date.format(dateFormatter);
         }
 
         void updateYesterday(HourlyWeatherHistory.Summary summary, String status) {
@@ -408,7 +487,7 @@ abstract class ForecastViewsActivity extends WeatherInteractionViewsActivity {
         protected void onMeasure(int widthMeasureSpec, int heightMeasureSpec) {
             // HorizontalScrollView may measure this axis as UNSPECIFIED.
             int measuredWidth = measuredDimension(desiredWidth, widthMeasureSpec);
-            int measuredHeight = measuredDimension(desiredHeight, heightMeasureSpec);
+            int measuredHeight = measuredDimension(effectiveDesiredHeight(), heightMeasureSpec);
             setMeasuredDimension(measuredWidth, measuredHeight);
         }
 
@@ -520,14 +599,20 @@ abstract class ForecastViewsActivity extends WeatherInteractionViewsActivity {
             super.onDraw(canvas);
             int n = columnCount();
             if (n == 0) {
+                textPaint.clearShadowLayer();
                 textPaint.setColor(SOFT_WHITE);
                 textPaint.setTextSize(dp(14));
-                textPaint.setTypeface(Typeface.create("sans-serif", Typeface.NORMAL));
+                textPaint.setTypeface(normalTypeface);
                 textPaint.setTextAlign(Paint.Align.CENTER);
                 canvas.drawText(UiTranslations.text(getContext(), "Daily forecast unavailable"),
                         getWidth() / 2f, getHeight() / 2f, textPaint);
                 return;
             }
+            if (combinedMode) {
+                drawCombined(canvas, n);
+                return;
+            }
+            textPaint.clearShadowLayer();
 
             float width = getWidth();
             float height = getHeight();
@@ -592,17 +677,16 @@ abstract class ForecastViewsActivity extends WeatherInteractionViewsActivity {
                 JSONObject day = forecastDay(index);
                 float x = cell * (i + 0.5f);
 
-                textPaint.setTypeface(Typeface.create("sans-serif-medium", Typeface.NORMAL));
+                textPaint.setTypeface(mediumTypeface);
                 textPaint.setTextAlign(Paint.Align.CENTER);
                 textPaint.setColor(WHITE);
                 textPaint.setTextSize(dp(13));
                 canvas.drawText(fitLabel(columnLabel(index, day), cell - dp(8)), x, dayY, textPaint);
 
-                textPaint.setTypeface(Typeface.create("sans-serif", Typeface.NORMAL));
+                textPaint.setTypeface(normalTypeface);
                 textPaint.setColor(SOFT_WHITE);
                 textPaint.setTextSize(dp(10));
-                String date = fitLabel(index < 0 ? yesterdayDate : dayDateLabel(day, zone),
-                        cell - dp(40));
+                String date = fitLabel(columnDate(index, day), cell - dp(40));
                 float dateWidth = textPaint.measureText(date);
                 float dateLeft = x - (dateWidth + dp(16)) / 2f;
                 boolean expanded = i == expandedDay;
@@ -641,7 +725,7 @@ abstract class ForecastViewsActivity extends WeatherInteractionViewsActivity {
             linePaint.setColor(Color.argb(155, 207, 224, 248));
             drawSmoothLine(canvas, lowX, lowY, lows, n, linePaint);
 
-            textPaint.setTypeface(Typeface.create("sans-serif-medium", Typeface.NORMAL));
+            textPaint.setTypeface(mediumTypeface);
             textPaint.setTextAlign(Paint.Align.CENTER);
             textPaint.setTextSize(dp(16));
             textPaint.setColor(WHITE);
@@ -660,7 +744,7 @@ abstract class ForecastViewsActivity extends WeatherInteractionViewsActivity {
             }
 
             // Missing probability stays unavailable.
-            textPaint.setTypeface(Typeface.create("sans-serif-medium", Typeface.NORMAL));
+            textPaint.setTypeface(mediumTypeface);
             textPaint.setTextSize(dp(10));
             textPaint.setColor(ACCENT_BLUE);
             dotPaint.setColor(Color.argb(165, 176, 226, 255));
@@ -677,6 +761,226 @@ abstract class ForecastViewsActivity extends WeatherInteractionViewsActivity {
                     drawBounds.set(x - barWidth / 2f, rainBase - h, x + barWidth / 2f, rainBase);
                     canvas.drawRoundRect(drawBounds, dp(4), dp(4), dotPaint);
                 }
+            }
+        }
+
+        private void drawCombined(Canvas canvas, int n) {
+            float width = getWidth();
+            float height = getHeight();
+            float cell = width / Math.max(1, n);
+            boolean inches = useInches;
+
+            textPaint.clearShadowLayer();
+            if (previewDay >= 0 && previewDay < n) {
+                dotPaint.setStyle(Paint.Style.FILL);
+                dotPaint.setColor(Color.argb(25, 255, 255, 255));
+                drawBounds.set(previewDay * cell + dp(3), dp(2),
+                        (previewDay + 1) * cell - dp(3), height - dp(2));
+                canvas.drawRoundRect(drawBounds, dp(16), dp(16), dotPaint);
+            }
+            if (hasFocus() && cursorDay >= 0 && cursorDay < n) {
+                dotPaint.setStyle(Paint.Style.FILL);
+                dotPaint.setColor(Color.argb(14, 255, 255, 255));
+                drawBounds.set(cursorDay * cell + dp(6), dp(5),
+                        (cursorDay + 1) * cell - dp(6), height - dp(5));
+                canvas.drawRoundRect(drawBounds, dp(14), dp(14), dotPaint);
+            }
+
+            int tempMin = Integer.MAX_VALUE;
+            int tempMax = Integer.MIN_VALUE;
+            boolean hasAmount = false;
+            boolean hasProbability = false;
+            double peakMm = 0d;
+
+            for (int i = 0; i < n; i++) {
+                int index = dayIndex(i);
+                JSONObject day = forecastDay(index);
+                highs[i] = index < 0 ? yesterday.high()
+                        : degreesOrNull(day == null ? null : day.optJSONObject("maxTemperature"));
+                lows[i] = index < 0 ? yesterday.low()
+                        : degreesOrNull(day == null ? null : day.optJSONObject("minTemperature"));
+                pops[i] = dayProbability(day);
+                amountsMm[i] = index < 0 ? Double.NaN : dayPrecipitationMm(day);
+                if (highs[i] != null) {
+                    tempMin = Math.min(tempMin, highs[i]);
+                    tempMax = Math.max(tempMax, highs[i]);
+                }
+                if (lows[i] != null) {
+                    tempMin = Math.min(tempMin, lows[i]);
+                    tempMax = Math.max(tempMax, lows[i]);
+                }
+                if (Double.isFinite(amountsMm[i]) && amountsMm[i] >= 0d) {
+                    hasAmount = true;
+                    peakMm = Math.max(peakMm, amountsMm[i]);
+                }
+                if (pops[i] >= 0) {
+                    hasProbability = true;
+                }
+            }
+            if (tempMin == Integer.MAX_VALUE) { tempMin = 0; tempMax = 1; }
+            if (tempMin == tempMax) tempMax = tempMin + 1;
+
+            double scaleMax = hasAmount
+                    ? CombinedForecastData.dailyRainScaleMax(peakMm, inches) : 100d;
+
+            float dayY = dp(20);
+            float dateY = dp(44);
+            float iconY = dp(78);
+            float plotTop = dp(104);
+            float plotBottom = Math.max(plotTop + dp(96), height - dp(28));
+            float plotHeight = plotBottom - plotTop;
+            float tempTop = plotTop + dp(30);
+            float tempBottom = Math.max(tempTop + dp(24), plotBottom - dp(30));
+
+            for (int i = 0; i < n; i++) {
+                int index = dayIndex(i);
+                JSONObject day = forecastDay(index);
+                float x = cell * (i + 0.5f);
+                highX[i] = lowX[i] = x;
+
+                textPaint.setTypeface(mediumTypeface);
+                textPaint.setTextAlign(Paint.Align.CENTER);
+                textPaint.setColor(WHITE);
+                textPaint.setTextSize(dp(13));
+                canvas.drawText(fitLabel(columnLabel(index, day), cell - dp(8)), x, dayY, textPaint);
+
+                textPaint.setTypeface(normalTypeface);
+                textPaint.setColor(SOFT_WHITE);
+                textPaint.setTextSize(dp(10));
+                String date = fitLabel(columnDate(index, day), cell - dp(38));
+                float dateWidth = textPaint.measureText(date);
+                float dateLeft = x - (dateWidth + dp(16)) / 2f;
+                boolean expanded = i == expandedDay;
+                disclosurePaint.setStyle(Paint.Style.FILL);
+                disclosurePaint.setColor(Color.argb(expanded ? 34 : 20, 255, 255, 255));
+                canvas.drawRoundRect(dateLeft - dp(8), dp(29),
+                        dateLeft + dateWidth + dp(24), dp(53), dp(12), dp(12), disclosurePaint);
+                disclosurePaint.setStyle(Paint.Style.STROKE);
+                disclosurePaint.setStrokeWidth(dp(.7f));
+                disclosurePaint.setColor(Color.argb(expanded ? 90 : 48, 255, 255, 255));
+                canvas.drawRoundRect(dateLeft - dp(8), dp(29),
+                        dateLeft + dateWidth + dp(24), dp(53), dp(12), dp(12), disclosurePaint);
+                textPaint.setTextAlign(Paint.Align.LEFT);
+                canvas.drawText(date, dateLeft, dateY, textPaint);
+                ForecastDisclosureView.drawChevron(canvas, dateLeft + dateWidth + dp(10), dp(41),
+                        expanded, getResources().getDisplayMetrics().density, disclosurePaint);
+
+                String conditionType = index < 0
+                        ? (yesterday.representativeHour() == null ? ""
+                                : SceneSpec.glyphCondition(yesterday.representativeHour()))
+                        : CombinedForecastData.dayConditionType(day);
+                if (!conditionType.isEmpty()) {
+                    boolean daytime = index >= 0
+                            || safeBoolean(yesterday.representativeHour(), "isDaytime", true);
+                    WeatherGlyphDrawer.draw(canvas, conditionType, daytime, x, iconY, dp(30));
+                }
+
+                highY[i] = CombinedForecastWidgetChart.mapTemperature(
+                        highs[i], tempMin, tempMax, tempTop, tempBottom);
+                lowY[i] = CombinedForecastWidgetChart.mapTemperature(
+                        lows[i], tempMin, tempMax, tempTop, tempBottom);
+                if (hasAmount) {
+                    if (Double.isFinite(amountsMm[i]) && amountsMm[i] >= 0d) {
+                        double display = CombinedForecastData.toDisplayAmount(amountsMm[i], inches);
+                        precipFractions[i] = (float) Math.max(0d, Math.min(1d, display / scaleMax));
+                    } else {
+                        precipFractions[i] = Float.NaN;
+                    }
+                } else {
+                    precipFractions[i] = pops[i] >= 0
+                            ? Math.max(0f, Math.min(1f, pops[i] / 100f)) : Float.NaN;
+                }
+            }
+
+            // Subtle glass guide lines inside the unified plot area.
+            gridPaint.setStyle(Paint.Style.STROKE);
+            gridPaint.setStrokeWidth(dp(0.7f));
+            gridPaint.setColor(Color.argb(18, 255, 255, 255));
+            canvas.drawLine(dp(4), plotTop + plotHeight * 0.5f,
+                    width - dp(4), plotTop + plotHeight * 0.5f, gridPaint);
+            gridPaint.setColor(Color.argb(75, 224, 243, 255));
+            canvas.drawLine(dp(4), plotBottom, width - dp(4), plotBottom, gridPaint);
+
+            // Overlapping blue precipitation layer (thin line or columns) behind temperatures.
+            float precipTop = plotBottom - plotHeight * 0.65f;
+            float density = getResources().getDisplayMetrics().density;
+            if (CombinedForecastData.PRECIP_STYLE_LINE.equals(precipitationStyle)) {
+                CombinedForecastWidgetChart.drawPrecipitationLine(
+                        canvas, highX, precipFractions, n, precipTop, plotBottom,
+                        Math.max(1f, density * 1.25f), 0f);
+            } else {
+                float barWidth = Math.min(dp(22), cell * 0.30f);
+                CombinedForecastWidgetChart.drawPrecipitationColumns(
+                        canvas, highX, precipFractions, n, precipTop, plotBottom, barWidth, dp(4));
+            }
+
+            if (hasAmount || hasProbability) {
+                textPaint.setTypeface(normalTypeface);
+                textPaint.setTextAlign(Paint.Align.LEFT);
+                textPaint.setTextSize(dp(9));
+                textPaint.setColor(Color.argb(115, 176, 226, 255));
+                String scaleCaption = CombinedForecastData.scaleLabel(scaleMax, !hasAmount, inches);
+                canvas.drawText(scaleCaption, dp(6), Math.max(plotTop + dp(10), precipTop - dp(3)), textPaint);
+            }
+
+            // High and low temperature curves on top, matching original ForecastChartView styling.
+            CombinedForecastWidgetChart.drawTemperatureCurve(
+                    canvas, highX, highY, highs, n, Color.argb(205, 242, 246, 255), dp(2.1f));
+            CombinedForecastWidgetChart.drawTemperatureCurve(
+                    canvas, highX, lowY, lows, n, Color.argb(155, 207, 224, 248), dp(2.1f));
+
+            textPaint.clearShadowLayer();
+            textPaint.setTypeface(mediumTypeface);
+            textPaint.setTextAlign(Paint.Align.CENTER);
+            textPaint.setTextSize(dp(16));
+            textPaint.setColor(WHITE);
+            dotPaint.setStyle(Paint.Style.FILL);
+            dotPaint.setColor(WHITE);
+            for (int i = 0; i < n; i++) {
+                float highLabelY = Float.NaN;
+                if (highs[i] != null) {
+                    canvas.drawCircle(highX[i], highY[i], dp(3.2f), dotPaint);
+                    highLabelY = Math.max(plotTop + dp(16), highY[i] - dp(10));
+                    canvas.drawText(highs[i] + "°", highX[i], highLabelY, textPaint);
+                }
+                if (lows[i] != null) {
+                    canvas.drawCircle(highX[i], lowY[i], dp(3.2f), dotPaint);
+                    float lowLabelY = lowY[i] + dp(22);
+                    if (!Float.isNaN(highLabelY)) {
+                        lowLabelY = Math.max(lowLabelY, highLabelY + dp(20));
+                    }
+                    lowLabelY = Math.min(plotBottom - dp(4), lowLabelY);
+                    canvas.drawText(lows[i] + "°", highX[i], lowLabelY, textPaint);
+                }
+            }
+
+            // Single-line per-day precipitation readout below baseline, matching original style.
+            float lineY = plotBottom + dp(17);
+            textPaint.setTypeface(mediumTypeface);
+            textPaint.setTextAlign(Paint.Align.CENTER);
+            textPaint.setTextSize(dp(10));
+            textPaint.setColor(ACCENT_BLUE);
+            for (int i = 0; i < n; i++) {
+                float x = highX[i];
+                if (dayIndex(i) < 0) {
+                    canvas.drawText(fitLabel(historyStatus == null ? "—" : historyStatus, cell - dp(8)),
+                            x, lineY, textPaint);
+                    continue;
+                }
+                boolean finiteMm = Double.isFinite(amountsMm[i]) && amountsMm[i] >= 0d;
+                boolean wet = finiteMm && amountsMm[i] > 0d;
+                int p = pops[i];
+                String label;
+                if (wet) {
+                    label = CombinedForecastData.formatAmount(
+                            CombinedForecastData.toDisplayAmount(amountsMm[i], inches),
+                            inches, true);
+                } else if (p > 0) {
+                    label = p + "%";
+                } else {
+                    label = p == 0 ? "0%" : "—";
+                }
+                canvas.drawText(fitLabel(label, cell - dp(6)), x, lineY, textPaint);
             }
         }
 
@@ -721,8 +1025,10 @@ abstract class ForecastViewsActivity extends WeatherInteractionViewsActivity {
             int count = columnCount();
             Context context = getContext();
             if (count == 0) return UiTranslations.text(context, "Daily forecast unavailable");
-            StringBuilder out = new StringBuilder(UiTranslations.text(context, "Multi-day forecast"));
+            StringBuilder out = new StringBuilder(UiTranslations.text(
+                    context, combinedMode ? "Combined forecast" : "Multi-day forecast"));
             out.append(". ");
+            boolean inches = useInches;
             for (int i = 0; i < count; i++) {
                 int index = dayIndex(i);
                 JSONObject day = forecastDay(index);
@@ -736,6 +1042,13 @@ abstract class ForecastViewsActivity extends WeatherInteractionViewsActivity {
                         ? description(yesterday.representativeHour()) : sceneForForecastDay(day, index).condition;
                 if (i > 0) out.append("; ");
                 out.append(dailyRowDescription(label, condition, high, low, dayProbability(day)));
+                if (combinedMode) {
+                    double mm = index < 0 ? Double.NaN : dayPrecipitationMm(day);
+                    if (Double.isFinite(mm) && mm >= 0d) {
+                        out.append(", ").append(CombinedForecastData.formatAmount(
+                                CombinedForecastData.toDisplayAmount(mm, inches), inches, true));
+                    }
+                }
             }
             out.append(". ").append(UiTranslations.text(context,
                     "Use the left and right keys to choose a day. Press Select for hourly details."));
@@ -801,7 +1114,7 @@ abstract class ForecastViewsActivity extends WeatherInteractionViewsActivity {
             this.animationRunning = animationRunning;
             this.markerBitmap = trackMarkerBitmap(moon);
             if (moon) {
-                markerSource.set(35, 29, 209, 238);
+                markerSource.set(50, 31, 203, 200);
             } else {
                 markerSource.set(49, 43, 225, 214);
             }
@@ -888,7 +1201,7 @@ abstract class ForecastViewsActivity extends WeatherInteractionViewsActivity {
                 canvas.drawBitmap(marker, markerSource, markerBounds, markerPaint);
             }
 
-            if (animationRunning) postInvalidateDelayed(50L);
+            if (animationRunning) postInvalidateDelayed(30_000L);
         }
     }
 
@@ -904,7 +1217,7 @@ abstract class ForecastViewsActivity extends WeatherInteractionViewsActivity {
         private final Path discPath = new Path();
         private final Path phasePath = new Path();
         private final Path phaseCutoutPath = new Path();
-        private final Rect crescentSource = new Rect(35, 29, 209, 238);
+        private final Rect crescentSource = new Rect(50, 31, 203, 200);
         private final RectF crescentBounds = new RectF();
         private final Bitmap crescentBitmap;
         private RadialGradient haloGradient;
@@ -963,96 +1276,105 @@ abstract class ForecastViewsActivity extends WeatherInteractionViewsActivity {
             boolean fullMoon = lower.contains("full") || (!lower.contains("crescent")
                     && !lower.contains("quarter") && !lower.contains("gibbous") && !newMoon);
 
-            if (lower.contains("crescent")
-                    && crescentBitmap != null
-                    && !crescentBitmap.isRecycled()) {
-                float markerHeight = s * 0.72f;
-                float markerWidth = markerHeight
-                        * crescentSource.width() / (float) crescentSource.height();
-                crescentBounds.set(
-                        cx - markerWidth * 0.5f,
-                        cy - markerHeight * 0.5f,
-                        cx + markerWidth * 0.5f,
-                        cy + markerHeight * 0.5f);
-                int save = canvas.save();
-                if (waxing) canvas.scale(-1f, 1f, cx, cy);
-                canvas.drawBitmap(crescentBitmap, crescentSource, crescentBounds, imagePaint);
-                canvas.restoreToCount(save);
-                return;
+            boolean southernHemisphere = Double.isFinite(latitude) && latitude < 0d;
+            int hemisphereSave = canvas.save();
+            if (southernHemisphere) {
+                canvas.scale(-1f, 1f, cx, cy);
             }
+            try {
+                if (lower.contains("crescent")
+                        && crescentBitmap != null
+                        && !crescentBitmap.isRecycled()) {
+                    float markerHeight = s * 0.72f;
+                    float markerWidth = markerHeight
+                            * crescentSource.width() / (float) crescentSource.height();
+                    crescentBounds.set(
+                            cx - markerWidth * 0.5f,
+                            cy - markerHeight * 0.5f,
+                            cx + markerWidth * 0.5f,
+                            cy + markerHeight * 0.5f);
+                    int save = canvas.save();
+                    if (waxing) canvas.scale(-1f, 1f, cx, cy);
+                    canvas.drawBitmap(crescentBitmap, crescentSource, crescentBounds, imagePaint);
+                    canvas.restoreToCount(save);
+                    return;
+                }
 
-            p.setStyle(Paint.Style.FILL);
-            p.setShader(haloGradient);
-            canvas.drawCircle(cx, cy, r * 1.40f, p);
-
-            p.setShader(null);
-            p.setColor(Color.argb(190, 51, 82, 128));
-            canvas.drawCircle(cx, cy, r, p);
-
-            discPath.reset();
-            discPath.addCircle(cx, cy, r, Path.Direction.CW);
-            if (!newMoon) {
-                p.setShader(surfaceGradient);
                 p.setStyle(Paint.Style.FILL);
+                p.setShader(haloGradient);
+                canvas.drawCircle(cx, cy, r * 1.40f, p);
 
-                if (fullMoon) {
-                    canvas.drawCircle(cx, cy, r, p);
-                } else if (lower.contains("crescent")) {
-                    phasePath.reset();
-                    phasePath.addCircle(cx, cy, r, Path.Direction.CW);
-                    float cutDirection = waning ? 1f : -1f;
-                    phaseCutoutPath.reset();
-                    phaseCutoutPath.addCircle(
-                            cx + cutDirection * r * 0.52f,
-                            cy,
-                            r * 0.94f,
-                            Path.Direction.CW);
-                    phasePath.op(phaseCutoutPath, Path.Op.DIFFERENCE);
-                    canvas.drawPath(phasePath, p);
-                } else if (lower.contains("quarter")) {
+                p.setShader(null);
+                p.setColor(Color.argb(190, 51, 82, 128));
+                canvas.drawCircle(cx, cy, r, p);
+
+                discPath.reset();
+                discPath.addCircle(cx, cy, r, Path.Direction.CW);
+                if (!newMoon) {
+                    p.setShader(surfaceGradient);
+                    p.setStyle(Paint.Style.FILL);
+
+                    if (fullMoon) {
+                        canvas.drawCircle(cx, cy, r, p);
+                    } else if (lower.contains("crescent")) {
+                        phasePath.reset();
+                        phasePath.addCircle(cx, cy, r, Path.Direction.CW);
+                        float cutDirection = waning ? 1f : -1f;
+                        phaseCutoutPath.reset();
+                        phaseCutoutPath.addCircle(
+                                cx + cutDirection * r * 0.52f,
+                                cy,
+                                r * 0.94f,
+                                Path.Direction.CW);
+                        phasePath.op(phaseCutoutPath, Path.Op.DIFFERENCE);
+                        canvas.drawPath(phasePath, p);
+                    } else if (lower.contains("quarter")) {
+                        int save = canvas.save();
+                        canvas.clipPath(discPath);
+                        boolean lightRight = !waning;
+                        if (lightRight) {
+                            canvas.drawRect(cx, cy - r, cx + r, cy + r, p);
+                        } else {
+                            canvas.drawRect(cx - r, cy - r, cx, cy + r, p);
+                        }
+                        canvas.restoreToCount(save);
+                    } else if (lower.contains("gibbous")) {
+                        canvas.drawCircle(cx, cy, r, p);
+                        p.setShader(null);
+                        p.setColor(Color.argb(205, 50, 81, 126));
+                        phasePath.reset();
+                        phasePath.addCircle(cx, cy, r, Path.Direction.CW);
+                        float shadowDirection = waxing ? -1f : 1f;
+                        phaseCutoutPath.reset();
+                        phaseCutoutPath.addCircle(
+                                cx + shadowDirection * r * 0.58f,
+                                cy,
+                                r * 0.92f,
+                                Path.Direction.CW);
+                        phasePath.op(phaseCutoutPath, Path.Op.DIFFERENCE);
+                        canvas.drawPath(phasePath, p);
+                    }
+                }
+
+                p.setShader(null);
+                p.setStyle(Paint.Style.STROKE);
+                p.setColor(Color.argb(95, 226, 239, 255));
+                p.setStrokeWidth(dp(1f));
+                canvas.drawCircle(cx, cy, r, p);
+
+                if (!newMoon) {
                     int save = canvas.save();
                     canvas.clipPath(discPath);
-                    boolean lightRight = !waning;
-                    if (lightRight) {
-                        canvas.drawRect(cx, cy - r, cx + r, cy + r, p);
-                    } else {
-                        canvas.drawRect(cx - r, cy - r, cx, cy + r, p);
-                    }
+                    p.setStyle(Paint.Style.STROKE);
+                    p.setColor(Color.argb(55, 78, 112, 160));
+                    p.setStrokeWidth(dp(1f));
+                    canvas.drawCircle(cx - r * 0.25f, cy - r * 0.14f, r * 0.17f, p);
+                    canvas.drawCircle(cx + r * 0.18f, cy + r * 0.20f, r * 0.12f, p);
+                    canvas.drawCircle(cx + r * 0.20f, cy - r * 0.28f, r * 0.085f, p);
                     canvas.restoreToCount(save);
-                } else if (lower.contains("gibbous")) {
-                    canvas.drawCircle(cx, cy, r, p);
-                    p.setShader(null);
-                    p.setColor(Color.argb(205, 50, 81, 126));
-                    phasePath.reset();
-                    phasePath.addCircle(cx, cy, r, Path.Direction.CW);
-                    float shadowDirection = waxing ? -1f : 1f;
-                    phaseCutoutPath.reset();
-                    phaseCutoutPath.addCircle(
-                            cx + shadowDirection * r * 0.58f,
-                            cy,
-                            r * 0.92f,
-                            Path.Direction.CW);
-                    phasePath.op(phaseCutoutPath, Path.Op.DIFFERENCE);
-                    canvas.drawPath(phasePath, p);
                 }
-            }
-
-            p.setShader(null);
-            p.setStyle(Paint.Style.STROKE);
-            p.setColor(Color.argb(95, 226, 239, 255));
-            p.setStrokeWidth(dp(1f));
-            canvas.drawCircle(cx, cy, r, p);
-
-            if (!newMoon) {
-                int save = canvas.save();
-                canvas.clipPath(discPath);
-                p.setStyle(Paint.Style.STROKE);
-                p.setColor(Color.argb(55, 78, 112, 160));
-                p.setStrokeWidth(dp(1f));
-                canvas.drawCircle(cx - r * 0.25f, cy - r * 0.14f, r * 0.17f, p);
-                canvas.drawCircle(cx + r * 0.18f, cy + r * 0.20f, r * 0.12f, p);
-                canvas.drawCircle(cx + r * 0.20f, cy - r * 0.28f, r * 0.085f, p);
-                canvas.restoreToCount(save);
+            } finally {
+                canvas.restoreToCount(hemisphereSave);
             }
         }
     }

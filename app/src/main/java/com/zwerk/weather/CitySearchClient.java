@@ -44,7 +44,7 @@ final class CitySearchClient {
             connection.setReadTimeout(8000);
             connection.setRequestProperty("Accept", "application/json");
             connection.setUseCaches(false);
-            connection.setRequestProperty("User-Agent", "ZwerkWeather/1.5");
+            connection.setRequestProperty("User-Agent", "ZwerkWeather/" + BuildConfig.VERSION_NAME);
             int status = connection.getResponseCode();
             if (status != 200) throw new IOException("City search returned HTTP " + status);
             List<Address> results;

@@ -49,10 +49,11 @@ final class WidgetForecastFormatter implements WeatherWidgetSnapshotPublisher.Fo
         Double hpa = WeatherOverviewRenderingActivity.pressureHpa(pressure);
         if (hpa == null) return "—";
         String unit = preferences.pressureUnit();
+        Locale locale = AppLocaleManager.activeLocale(context);
         if (WeatherPreferences.PRESSURE_INHG.equals(unit))
-            return String.format(Locale.getDefault(), "%.2f %s", hpa * 0.0295299830714d, unit);
+            return String.format(locale, "%.2f %s", hpa * 0.0295299830714d, unit);
         if (WeatherPreferences.PRESSURE_MMHG.equals(unit))
-            return String.format(Locale.getDefault(), "%.1f %s", hpa * 0.750061683d, unit);
+            return String.format(locale, "%.1f %s", hpa * 0.750061683d, unit);
         return Math.round(hpa) + " " + unit;
     }
     public String formatVisibility(JSONObject visibility) {
@@ -61,5 +62,14 @@ final class WidgetForecastFormatter implements WeatherWidgetSnapshotPublisher.Fo
         String unit = preferences.visibilityUnit(fahrenheit);
         return WeatherActivityFoundation.trimNumber(WeatherPreferences.VISIBILITY_MI.equals(unit)
                 ? km / 1.609344d : km) + " " + unit;
+    }
+    boolean isPrecipitationInches() {
+        return preferences.isPrecipitationInches();
+    }
+    String formatPrecipitationAmount(double millimeters) {
+        if (!Double.isFinite(millimeters) || millimeters < 0d) return "—";
+        boolean useInches = preferences.isPrecipitationInches();
+        return CombinedForecastData.formatAmount(
+                CombinedForecastData.toDisplayAmount(millimeters, useInches), useInches, true);
     }
 }

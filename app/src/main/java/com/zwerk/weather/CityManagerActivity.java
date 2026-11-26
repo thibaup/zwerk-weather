@@ -3,6 +3,7 @@ package com.zwerk.weather;
 import android.annotation.SuppressLint;
 import android.app.Activity;
 import android.app.AlertDialog;
+import android.app.Dialog;
 import android.content.Context;
 import android.content.Intent;
 import android.content.SharedPreferences;
@@ -32,6 +33,7 @@ import android.text.Editable;
 import android.text.InputType;
 import android.text.TextWatcher;
 import android.text.TextUtils;
+import android.text.format.DateUtils;
 import android.view.Gravity;
 import android.view.View;
 import android.view.ViewGroup;
@@ -132,7 +134,8 @@ public class CityManagerActivity extends Activity {
     private String lastIssuedQuery = "";
     private Runnable pendingSearch;
     private boolean searchMode;
-    private AlertDialog activeDialog;
+    private boolean selectionInvalidated;
+    private Dialog activeDialog;
 
     @Override
     protected void attachBaseContext(Context newBase) {
@@ -142,6 +145,9 @@ public class CityManagerActivity extends Activity {
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+        if (savedInstanceState != null) {
+            selectionInvalidated = savedInstanceState.getBoolean("selection_invalidated", false);
+        }
         configureWindow();
         migrateLegacyMainActivityPreferences(this);
         buildUi();
@@ -149,6 +155,12 @@ public class CityManagerActivity extends Activity {
         if (Build.VERSION.SDK_INT >= 33) {
             Api33BackNavigation.register(this);
         }
+    }
+
+    @Override
+    protected void onSaveInstanceState(Bundle outState) {
+        super.onSaveInstanceState(outState);
+        outState.putBoolean("selection_invalidated", selectionInvalidated);
     }
 
     @Override
@@ -173,6 +185,18 @@ public class CityManagerActivity extends Activity {
         if (editMode) {
             setEditMode(false);
             return;
+        }
+        if (selectionInvalidated) {
+            LocationSnapshot fallback = getSelectedLocation(this);
+            if (fallback != null && validCoordinates(fallback.lat, fallback.lon)) {
+                Intent data = new Intent()
+                        .putExtra(EXTRA_LOCATION_ID, fallback.id)
+                        .putExtra(EXTRA_LOCATION_NAME, fallback.name)
+                        .putExtra(EXTRA_LATITUDE, fallback.lat)
+                        .putExtra(EXTRA_LONGITUDE, fallback.lon)
+                        .putExtra(EXTRA_IS_DEVICE, fallback.isDevice);
+                setResult(RESULT_OK, data);
+            }
         }
         finishAfterTransition();
     }
@@ -240,21 +264,17 @@ public class CityManagerActivity extends Activity {
 
         setContentView(root);
         root.setOnApplyWindowInsetsListener((v, insets) -> {
-            int top;
-            int bottom;
+            Rect safe = WeatherSystemBars.safeInsets(insets);
+            int bottom = safe.bottom;
             if (Build.VERSION.SDK_INT >= 30) {
-                android.graphics.Insets bars = insets.getInsets(WindowInsets.Type.systemBars());
                 android.graphics.Insets ime = insets.getInsets(WindowInsets.Type.ime());
-                top = bars.top;
-                bottom = Math.max(bars.bottom, ime.bottom);
-            } else {
-                top = insets.getSystemWindowInsetTop();
-                bottom = insets.getSystemWindowInsetBottom();
+                bottom = Math.max(bottom, ime.bottom);
             }
-            page.setPadding(0, top, 0, 0);
+            page.setPadding(safe.left, safe.top, safe.right, 0);
             cityList.setPadding(0, dp(2), 0, bottom + dp(108));
 
             FrameLayout.LayoutParams fabLp = (FrameLayout.LayoutParams) addButton.getLayoutParams();
+            fabLp.rightMargin = safe.right + dp(20);
             fabLp.bottomMargin = bottom + dp(24);
             addButton.setLayoutParams(fabLp);
             return insets;
@@ -1003,10 +1023,10 @@ public class CityManagerActivity extends Activity {
         longitude.addTextChangedListener(coordinateWatcher);
 
         AlertDialog dialog = new AlertDialog.Builder(this)
-                .setTitle("Advanced coordinates")
+                .setTitle(UiTranslations.text(this, "Advanced coordinates"))
                 .setView(form)
-                .setPositiveButton("Add", null)
-                .setNegativeButton("Cancel", null)
+                .setPositiveButton(UiTranslations.text(this, "Add"), null)
+                .setNegativeButton(UiTranslations.text(this, "Cancel"), null)
                 .create();
         dialog.setOnShowListener(ignored -> {
             Window window = dialog.getWindow();
@@ -1064,22 +1084,41 @@ public class CityManagerActivity extends Activity {
             return;
         }
         if (location.isDevice) {
-            Toast.makeText(this, "The device location cannot be deleted.", Toast.LENGTH_SHORT).show();
+            Toast.makeText(this,
+                    UiTranslations.text(this, "The device location cannot be deleted."),
+                    Toast.LENGTH_SHORT).show();
             return;
         }
-        AlertDialog dialog = new AlertDialog.Builder(this)
-                .setTitle("Delete city?")
-                .setMessage("Remove “" + location.name + "” from saved cities?")
-                .setPositiveButton("Delete", (d, which) -> {
-                    deleteLocation(this, location.id);
+        if (activeDialog != null && activeDialog.isShowing()) {
+            activeDialog.dismiss();
+        }
+        String message = String.format(AppLocaleManager.activeLocale(this),
+                UiTranslations.text(this, "Remove “%s” from saved cities?"),
+                location.name);
+        Dialog dialog = GlassDialog.showConfirm(
+                this,
+                UiTranslations.text(this, "Delete city?"),
+                message,
+                UiTranslations.text(this, "Cancel"),
+                UiTranslations.text(this, "Delete"),
+                true,
+                () -> {
+                    if (deleteLocation(this, location.id)) {
+                        selectionInvalidated = true;
+                    }
                     renderLocations();
-                })
-                .setNegativeButton("Cancel", null)
-                .create();
-        showManagedDialog(dialog);
+                });
+        if (dialog != null) {
+            activeDialog = dialog;
+            dialog.setOnDismissListener(d -> {
+                if (activeDialog == dialog) {
+                    activeDialog = null;
+                }
+            });
+        }
     }
 
-    private void showManagedDialog(AlertDialog dialog) {
+    private void showManagedDialog(Dialog dialog) {
         if (destroyed || isFinishing()) {
             return;
         }
@@ -1199,6 +1238,41 @@ public class CityManagerActivity extends Activity {
         return String.format(Locale.US, "%.4f°, %.4f°", lat, lon);
     }
 
+    private String displayTemperature(LocationSnapshot location) {
+        if (location == null) {
+            return "—";
+        }
+        if (Double.isFinite(location.cachedTempC)) {
+            boolean fahrenheit = WeatherPreferences.TEMP_FAHRENHEIT.equals(
+                    new WeatherPreferences(this).temperatureUnit());
+            double value = fahrenheit
+                    ? (location.cachedTempC * 9.0 / 5.0) + 32.0
+                    : location.cachedTempC;
+            return Math.round(value) + "°" + (fahrenheit ? "F" : "C");
+        }
+        return displayTemperature(location.cachedTemp);
+    }
+
+    private static double parseCelsiusFromLegacyTemp(String cachedTemp) {
+        String raw = cleanString(cachedTemp);
+        if (raw.isEmpty()) return Double.NaN;
+        boolean hasC = raw.endsWith("°C") || raw.endsWith("C") || raw.endsWith("°c") || raw.endsWith("c");
+        boolean hasF = raw.endsWith("°F") || raw.endsWith("F") || raw.endsWith("°f") || raw.endsWith("f");
+        if (!hasC && !hasF) return Double.NaN;
+        StringBuilder digits = new StringBuilder();
+        for (int i = 0; i < raw.length(); i++) {
+            char c = raw.charAt(i);
+            if ((c >= '0' && c <= '9') || c == '-' || c == '+' || c == '.' || c == ',') {
+                digits.append(c == ',' ? '.' : c);
+            } else if (c == '−') {
+                digits.append('-');
+            }
+        }
+        Double parsed = parseFiniteDouble(digits.toString());
+        if (parsed == null) return Double.NaN;
+        return hasF ? (parsed - 32.0) * 5.0 / 9.0 : parsed;
+    }
+
     private static String displayTemperature(String cachedTemp) {
         String temp = cleanString(cachedTemp);
         if (temp.isEmpty()) {
@@ -1251,6 +1325,8 @@ public class CityManagerActivity extends Activity {
         public final boolean isDevice;
         public final String cachedTemp;
         public final String cachedCondition;
+        public final double cachedTempC;
+        public final long cachedAtMillis;
 
         public LocationSnapshot(
                 String id,
@@ -1260,6 +1336,20 @@ public class CityManagerActivity extends Activity {
                 boolean isDevice,
                 String cachedTemp,
                 String cachedCondition) {
+            this(id, name, lat, lon, isDevice, cachedTemp, cachedCondition,
+                    parseCelsiusFromLegacyTemp(cachedTemp), 0L);
+        }
+
+        public LocationSnapshot(
+                String id,
+                String name,
+                double lat,
+                double lon,
+                boolean isDevice,
+                String cachedTemp,
+                String cachedCondition,
+                double cachedTempC,
+                long cachedAtMillis) {
             if (!validCoordinates(lat, lon)) {
                 throw new IllegalArgumentException("Invalid latitude/longitude");
             }
@@ -1272,6 +1362,8 @@ public class CityManagerActivity extends Activity {
             this.isDevice = isDevice;
             this.cachedTemp = cleanString(cachedTemp);
             this.cachedCondition = cleanString(cachedCondition);
+            this.cachedTempC = Double.isFinite(cachedTempC) ? cachedTempC : Double.NaN;
+            this.cachedAtMillis = Math.max(0L, cachedAtMillis);
         }
 
         private JSONObject toJson() throws JSONException {
@@ -1283,6 +1375,12 @@ public class CityManagerActivity extends Activity {
             object.put("isDevice", isDevice);
             object.put("cachedTemp", cachedTemp);
             object.put("cachedCondition", cachedCondition);
+            if (Double.isFinite(cachedTempC)) {
+                object.put("cachedTempC", cachedTempC);
+            }
+            if (cachedAtMillis > 0L) {
+                object.put("cachedAtMillis", cachedAtMillis);
+            }
             return object;
         }
     }
@@ -1400,6 +1498,9 @@ public class CityManagerActivity extends Activity {
         if (context == null) {
             return false;
         }
+        double parsedTempC = parseCelsiusFromLegacyTemp(cachedTemp);
+        long now = (!cleanString(cachedTemp).isEmpty() || !cleanString(cachedCondition).isEmpty())
+                ? System.currentTimeMillis() : 0L;
         synchronized (STORE_LOCK) {
             StoreState state = readStoreLocked(context.getApplicationContext());
             int index = indexById(state.locations, state.selectedId);
@@ -1414,7 +1515,43 @@ public class CityManagerActivity extends Activity {
                     old.lon,
                     old.isDevice,
                     cachedTemp,
-                    cachedCondition));
+                    cachedCondition,
+                    Double.isFinite(parsedTempC) ? parsedTempC : Double.NaN,
+                    now > 0L ? now : old.cachedAtMillis));
+            writeStoreLocked(context.getApplicationContext(), state);
+            return true;
+        }
+    }
+
+    /** Updates the selected location's cached weather using numeric Celsius so unit changes re-format cleanly. */
+    public static boolean updateSelectedLocationSnapshot(
+            Context context,
+            double cachedTempC,
+            String cachedCondition) {
+        if (context == null) {
+            return false;
+        }
+        boolean hasTemp = Double.isFinite(cachedTempC);
+        String legacyTemp = hasTemp ? Math.round(cachedTempC) + "°C" : "";
+        long now = (hasTemp || !cleanString(cachedCondition).isEmpty())
+                ? System.currentTimeMillis() : 0L;
+        synchronized (STORE_LOCK) {
+            StoreState state = readStoreLocked(context.getApplicationContext());
+            int index = indexById(state.locations, state.selectedId);
+            if (index < 0) {
+                return false;
+            }
+            LocationSnapshot old = state.locations.get(index);
+            state.locations.set(index, new LocationSnapshot(
+                    old.id,
+                    old.name,
+                    old.lat,
+                    old.lon,
+                    old.isDevice,
+                    legacyTemp,
+                    cachedCondition,
+                    hasTemp ? cachedTempC : Double.NaN,
+                    now > 0L ? now : old.cachedAtMillis));
             writeStoreLocked(context.getApplicationContext(), state);
             return true;
         }
@@ -1506,18 +1643,19 @@ public class CityManagerActivity extends Activity {
         }
     }
 
-    private static void deleteLocation(Context context, String id) {
+    private static boolean deleteLocation(Context context, String id) {
+        boolean wasSelected = false;
         synchronized (STORE_LOCK) {
             StoreState state = readStoreLocked(context.getApplicationContext());
             int index = indexById(state.locations, id);
             if (index < 0) {
-                return;
+                return false;
             }
             LocationSnapshot target = state.locations.get(index);
             if (target.isDevice) {
-                return;
+                return false;
             }
-            boolean wasSelected = target.id.equals(state.selectedId);
+            wasSelected = target.id.equals(state.selectedId);
             state.locations.remove(index);
             if (wasSelected) {
                 state.selectedId = preferredFallbackId(state.locations);
@@ -1526,6 +1664,7 @@ public class CityManagerActivity extends Activity {
             writeStoreLocked(context.getApplicationContext(), state);
         }
         WidgetConfiguration.forgetCity(context, id);
+        return wasSelected;
     }
 
     private static StoreState readStore(Context context) {
@@ -1629,7 +1768,11 @@ public class CityManagerActivity extends Activity {
         }
         String cachedTemp = cleanString(object.opt("cachedTemp"));
         String cachedCondition = cleanString(object.opt("cachedCondition"));
-        return new LocationSnapshot(id, name, lat, lon, isDevice, cachedTemp, cachedCondition);
+        Double tempC = coerceDouble(object.opt("cachedTempC"));
+        double cachedTempC = tempC != null ? tempC : parseCelsiusFromLegacyTemp(cachedTemp);
+        long cachedAtMillis = Math.max(0L, object.optLong("cachedAtMillis", 0L));
+        return new LocationSnapshot(id, name, lat, lon, isDevice,
+                cachedTemp, cachedCondition, cachedTempC, cachedAtMillis);
     }
 
     private static void writeStoreLocked(Context context, StoreState state) {
@@ -1675,6 +1818,10 @@ public class CityManagerActivity extends Activity {
         String temp = !cleanString(incoming.cachedTemp).isEmpty() ? incoming.cachedTemp : existing.cachedTemp;
         String condition = !cleanString(incoming.cachedCondition).isEmpty()
                 ? incoming.cachedCondition : existing.cachedCondition;
+        double tempC = Double.isFinite(incoming.cachedTempC)
+                ? incoming.cachedTempC : existing.cachedTempC;
+        long cachedAt = incoming.cachedAtMillis > 0L
+                ? incoming.cachedAtMillis : existing.cachedAtMillis;
 
         double lat = existing.lat;
         double lon = existing.lon;
@@ -1682,7 +1829,7 @@ public class CityManagerActivity extends Activity {
             lat = incoming.lat;
             lon = incoming.lon;
         }
-        return new LocationSnapshot(id, name, lat, lon, device, temp, condition);
+        return new LocationSnapshot(id, name, lat, lon, device, temp, condition, tempC, cachedAt);
     }
 
     private static int findEquivalentIndex(List<LocationSnapshot> locations, LocationSnapshot incoming) {
@@ -1938,7 +2085,7 @@ public class CityManagerActivity extends Activity {
                 nameRow.addView(pin, pinLp);
             }
 
-            TextView temp = makeText(displayTemperature(location.cachedTemp), 29f, COLOR_PRIMARY_TEXT, false);
+            TextView temp = makeText(displayTemperature(location), 29f, COLOR_PRIMARY_TEXT, false);
             temp.setTypeface(Typeface.create("sans-serif-light", Typeface.NORMAL));
             temp.setGravity(Gravity.END | Gravity.TOP);
             temp.setSingleLine(true);
@@ -1952,20 +2099,47 @@ public class CityManagerActivity extends Activity {
             contentColumn.addView(bottom, new LinearLayout.LayoutParams(
                     ViewGroup.LayoutParams.MATCH_PARENT, dp(39)));
 
-            TextView cached = makeText("Cached", 13f, COLOR_SECONDARY_TEXT, false);
+            boolean hasCachedWeather = Double.isFinite(location.cachedTempC)
+                    || !location.cachedTemp.isEmpty()
+                    || !location.cachedCondition.isEmpty();
+            String statusLabel;
+            if (!hasCachedWeather) {
+                statusLabel = UiTranslations.text(CityManagerActivity.this,
+                        location.isDevice ? "Device location" : "Saved location");
+            } else if (location.cachedAtMillis > 0L) {
+                long now = System.currentTimeMillis();
+                long ageMs = Math.max(0L, now - location.cachedAtMillis);
+                if (ageMs < DateUtils.MINUTE_IN_MILLIS) {
+                    statusLabel = UiTranslations.text(CityManagerActivity.this, "Cached");
+                } else {
+                    CharSequence relative = DateUtils.getRelativeTimeSpanString(
+                            location.cachedAtMillis,
+                            Math.max(now, location.cachedAtMillis),
+                            DateUtils.MINUTE_IN_MILLIS,
+                            DateUtils.FORMAT_ABBREV_RELATIVE);
+                    statusLabel = UiTranslations.text(CityManagerActivity.this, "Cached")
+                            + " · " + relative;
+                }
+            } else {
+                statusLabel = UiTranslations.text(CityManagerActivity.this, "Cached");
+            }
+            TextView cached = makeText("", 13f, COLOR_SECONDARY_TEXT, false);
+            cached.setText(statusLabel);
             cached.setSingleLine(true);
             bottom.addView(cached, new LinearLayout.LayoutParams(
                     ViewGroup.LayoutParams.WRAP_CONTENT,
                     ViewGroup.LayoutParams.WRAP_CONTENT));
 
             TextView condition = makeText(
-                    location.cachedCondition.isEmpty() ? "No cached weather" : location.cachedCondition,
+                    hasCachedWeather ? location.cachedCondition : "",
                     13f,
                     COLOR_SECONDARY_TEXT,
                     false);
             condition.setGravity(Gravity.END);
             condition.setSingleLine(true);
             condition.setEllipsize(TextUtils.TruncateAt.END);
+            condition.setVisibility(hasCachedWeather && !location.cachedCondition.isEmpty()
+                    ? View.VISIBLE : View.GONE);
             LinearLayout.LayoutParams conditionLp = new LinearLayout.LayoutParams(
                     0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f);
             conditionLp.leftMargin = dp(10);
@@ -2012,14 +2186,15 @@ public class CityManagerActivity extends Activity {
         }
     }
 
-    private static String cardDescription(LocationSnapshot location) {
+    private String cardDescription(LocationSnapshot location) {
         StringBuilder text = new StringBuilder();
         text.append(location.name);
         if (location.isDevice) {
-            text.append(", device location");
+            text.append(", ").append(UiTranslations.text(this, "Device location"));
         }
-        if (!location.cachedTemp.isEmpty()) {
-            text.append(", ").append(displayTemperature(location.cachedTemp));
+        String temp = displayTemperature(location);
+        if (!"—".equals(temp)) {
+            text.append(", ").append(temp);
         }
         if (!location.cachedCondition.isEmpty()) {
             text.append(", ").append(location.cachedCondition);
